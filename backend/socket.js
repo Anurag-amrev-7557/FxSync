@@ -173,6 +173,63 @@ export function setupSocket(io) {
       callback && callback({ success: true });
     });
 
+    /**
+     * Ultra-accurate time_sync event for robust client-server time synchronization.
+     * Responds with:
+     *   - serverTime: current server timestamp (ms, when received)
+     *   - clientSent: original client timestamp (ms, as sent by client)
+     *   - serverReceived: when server received the request (ms)
+     *   - serverProcessed: when server sent the response (ms)
+     *   - serverUptime: process uptime in ms (for drift diagnostics)
+     *   - serverTimezoneOffset: server's timezone offset in minutes
+     *   - serverIso: ISO string of server time (for debugging)
+     *   - serverInfo: basic server info (for diagnostics)
+     *   - roundTripEstimate: estimated round-trip time in ms (if client provides a callback timestamp)
+     */
+    socket.on('time_sync', (clientSent, callback) => {
+      const serverReceived = Date.now();
+      const parsedClientSent = typeof clientSent === 'number' ? clientSent : Number(clientSent) || null;
+
+      // Optionally, allow client to send an object with more info (future-proofing)
+      let clientExtra = {};
+      if (clientSent && typeof clientSent === 'object' && clientSent !== null) {
+        clientExtra = { ...clientSent };
+        if ('clientSent' in clientSent) {
+          clientExtra.clientSent = typeof clientSent.clientSent === 'number'
+            ? clientSent.clientSent
+            : Number(clientSent.clientSent) || null;
+        }
+      }
+
+      if (typeof callback === 'function') {
+        // Simulate minimal processing delay for realism
+        setImmediate(() => {
+          const serverProcessed = Date.now();
+          // Optionally estimate round-trip if client sent a callback timestamp
+          let roundTripEstimate = null;
+          if (clientExtra && typeof clientExtra.clientCallbackReceived === 'number') {
+            roundTripEstimate = serverProcessed - clientExtra.clientCallbackReceived;
+          }
+          callback({
+            serverTime: serverReceived,
+            clientSent: parsedClientSent,
+            serverReceived,
+            serverProcessed,
+            serverUptime: Math.round(process.uptime() * 1000),
+            serverTimezoneOffset: new Date().getTimezoneOffset(),
+            serverIso: new Date(serverReceived).toISOString(),
+            serverInfo: {
+              nodeVersion: process.version,
+              platform: process.platform,
+              pid: process.pid
+            },
+            roundTripEstimate,
+            ...clientExtra // echo back any extra client info for advanced sync
+          });
+        });
+      }
+    });
+
     socket.on('disconnect', () => {
       for (const [sessionId, session] of Object.entries(getAllSessions())) {
         removeClient(sessionId, socket.id);
