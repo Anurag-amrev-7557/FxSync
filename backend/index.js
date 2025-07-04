@@ -12,7 +12,7 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: 'https://your-app.firebaseapp.com', // or your custom domain
+    origin: 'https://fxsync-web.web.app', // or your custom domain
     methods: ['GET', 'POST']
   }
 });
