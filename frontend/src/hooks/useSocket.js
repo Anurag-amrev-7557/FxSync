@@ -12,7 +12,8 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
 
   useEffect(() => {
     if (!sessionId) return;
-    const socket = io(import.meta.env.VITE_BACKEND_URL, { transports: ['websocket'] });
+    const url = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
+    const socket = io(url, { transports: ['websocket'] });
     socketRef.current = socket;
 
     socket.on('connect', () => {

@@ -72,8 +72,9 @@ export default function AudioPlayer({
   clientId,
   clients = [],
 }) {
-  const [audioUrl, setAudioUrl] = useState('');
+  const [audioUrl, setAudioUrl] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [audioError, setAudioError] = useState(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -87,10 +88,40 @@ export default function AudioPlayer({
 
   // Fetch audio URL
   useEffect(() => {
-    fetch(`${import.meta.env.VITE_BACKEND_URL}/audio-url`)
-      .then(res => res.json())
+    const backendUrl = import.meta.env.VITE_BACKEND_URL;
+    if (!backendUrl) {
+      setAudioError(
+        <>
+          <span className="inline-flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-red-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v4.5a.75.75 0 001.5 0v-4.5zm-.75 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+            </svg>
+            <span>
+              Audio backend URL is not configured.
+              <br />
+              Please set <span className="font-mono bg-gray-100 px-1 rounded">VITE_BACKEND_URL</span> in your environment.
+            </span>
+          </span>
+        </>
+      );
+      setLoading(false);
+      return;
+    }
+    fetch(`${backendUrl}/audio-url`)
+      .then(res => {
+        if (!res.ok) throw new Error(`Failed to fetch audio URL: ${res.status}`);
+        return res.json();
+      })
       .then(data => {
-        setAudioUrl(data.url);
+        if (data && typeof data.url === 'string' && data.url.length > 0) {
+          setAudioUrl(data.url);
+        } else {
+          setAudioError('Audio URL not found in backend response.');
+        }
+        setLoading(false);
+      })
+      .catch(err => {
+        setAudioError('Error fetching audio URL. ' + (err?.message || ''));
         setLoading(false);
       });
   }, []);
@@ -278,15 +309,25 @@ export default function AudioPlayer({
   };
 
   if (loading) return <div className="text-center py-8">Loading audio...</div>;
+  if (audioError) {
+    return (
+      <div className="max-w-xl mx-auto mt-8 p-6 bg-white rounded shadow flex flex-col items-center">
+        <div className="text-red-600 font-semibold mb-2">Audio Error</div>
+        <div className="text-gray-700 text-sm mb-4">{audioError}</div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-xl mx-auto mt-8 p-6 bg-white rounded shadow flex flex-col items-center">
-      <audio ref={audioRef} src={audioUrl} preload="auto" />
+      {audioUrl ? (
+        <audio ref={audioRef} src={audioUrl} preload="auto" />
+      ) : null}
       <div className="flex items-center gap-4 mb-4">
         <button
           className={`px-4 py-2 rounded ${isPlaying ? 'bg-red-500' : 'bg-green-500'} text-white disabled:opacity-50`}
           onClick={isPlaying ? handlePause : handlePlay}
-          disabled={disabled || !isController}
+          disabled={disabled || !isController || !audioUrl}
         >
           {isPlaying ? 'Pause' : 'Play'}
         </button>
@@ -296,7 +337,7 @@ export default function AudioPlayer({
         <button
           className="ml-4 px-3 py-2 rounded bg-blue-500 text-white hover:bg-blue-600 disabled:opacity-50"
           onClick={handleResync}
-          disabled={disabled}
+          disabled={disabled || !audioUrl}
         >
           Re-sync
         </button>
@@ -309,7 +350,7 @@ export default function AudioPlayer({
         value={isFinite(currentTime) ? currentTime : 0}
         onChange={handleSeek}
         className="w-full accent-blue-500"
-        disabled={disabled || !isController}
+        disabled={disabled || !isController || !audioUrl}
       />
       <div className="mt-2">
         <SyncStatus status={syncStatus} />

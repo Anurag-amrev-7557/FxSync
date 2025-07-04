@@ -9,7 +9,8 @@ export default function SessionForm({ onJoin, currentSessionId }) {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`${import.meta.env.VITE_BACKEND_URL}/generate-session-id`);
+      const url = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
+      const res = await fetch(`${url}/generate-session-id`);
       const data = await res.json();
       setSessionId(data.sessionId || '');
     } catch (e) {
