@@ -24,6 +24,10 @@ app.use('/', audioRouter);
 app.use('/', sessionRouter);
 app.use('/', healthRouter);
 
+app.get('/', (req, res) => {
+  res.send('<h1>Audio Sync Backend is running! 🚀</h1><p>Deployed on Render.</p>');
+});
+
 setupSocket(io);
 
 const PORT = process.env.PORT || 4000;
