@@ -75,7 +75,7 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
 
     if (socketRef.current && connected) {
       syncTime();
-      interval = setInterval(syncTime, 5000); // every 5 seconds
+      interval = setInterval(syncTime, 100); // every 2 seconds (tighter sync)
     }
     return () => {
       if (interval) clearInterval(interval);

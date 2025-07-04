@@ -12,7 +12,8 @@ if (typeof window !== 'undefined' && !window._audioPlayerErrorHandlerAdded) {
   window._audioPlayerErrorHandlerAdded = true;
 }
 
-const DRIFT_THRESHOLD = 0.5; // seconds
+const DRIFT_THRESHOLD = 0.1; // seconds (tighter sync)
+const PLAY_OFFSET = 0.15; // seconds (150ms future offset for play events)
 
 function isFiniteNumber(n) {
   return typeof n === 'number' && isFinite(n);
@@ -71,6 +72,7 @@ export default function AudioPlayer({
   controllerClientId,
   clientId,
   clients = [],
+  getServerTime,
 }) {
   const [audioUrl, setAudioUrl] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -227,10 +229,40 @@ export default function AudioPlayer({
     return () => clearInterval(interval);
   }, [socket, isController]);
 
+  // On mount, immediately request sync state on join
+  useEffect(() => {
+    if (!socket) return;
+    if (socket.sessionId) {
+      socket.emit('sync_request', { sessionId: socket.sessionId }, (state) => {
+        // Same logic as handleSyncState
+        if (
+          !state ||
+          typeof state.timestamp !== 'number' ||
+          typeof state.lastUpdated !== 'number' ||
+          !isFinite(state.timestamp) ||
+          !isFinite(state.lastUpdated)
+        ) return;
+        const audio = audioRef.current;
+        if (!audio) return;
+        const now = Date.now();
+        const expected = state.timestamp + (now - state.lastUpdated) / 1000;
+        if (!isFiniteNumber(expected)) return;
+        setCurrentTimeSafely(audio, expected, setCurrentTime);
+        setIsPlaying(state.isPlaying);
+        if (state.isPlaying) audio.play();
+        else audio.pause();
+        setLastSync(Date.now());
+      });
+    }
+  }, [socket]);
+
   // Emit play/pause/seek events (controller only)
   const emitPlay = () => {
-    if (isController && socket) {
-      socket.emit('play', { sessionId: socket.sessionId, timestamp: audioRef.current.currentTime });
+    if (isController && socket && getServerTime) {
+      const now = getServerTime();
+      const audio = audioRef.current;
+      const playAt = (audio ? audio.currentTime : 0) + PLAY_OFFSET;
+      socket.emit('play', { sessionId: socket.sessionId, timestamp: playAt });
     }
   };
   const emitPause = () => {

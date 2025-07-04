@@ -12,7 +12,7 @@ function App() {
   const [messages, setMessages] = useState([])
   const [queue, setQueue] = useState([])
 
-  const { socket, connected, controllerId, controllerClientId, clients, clientId } = useSocket(currentSessionId)
+  const { socket, connected, controllerId, controllerClientId, clients, clientId, getServerTime } = useSocket(currentSessionId)
 
   useEffect(() => {
     if (!socket) return
@@ -55,6 +55,7 @@ function App() {
             controllerClientId={controllerClientId}
             clientId={clientId}
             clients={clients}
+            getServerTime={getServerTime}
           />
           <DeviceList
             clients={clients}
