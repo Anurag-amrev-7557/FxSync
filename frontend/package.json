@@ -7,16 +7,21 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "start": "vite",
+    "env:example": "echo 'VITE_BACKEND_URL=http://localhost:4000' > .env && echo 'Created example .env file'"
   },
   "dependencies": {
+    "@tailwindcss/postcss": "^4.1.11",
+    "browser-id3-writer": "^6.2.0",
+    "jsmediatags": "^3.9.7",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "react-router-dom": "^7.6.3",
     "socket.io-client": "^4.8.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.29.0",
-    "@tailwindcss/postcss": "^4.1.11",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.5.2",
@@ -26,7 +31,7 @@
     "eslint-plugin-react-refresh": "^0.4.20",
     "globals": "^16.2.0",
     "postcss": "^8.5.6",
-    "tailwindcss": "^4.1.11",
+    "tailwindcss": "^3.4.17",
     "vite": "^7.0.0"
   }
 }

@@ -1,86 +1,113 @@
 import React, { useState, useEffect } from 'react'
-import SessionForm from './components/SessionForm'
-import AudioPlayer from './components/AudioPlayer'
-import DeviceList from './components/DeviceList'
-import ChatBox from './components/ChatBox'
-import Playlist from './components/Playlist'
+import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom'
+import SessionPage from './components/SessionPage'
+import CreateRoomPage from './components/CreateRoomPage'
 import useSocket from './hooks/useSocket'
 import './App.css'
 
+// Enhanced App component with better state management and routing
 function App() {
-  const [currentSessionId, setCurrentSessionId] = useState(null)
-  const [messages, setMessages] = useState([])
-  const [queue, setQueue] = useState([])
+  // Enhanced session state management
+  const [currentSessionId, setCurrentSessionId] = useState(() => {
+    // Initialize from URL params or localStorage
+    const urlParams = new URLSearchParams(window.location.search)
+    const sessionFromUrl = urlParams.get('session')
+    const sessionFromStorage = localStorage.getItem('fxSync_sessionId')
+    return sessionFromUrl || sessionFromStorage || null
+  })
+  
+  const [displayName, setDisplayName] = useState(() => {
+    // Initialize display name from localStorage or generate new one
+    const savedName = localStorage.getItem('fxSync_displayName')
+    if (savedName) return savedName
+    
+    const adjectives = ['Cool', 'Epic', 'Amazing', 'Awesome', 'Radical', 'Smooth', 'Groovy', 'Fresh']
+    const nouns = ['Listener', 'Groover', 'Vibes', 'Beats', 'Rhythm', 'Melody', 'Harmony', 'Sound']
+    const randomAdj = adjectives[Math.floor(Math.random() * adjectives.length)]
+    const randomNoun = nouns[Math.floor(Math.random() * nouns.length)]
+    return `${randomAdj} ${randomNoun}`
+  })
 
-  const { socket, connected, controllerId, controllerClientId, clients, clientId, getServerTime } = useSocket(currentSessionId)
+  // Enhanced socket connection with better error handling
+  const socketStuff = useSocket(currentSessionId, displayName)
+
+  // Persist session data to localStorage
+  useEffect(() => {
+    if (currentSessionId) {
+      localStorage.setItem('fxSync_sessionId', currentSessionId)
+    } else {
+      localStorage.removeItem('fxSync_sessionId')
+    }
+  }, [currentSessionId])
 
   useEffect(() => {
-    if (!socket) return
-    const handleChat = (msg) => setMessages((prev) => [...prev, msg])
-    socket.on('chat_message', handleChat)
-    socket.on('reaction', handleChat)
-    return () => {
-      socket.off('chat_message', handleChat)
-      socket.off('reaction', handleChat)
+    if (displayName) {
+      localStorage.setItem('fxSync_displayName', displayName)
     }
-  }, [socket])
+  }, [displayName])
 
-  useEffect(() => {
-    if (!socket) return
-    const handleQueue = (q) => setQueue(q)
-    socket.on('queue_update', handleQueue)
-    return () => {
-      socket.off('queue_update', handleQueue)
-    }
-  }, [socket])
-
-  const handleJoin = (sessionId) => {
+  // Enhanced session management functions
+  const handleSessionJoin = (sessionId, name) => {
     setCurrentSessionId(sessionId)
-    setMessages([])
-    setQueue([])
+    if (name) setDisplayName(name)
+    
+    // Update URL without page reload
+    if (sessionId) {
+      const newUrl = `${window.location.origin}/?session=${sessionId}`
+      window.history.pushState({ sessionId }, '', newUrl)
+    } else {
+      window.history.pushState({}, '', window.location.origin)
+    }
   }
 
-  const isController = controllerClientId && clientId && controllerClientId === clientId
+  const handleSessionLeave = () => {
+    setCurrentSessionId(null)
+    window.history.pushState({}, '', window.location.origin)
+  }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <SessionForm onJoin={handleJoin} currentSessionId={currentSessionId} />
-      {currentSessionId && (
-        <>
-          <AudioPlayer
-            disabled={!currentSessionId}
-            socket={socket}
-            isSocketConnected={connected}
-            controllerId={controllerId}
-            controllerClientId={controllerClientId}
-            clientId={clientId}
-            clients={clients}
-            getServerTime={getServerTime}
+    <Router>
+      <div className="app-container">
+        <Routes>
+          <Route
+            path="/"
+            element={
+              <SessionPage
+                currentSessionId={currentSessionId}
+                setCurrentSessionId={handleSessionJoin}
+                displayName={displayName}
+                setDisplayName={setDisplayName}
+                onLeaveSession={handleSessionLeave}
+                {...socketStuff}
+              />
+            }
           />
-          <DeviceList
-            clients={clients}
-            controllerClientId={controllerClientId}
-            clientId={clientId}
-            socket={socket}
+          <Route
+            path="/create-room"
+            element={
+              <CreateRoomPage
+                setCurrentSessionId={handleSessionJoin}
+                setDisplayName={setDisplayName}
+                currentDisplayName={displayName}
+              />
+            }
           />
-          <Playlist
-            queue={queue}
-            isController={isController}
-            socket={socket}
-            sessionId={currentSessionId}
+          <Route
+            path="/:sessionId"
+            element={
+              <SessionPage
+                currentSessionId={currentSessionId}
+                setCurrentSessionId={handleSessionJoin}
+                displayName={displayName}
+                setDisplayName={setDisplayName}
+                onLeaveSession={handleSessionLeave}
+                {...socketStuff}
+              />
+            }
           />
-          <ChatBox
-            socket={socket}
-            sessionId={currentSessionId}
-            clientId={clientId}
-            messages={messages}
-            onSend={(msg) => setMessages((prev) => [...prev, msg])}
-            clients={clients}
-          />
-        </>
-      )}
-      {/* Later: AudioPlayer, SyncStatus, DeviceList go here */}
-    </div>
+        </Routes>
+      </div>
+    </Router>
   )
 }
 

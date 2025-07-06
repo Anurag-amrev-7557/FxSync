@@ -1,7 +1,12 @@
-import { getSession, createSession, deleteSession, addClient, removeClient, setController, getAllSessions, getClients, updatePlayback, updateTimestamp, getClientIdBySocket, getSocketIdByClientId } from './managers/sessionManager.js';
+import { getSession, createSession, deleteSession, addClient, removeClient, setController, getAllSessions, getClients, updatePlayback, updateTimestamp, getClientIdBySocket, getSocketIdByClientId, addControllerRequest, removeControllerRequest, getPendingControllerRequests, clearExpiredControllerRequests } from './managers/sessionManager.js';
 import { addToQueue, removeFromQueue, getQueue } from './managers/queueManager.js';
 import { formatChatMessage, formatReaction } from './managers/chatManager.js';
 import { log } from './utils/utils.js';
+import { getSessionFiles, removeSessionFiles } from './managers/fileManager.js';
+import fs from 'fs';
+import path from 'path';
+import dotenv from 'dotenv';
+dotenv.config();
 
 export function setupSocket(io) {
   io.on('connection', (socket) => {
@@ -44,14 +49,19 @@ export function setupSocket(io) {
       callback && callback({
         ...session,
         sessionId,
-        audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
+        audioUrl: process.env.AUDIO_URL || 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
         controllerClientId: session.controllerClientId
       });
+      
+      // Send current queue to the joining client
+      socket.emit('queue_update', getQueue(sessionId));
+      
       io.to(sessionId).emit('clients_update', getClients(sessionId));
       if (becameController) {
         io.to(sessionId).emit('controller_change', socket.id);
         io.to(sessionId).emit('controller_client_change', clientId);
       }
+      log('Client joined session', sessionId, 'Current queue:', getQueue(sessionId));
     });
 
     socket.on('play', ({ sessionId, timestamp } = {}) => {
@@ -121,32 +131,296 @@ export function setupSocket(io) {
       if (!sessionId) return callback && callback({ error: 'No sessionId provided' });
       const session = getSession(sessionId);
       if (!session) return callback && callback({ error: 'Session not found' });
-      const clientId = getClientIdBySocket(sessionId, socket.id);
-      setController(sessionId, clientId);
-      log('Controller changed to client', clientId, 'in session', sessionId);
-      io.to(sessionId).emit('controller_change', socket.id);
-      io.to(sessionId).emit('controller_client_change', clientId);
+      
+      const requesterClientId = getClientIdBySocket(sessionId, socket.id);
+      if (!requesterClientId) return callback && callback({ error: 'Client not found in session' });
+      
+      // Check if requester is already the controller
+      if (session.controllerClientId === requesterClientId) {
+        return callback && callback({ error: 'You are already the controller' });
+      }
+      
+      // Check if there's already a pending request from this client
+      if (session.pendingControllerRequests.has(requesterClientId)) {
+        return callback && callback({ error: 'You already have a pending request' });
+      }
+      
+      // Get requester's display name
+      const requesterInfo = session.clients.get(socket.id);
+      const requesterName = requesterInfo ? requesterInfo.displayName : `User-${requesterClientId.slice(-4)}`;
+      
+      // Add the request
+      addControllerRequest(sessionId, requesterClientId, requesterName);
+      
+      // Notify the current controller
+      const controllerSocketId = session.controllerId;
+      if (controllerSocketId) {
+        const controllerSocket = io.sockets.sockets.get(controllerSocketId);
+        if (controllerSocket) {
+          controllerSocket.emit('controller_request_received', {
+            sessionId,
+            requesterClientId,
+            requesterName,
+            requestTime: Date.now()
+          });
+        }
+      }
+      
+      // Notify all clients about the pending request
+      io.to(sessionId).emit('controller_requests_update', getPendingControllerRequests(sessionId));
+      
+      log('Controller request from client', requesterClientId, 'in session', sessionId);
+      callback && callback({ success: true, message: 'Request sent to current controller' });
+    });
+
+    socket.on('approve_controller_request', ({ sessionId, requesterClientId } = {}, callback) => {
+      if (!sessionId) return callback && callback({ error: 'No sessionId provided' });
+      if (!requesterClientId) return callback && callback({ error: 'No requesterClientId provided' });
+      
+      const session = getSession(sessionId);
+      if (!session) return callback && callback({ error: 'Session not found' });
+      
+      const approverClientId = getClientIdBySocket(sessionId, socket.id);
+      if (session.controllerClientId !== approverClientId) {
+        return callback && callback({ error: 'Only the current controller can approve requests' });
+      }
+      
+      // Check if the request still exists
+      if (!session.pendingControllerRequests.has(requesterClientId)) {
+        return callback && callback({ error: 'Request not found or expired' });
+      }
+      
+      // Remove the request and transfer controller role
+      removeControllerRequest(sessionId, requesterClientId);
+      setController(sessionId, requesterClientId);
+      
+      log('Controller transferred to client', requesterClientId, 'in session', sessionId);
+      
+      // Notify all clients
+      io.to(sessionId).emit('controller_change', getSocketIdByClientId(sessionId, requesterClientId));
+      io.to(sessionId).emit('controller_client_change', requesterClientId);
+      io.to(sessionId).emit('controller_requests_update', getPendingControllerRequests(sessionId));
       io.to(sessionId).emit('sync_state', {
         isPlaying: session.isPlaying,
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
-        controllerId: socket.id
+        controllerId: getSocketIdByClientId(sessionId, requesterClientId)
       });
+      
+      callback && callback({ success: true });
+    });
+
+    socket.on('deny_controller_request', ({ sessionId, requesterClientId } = {}, callback) => {
+      if (!sessionId) return callback && callback({ error: 'No sessionId provided' });
+      if (!requesterClientId) return callback && callback({ error: 'No requesterClientId provided' });
+      
+      const session = getSession(sessionId);
+      if (!session) return callback && callback({ error: 'Session not found' });
+      
+      const denierClientId = getClientIdBySocket(sessionId, socket.id);
+      if (session.controllerClientId !== denierClientId) {
+        return callback && callback({ error: 'Only the current controller can deny requests' });
+      }
+      
+      // Remove the request
+      removeControllerRequest(sessionId, requesterClientId);
+      
+      log('Controller request denied for client', requesterClientId, 'in session', sessionId);
+      
+      // Notify all clients
+      io.to(sessionId).emit('controller_requests_update', getPendingControllerRequests(sessionId));
+      
+      callback && callback({ success: true });
+    });
+
+    socket.on('cancel_controller_request', ({ sessionId } = {}, callback) => {
+      if (!sessionId) return callback && callback({ error: 'No sessionId provided' });
+      
+      const session = getSession(sessionId);
+      if (!session) return callback && callback({ error: 'Session not found' });
+      
+      const requesterClientId = getClientIdBySocket(sessionId, socket.id);
+      if (!requesterClientId) return callback && callback({ error: 'Client not found in session' });
+      
+      // Remove the request
+      removeControllerRequest(sessionId, requesterClientId);
+      
+      log('Controller request cancelled by client', requesterClientId, 'in session', sessionId);
+      
+      // Notify all clients
+      io.to(sessionId).emit('controller_requests_update', getPendingControllerRequests(sessionId));
+      
+      callback && callback({ success: true });
+    });
+
+    socket.on('offer_controller', ({ sessionId, targetClientId } = {}, callback) => {
+      if (!sessionId) return callback && callback({ error: 'No sessionId provided' });
+      if (!targetClientId) return callback && callback({ error: 'No targetClientId provided' });
+      
+      const session = getSession(sessionId);
+      if (!session) return callback && callback({ error: 'Session not found' });
+      
+      const offererClientId = getClientIdBySocket(sessionId, socket.id);
+      if (session.controllerClientId !== offererClientId) {
+        return callback && callback({ error: 'Only the current controller can offer controller role' });
+      }
+      
+      // Check if target is already the controller
+      if (session.controllerClientId === targetClientId) {
+        return callback && callback({ error: 'Target is already the controller' });
+      }
+      
+      // Get offerer's display name
+      const offererInfo = session.clients.get(socket.id);
+      const offererName = offererInfo ? offererInfo.displayName : `User-${offererClientId.slice(-4)}`;
+      
+      // Get target's display name
+      const targetSocketId = getSocketIdByClientId(sessionId, targetClientId);
+      const targetInfo = targetSocketId ? session.clients.get(targetSocketId) : null;
+      const targetName = targetInfo ? targetInfo.displayName : `User-${targetClientId.slice(-4)}`;
+      
+      // Notify the target client
+      if (targetSocketId) {
+        const targetSocket = io.sockets.sockets.get(targetSocketId);
+        if (targetSocket) {
+          targetSocket.emit('controller_offer_received', {
+            sessionId,
+            offererClientId,
+            offererName,
+            targetClientId,
+            targetName,
+            offerTime: Date.now()
+          });
+        }
+      }
+      
+      // Notify the offerer that the offer was sent successfully
+      socket.emit('controller_offer_sent', {
+        sessionId,
+        targetClientId,
+        targetName,
+        offerTime: Date.now()
+      });
+      
+      log('Controller offer sent from', offererClientId, 'to', targetClientId, 'in session', sessionId);
+      callback && callback({ success: true, message: `Controller offer sent to ${targetName}` });
+    });
+
+    socket.on('accept_controller_offer', ({ sessionId, offererClientId } = {}, callback) => {
+      if (!sessionId) return callback && callback({ error: 'No sessionId provided' });
+      if (!offererClientId) return callback && callback({ error: 'No offererClientId provided' });
+      
+      const session = getSession(sessionId);
+      if (!session) return callback && callback({ error: 'Session not found' });
+      
+      const accepterClientId = getClientIdBySocket(sessionId, socket.id);
+      if (!accepterClientId) return callback && callback({ error: 'Client not found in session' });
+      
+      // Verify the offerer is still the controller
+      if (session.controllerClientId !== offererClientId) {
+        return callback && callback({ error: 'Offer is no longer valid' });
+      }
+      
+      // Transfer controller role
+      setController(sessionId, accepterClientId);
+      
+      log('Controller transferred to client', accepterClientId, 'in session', sessionId);
+      
+      // Get accepter's info
+      const accepterInfo = session.clients.get(socket.id);
+      const accepterName = accepterInfo ? accepterInfo.displayName : `User-${accepterClientId.slice(-4)}`;
+      
+      // Notify the offerer that their offer was accepted
+      const offererSocketId = getSocketIdByClientId(sessionId, offererClientId);
+      if (offererSocketId) {
+        const offererSocket = io.sockets.sockets.get(offererSocketId);
+        if (offererSocket) {
+          offererSocket.emit('controller_offer_accepted', {
+            sessionId,
+            accepterClientId,
+            accepterName,
+            offerTime: Date.now()
+          });
+        }
+      }
+      
+      // Notify all clients
+      io.to(sessionId).emit('controller_change', getSocketIdByClientId(sessionId, accepterClientId));
+      io.to(sessionId).emit('controller_client_change', accepterClientId);
+      io.to(sessionId).emit('sync_state', {
+        isPlaying: session.isPlaying,
+        timestamp: session.timestamp,
+        lastUpdated: session.lastUpdated,
+        controllerId: getSocketIdByClientId(sessionId, accepterClientId)
+      });
+      
+      callback && callback({ success: true });
+    });
+
+    socket.on('decline_controller_offer', ({ sessionId, offererClientId } = {}, callback) => {
+      if (!sessionId) return callback && callback({ error: 'No sessionId provided' });
+      if (!offererClientId) return callback && callback({ error: 'No offererClientId provided' });
+      
+      const session = getSession(sessionId);
+      if (!session) return callback && callback({ error: 'Session not found' });
+      
+      const declinerClientId = getClientIdBySocket(sessionId, socket.id);
+      if (!declinerClientId) return callback && callback({ error: 'Client not found in session' });
+      
+      // Notify the offerer that their offer was declined
+      const offererSocketId = getSocketIdByClientId(sessionId, offererClientId);
+      if (offererSocketId) {
+        const offererSocket = io.sockets.sockets.get(offererSocketId);
+        if (offererSocket) {
+          offererSocket.emit('controller_offer_declined', {
+            sessionId,
+            declinerClientId,
+            declinerName: session.clients.get(socket.id) ? session.clients.get(socket.id).displayName : `User-${declinerClientId.slice(-4)}`,
+            offerTime: Date.now()
+          });
+        }
+      }
+      
+      log('Controller offer declined by client', declinerClientId, 'in session', sessionId);
+      
       callback && callback({ success: true });
     });
 
     socket.on('chat_message', ({ sessionId, message, sender } = {}) => {
-      if (!sessionId || !message || typeof message !== 'string') return;
-      if (!getSession(sessionId)) return;
+      console.log('Backend: Received chat_message event:', { sessionId, message, sender, socketId: socket.id });
+      if (!sessionId || !message || typeof message !== 'string') {
+        console.log('Backend: Invalid chat message data:', { sessionId, message, sender });
+        return;
+      }
+      const session = getSession(sessionId);
+      console.log('Backend: Available sessions:', Object.keys(getAllSessions()));
+      if (!session) {
+        console.log('Backend: Session not found:', sessionId);
+        return;
+      }
+      console.log('Backend: Session found, broadcasting message to session:', sessionId);
       log('Chat in session', sessionId, ':', message);
-      io.to(sessionId).emit('chat_message', formatChatMessage(sender || socket.id, message));
+      const formattedMessage = formatChatMessage(sender || socket.id, message);
+      console.log('Backend: Formatted message:', formattedMessage);
+      io.to(sessionId).emit('chat_message', formattedMessage);
     });
 
     socket.on('reaction', ({ sessionId, reaction, sender } = {}) => {
-      if (!sessionId || !reaction || typeof reaction !== 'string') return;
-      if (!getSession(sessionId)) return;
+      console.log('Backend: Received reaction event:', { sessionId, reaction, sender, socketId: socket.id });
+      if (!sessionId || !reaction || typeof reaction !== 'string') {
+        console.log('Backend: Invalid reaction data:', { sessionId, reaction, sender });
+        return;
+      }
+      const session = getSession(sessionId);
+      if (!session) {
+        console.log('Backend: Session not found for reaction:', sessionId);
+        return;
+      }
+      console.log('Backend: Session found, broadcasting reaction to session:', sessionId);
       log('Reaction in session', sessionId, ':', reaction);
-      io.to(sessionId).emit('reaction', formatReaction(sender || socket.id, reaction));
+      const formattedReaction = formatReaction(sender || socket.id, reaction);
+      console.log('Backend: Formatted reaction:', formattedReaction);
+      io.to(sessionId).emit('reaction', formattedReaction);
     });
 
     socket.on('add_to_queue', ({ sessionId, url, title } = {}, callback) => {
@@ -156,7 +430,7 @@ export function setupSocket(io) {
       const clientId = getClientIdBySocket(sessionId, socket.id);
       if (session.controllerClientId !== clientId) return callback && callback({ error: 'Not allowed' });
       addToQueue(sessionId, url, title);
-      log('Queue add in session', sessionId, ':', url);
+      log('Queue add in session', sessionId, ':', url, 'Current queue:', getQueue(sessionId));
       io.to(sessionId).emit('queue_update', getQueue(sessionId));
       callback && callback({ success: true });
     });
@@ -171,6 +445,62 @@ export function setupSocket(io) {
       log('Queue remove in session', sessionId, ':', index);
       io.to(sessionId).emit('queue_update', getQueue(sessionId));
       callback && callback({ success: true });
+    });
+
+    /**
+     * Enhanced track_change event:
+     * - Only controller can change track.
+     * - Broadcasts new track index and metadata to all clients.
+     * - Optionally supports a "reason" and "initiator" for diagnostics.
+     * - Emits a queue_update for clients to refresh their queue state.
+     * 
+     * Defensive: Handles null/undefined event argument to avoid destructuring errors.
+     */
+    socket.on('track_change', (data, callback) => {
+      // Defensive: If data is null/undefined, set to empty object to avoid destructuring error
+      data = data || {};
+      const { sessionId, idx, reason } = data;
+
+      if (!sessionId) {
+        if (callback) callback({ error: 'No sessionId provided' });
+        return;
+      }
+      const session = getSession(sessionId);
+      if (!session) {
+        if (callback) callback({ error: 'Session not found' });
+        return;
+      }
+      const clientId = getClientIdBySocket(sessionId, socket.id);
+      // Only allow the controller to change the track
+      if (session.controllerClientId !== clientId) {
+        if (callback) callback({ error: 'Not allowed' });
+        return;
+      }
+
+      // Get queue and track metadata if available
+      const queue = getQueue(sessionId) || [];
+      const track = (typeof idx === 'number' && queue[idx]) ? queue[idx] : null;
+
+      // Prepare payload with more info
+      const payload = {
+        idx,
+        track,
+        reason: reason || null,
+        initiator: clientId,
+        timestamp: Date.now()
+      };
+
+      // Broadcast to all clients in the session
+      io.to(sessionId).emit('track_change', payload);
+
+      // Optionally, emit queue_update for clients to refresh their queue state
+      io.to(sessionId).emit('queue_update', queue);
+
+      // Log the track change for audit/debug
+      log('Track change in session', sessionId, ':', payload);
+
+      // Optionally, callback to sender
+      if (callback) callback({ success: true, ...payload });
     });
 
     /**
@@ -232,18 +562,47 @@ export function setupSocket(io) {
 
     socket.on('disconnect', () => {
       for (const [sessionId, session] of Object.entries(getAllSessions())) {
+        const clientId = getClientIdBySocket(sessionId, socket.id);
         removeClient(sessionId, socket.id);
+        // Clean up any pending controller requests from this client
+        if (clientId) {
+          removeControllerRequest(sessionId, clientId);
+        }
         if (session.controllerId === socket.id) {
           const newSocketId = getSocketIdByClientId(sessionId, session.controllerClientId);
           session.controllerId = newSocketId;
           io.to(sessionId).emit('controller_change', newSocketId);
         }
+        // Only delete files if the session is now empty
         if (getClients(sessionId).length === 0) {
+          // Delete all files for this session (user uploads only)
+          const sessionFiles = getSessionFiles(sessionId);
+          const uploadsDir = path.join(process.cwd(), 'uploads');
+          const samplesDir = path.join(uploadsDir, 'samples');
+          const sampleFiles = fs.existsSync(samplesDir) ? new Set(fs.readdirSync(samplesDir)) : new Set();
+          Object.values(sessionFiles).forEach(fileList => {
+            fileList.forEach(filename => {
+              // Only delete files that are NOT in the samples directory and not a sample file
+              if (!filename.startsWith('samples/') && !sampleFiles.has(filename)) {
+                const filePath = path.join(uploadsDir, filename);
+                fs.unlink(filePath, (err) => {
+                  if (err) {
+                    console.error(`[CLEANUP] Failed to delete file ${filePath}:`, err);
+                  } else {
+                    log(`[CLEANUP] Deleted user-uploaded file: ${filePath}`);
+                  }
+                });
+              } else {
+                log(`[CLEANUP] Skipped sample file: ${filename}`);
+              }
+            });
+          });
+          removeSessionFiles(sessionId);
           deleteSession(sessionId);
-          log('Session deleted (empty):', sessionId);
-        } else {
-          io.to(sessionId).emit('clients_update', getClients(sessionId));
+          log(`[CLEANUP] Session deleted (empty): ${sessionId}`);
         }
+        io.to(sessionId).emit('clients_update', getClients(sessionId));
+        io.to(sessionId).emit('controller_requests_update', getPendingControllerRequests(sessionId));
       }
       log('Socket disconnected:', socket.id);
     });
@@ -265,6 +624,13 @@ export function setupSocket(io) {
         }
         deleteSession(sessionId);
         log(`Session ${sessionId} timed out and was removed.`);
+      } else {
+        // Clean up expired controller requests
+        const hadExpiredRequests = session.pendingControllerRequests.size > 0;
+        clearExpiredControllerRequests(sessionId);
+        if (hadExpiredRequests && session.pendingControllerRequests.size === 0) {
+          io.to(sessionId).emit('controller_requests_update', []);
+        }
       }
     }
   }, 60 * 1000);

@@ -12,7 +12,9 @@ export function createSession(sessionId, controllerId, controllerClientId) {
     controllerId,
     controllerClientId,
     clients: new Map(), // Map<socketId, {displayName, deviceInfo, clientId}>
-    queue: []
+    queue: [],
+    selectedTrackIdx: 0,
+    pendingControllerRequests: new Map() // Map<clientId, {requestTime, requesterName}>
   };
   return sessions[sessionId];
 }
@@ -82,4 +84,44 @@ export function getSocketIdByClientId(sessionId, clientId) {
     if (info.clientId === clientId) return socketId;
   }
   return null;
+}
+
+export function addControllerRequest(sessionId, requesterClientId, requesterName) {
+  if (!sessions[sessionId]) return false;
+  sessions[sessionId].pendingControllerRequests.set(requesterClientId, {
+    requestTime: Date.now(),
+    requesterName: requesterName || `User-${requesterClientId.slice(-4)}`
+  });
+  return true;
+}
+
+export function removeControllerRequest(sessionId, requesterClientId) {
+  if (!sessions[sessionId]) return false;
+  return sessions[sessionId].pendingControllerRequests.delete(requesterClientId);
+}
+
+export function getPendingControllerRequests(sessionId) {
+  if (!sessions[sessionId]) return [];
+  return Array.from(sessions[sessionId].pendingControllerRequests.entries()).map(([clientId, request]) => ({
+    clientId,
+    ...request
+  }));
+}
+
+export function clearExpiredControllerRequests(sessionId) {
+  if (!sessions[sessionId]) return;
+  const now = Date.now();
+  const REQUEST_TIMEOUT = 5 * 60 * 1000; // 5 minutes
+  
+  for (const [clientId, request] of sessions[sessionId].pendingControllerRequests.entries()) {
+    if (now - request.requestTime > REQUEST_TIMEOUT) {
+      sessions[sessionId].pendingControllerRequests.delete(clientId);
+    }
+  }
+}
+
+export function setSelectedTrackIdx(sessionId, idx) {
+  if (!sessions[sessionId]) return;
+  sessions[sessionId].selectedTrackIdx = idx;
+  sessions[sessionId].lastUpdated = Date.now();
 } 

@@ -9,6 +9,12 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
   const [controllerClientId, setControllerClientId] = useState(null);
   const [timeOffset, setTimeOffset] = useState(0); // serverTime - clientTime
   const [rtt, setRtt] = useState(null);
+  const [pendingControllerRequests, setPendingControllerRequests] = useState([]);
+  const [controllerRequestReceived, setControllerRequestReceived] = useState(null);
+  const [controllerOfferReceived, setControllerOfferReceived] = useState(null);
+  const [controllerOfferSent, setControllerOfferSent] = useState(null);
+  const [controllerOfferAccepted, setControllerOfferAccepted] = useState(null);
+  const [controllerOfferDeclined, setControllerOfferDeclined] = useState(null);
   const socketRef = useRef(null);
   const clientId = getClientId();
 
@@ -84,12 +90,22 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
   }, [connected]);
 
   useEffect(() => {
-    if (!sessionId) return;
+    if (!sessionId) {
+      console.log('useSocket: No sessionId provided');
+      return;
+    }
+    console.log('useSocket: Creating socket connection for sessionId:', sessionId);
     const url = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
-    const socket = io(url, { transports: ['websocket'] });
+    console.log('useSocket: Connecting to:', url);
+    const socket = io(url, { 
+      transports: ['websocket'],
+      timeout: 20000,
+      forceNew: true
+    });
     socketRef.current = socket;
 
     socket.on('connect', () => {
+      console.log('useSocket: Socket connected');
       setConnected(true);
       socket.emit('join_session', { sessionId, displayName, deviceInfo, clientId }, (data) => {
         console.log('JOIN CALLBACK DATA:', data);
@@ -98,23 +114,51 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
         socket.sessionId = sessionId;
       });
     });
-    socket.on('disconnect', () => setConnected(false));
+    socket.on('disconnect', () => {
+      console.log('useSocket: Socket disconnected');
+      setConnected(false);
+    });
+    socket.on('connect_error', (error) => {
+      console.error('useSocket: Connection error:', error);
+    });
+    socket.on('error', (error) => {
+      console.error('useSocket: Socket error:', error);
+    });
     socket.on('controller_change', setControllerId);
     socket.on('clients_update', setClients);
     socket.on('controller_client_change', setControllerClientId);
+    socket.on('controller_requests_update', setPendingControllerRequests);
+    socket.on('controller_request_received', setControllerRequestReceived);
+    socket.on('controller_offer_received', setControllerOfferReceived);
+    socket.on('controller_offer_sent', setControllerOfferSent);
+    socket.on('controller_offer_accepted', setControllerOfferAccepted);
+    socket.on('controller_offer_declined', setControllerOfferDeclined);
 
     return () => {
+      console.log('useSocket: Cleaning up socket connection');
       socket.disconnect();
       setConnected(false);
       setControllerId(null);
       setClients([]);
       setControllerClientId(null);
+      setPendingControllerRequests([]);
+      setControllerRequestReceived(null);
+      setControllerOfferReceived(null);
+      setControllerOfferSent(null);
+      setControllerOfferAccepted(null);
+      setControllerOfferDeclined(null);
     };
-  }, [sessionId, displayName, deviceInfo, clientId]);
+  }, [sessionId, clientId]);
 
   useEffect(() => {
-    console.log('controllerClientId:', controllerClientId, 'clientId:', clientId, 'isController:', controllerClientId && clientId && controllerClientId === clientId);
-  }, [controllerClientId, clientId]);
+    console.log('useSocket: State update:', {
+      controllerClientId,
+      clientId,
+      isController: controllerClientId && clientId && controllerClientId === clientId,
+      socketExists: !!socketRef.current,
+      connected
+    });
+  }, [controllerClientId, clientId, connected]);
 
   // Expose getServerTime for precise scheduling
   function getServerTime() {
@@ -131,5 +175,11 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
     timeOffset,
     rtt,
     getServerTime,
+    pendingControllerRequests,
+    controllerRequestReceived,
+    controllerOfferReceived,
+    controllerOfferSent,
+    controllerOfferAccepted,
+    controllerOfferDeclined,
   };
 } 

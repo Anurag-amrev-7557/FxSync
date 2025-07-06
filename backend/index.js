@@ -7,22 +7,33 @@ import audioRouter from './routes/audio.js';
 import sessionRouter from './routes/session.js';
 import healthRouter from './routes/health.js';
 import { log } from './utils/utils.js';
+import dotenv from 'dotenv';
+dotenv.config();
 
 const app = express();
 const server = http.createServer(app);
+
+const allowedOrigins = (process.env.FRONTEND_ORIGINS
+  ? process.env.FRONTEND_ORIGINS.split(',').map(origin => origin.trim())
+  : ["http://localhost:5173", "http://localhost:5174", "http://localhost:3000", "https://fxsync-web.web.app"]);
+
 const io = new Server(server, {
   cors: {
-    origin: 'https://fxsync-web.web.app', // or your custom domain
-    methods: ['GET', 'POST']
+    origin: allowedOrigins,
+    methods: ['GET', 'POST'],
+    credentials: true
   }
 });
 
-app.use(cors());
+app.use(cors({
+  origin: allowedOrigins,
+  credentials: true
+}));
 app.use(express.json());
 
-app.use('/', audioRouter);
-app.use('/', sessionRouter);
-app.use('/', healthRouter);
+app.use('/audio', audioRouter);
+app.use('/session', sessionRouter);
+app.use('/health', healthRouter);
 
 app.get('/', (req, res) => {
   res.send('<h1>Audio Sync Backend is running! 🚀</h1><p>Deployed on Render.</p>');
