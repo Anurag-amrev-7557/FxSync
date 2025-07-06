@@ -135,14 +135,25 @@ function SessionPage({
   useEffect(() => {
     if (!socket) return;
     const handleQueueUpdate = (q) => {
-      console.log('Received queue_update:', q);
+      console.log('[DEBUG] Received queue_update:', q);
       setQueue(q);
       // If a track_change was received before the queue, apply it now
       if (pendingTrackIdx.current !== null) {
-        console.log('Applying buffered track_change:', pendingTrackIdx.current);
-        setCurrentTrackOverride(null);
+        console.log('[DEBUG] Applying buffered track_change:', pendingTrackIdx.current, pendingTrackIdx.currentTrack);
+        // If a track was also buffered, set it
+        if (pendingTrackIdx.currentTrack) {
+          setCurrentTrackOverride(pendingTrackIdx.currentTrack);
+        } else {
+          setCurrentTrackOverride(null);
+        }
         setSelectedTrackIdx(pendingTrackIdx.current);
+        console.log('[DEBUG] After applying buffered track_change:', {
+          queue: q,
+          selectedTrackIdx: pendingTrackIdx.current,
+          currentTrackOverride: pendingTrackIdx.currentTrack
+        });
         pendingTrackIdx.current = null;
+        pendingTrackIdx.currentTrack = null;
       }
     };
     socket.on('queue_update', handleQueueUpdate);
@@ -156,14 +167,21 @@ function SessionPage({
     const handleTrackChange = (payload) => {
       // Support both old (number) and new (object) payloads for safety
       const idx = typeof payload === 'object' && payload !== null ? payload.idx : payload;
-      console.log('Received track_change:', payload);
+      const track = typeof payload === 'object' && payload !== null ? payload.track : null;
+      console.log('[DEBUG] Received track_change:', payload, { idx, track });
       // If queue is not set yet, buffer the track_change
       if (!queue || queue.length === 0) {
-        console.log('Buffering track_change until queue is set');
+        console.log('[DEBUG] Buffering track_change until queue is set', { idx, track });
         pendingTrackIdx.current = idx;
+        pendingTrackIdx.currentTrack = track;
       } else {
-        setCurrentTrackOverride(null);
+        setCurrentTrackOverride(track || null);
         setSelectedTrackIdx(idx);
+        console.log('[DEBUG] After immediate track_change:', {
+          queue,
+          selectedTrackIdx: idx,
+          currentTrackOverride: track
+        });
       }
     };
     socket.on('track_change', handleTrackChange);
@@ -189,6 +207,23 @@ function SessionPage({
       socket.offAny(logAll);
     };
   }, [socket]);
+
+  // On mount or when joining a session, request sync state and set current track if provided
+  useEffect(() => {
+    if (!socket || !currentSessionId) return;
+    socket.emit('sync_request', { sessionId: currentSessionId }, (state) => {
+      if (state && state.currentTrack) {
+        setCurrentTrackOverride(state.currentTrack);
+        // Try to find the index in the queue if possible
+        if (queue && queue.length > 0) {
+          const idx = queue.findIndex(
+            (t) => t && state.currentTrack && t.url === state.currentTrack.url
+          );
+          if (idx !== -1) setSelectedTrackIdx(idx);
+        }
+      }
+    });
+  }, [socket, currentSessionId]);
 
   const handleJoin = (sessionId, name) => {
     // Load saved data for the session
@@ -241,9 +276,7 @@ function SessionPage({
 
   // In render, always derive currentTrack from latest queue and selectedTrackIdx
   const currentTrack = currentTrackOverride || (queue && queue.length > 0 ? queue[selectedTrackIdx] : null);
-
-  // Debug: Log currentTrack, selectedTrackIdx, and queue
-  console.log('SessionPage: currentTrack', currentTrack, 'selectedTrackIdx', selectedTrackIdx, 'queue', queue);
+  console.log('[DEBUG] Render: currentTrack', currentTrack, 'selectedTrackIdx', selectedTrackIdx, 'queue', queue);
 
   return (
     <div className="min-h-screen bg-neutral-950 text-white">

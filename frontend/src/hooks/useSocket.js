@@ -2,6 +2,17 @@ import { useEffect, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import { getClientId } from '../utils/clientId';
 
+// --- Time Sync Tuning Constants ---
+const TRIM_RATIO = 0.22; // Outlier filtering trim ratio
+const MAX_RTT = 220; // ms, ignore samples above this
+const ADAPTIVE_INTERVAL_BAD = 800; // ms, unstable network
+const ADAPTIVE_INTERVAL_GOOD = 2500; // ms, very stable
+const ADAPTIVE_INTERVAL_DEFAULT = 1500; // ms, default
+const JITTER_BAD = 15; // ms
+const JITTER_GOOD = 10; // ms
+const AVG_RTT_BAD = 100; // ms
+const AVG_RTT_GOOD = 70; // ms
+
 export default function useSocket(sessionId, displayName = '', deviceInfo = '') {
   const [connected, setConnected] = useState(false);
   const [controllerId, setControllerId] = useState(null);
@@ -22,14 +33,33 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
   useEffect(() => {
     let interval;
     let lastOffsets = [];
-    const MAX_HISTORY = 8; // For smoothing
+    let lastRtts = [];
+    const MAX_HISTORY = 10; // For smoothing (robust to spikes)
+    let adaptiveInterval = ADAPTIVE_INTERVAL_DEFAULT; // Start with default
+    let lastSyncTime = 0;
 
-    function syncTime() {
+    function trimmedMean(arr, trimRatio) {
+      if (arr.length === 0) return 0;
+      const sorted = [...arr].sort((a, b) => a - b);
+      const trim = Math.floor(arr.length * trimRatio);
+      const trimmed = sorted.slice(trim, arr.length - trim);
+      if (trimmed.length === 0) return sorted[Math.floor(sorted.length / 2)];
+      return trimmed.reduce((a, b) => a + b, 0) / trimmed.length;
+    }
+
+    function calcJitter(arr) {
+      if (arr.length < 2) return 0;
+      const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
+      return Math.sqrt(arr.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / (arr.length - 1));
+    }
+
+    function syncTime(force = false) {
       const socket = socketRef.current;
       if (!socket || !socket.connected) return;
-      const clientSent = Date.now();
-
-      // Send extended info for diagnostics
+      const now = Date.now();
+      if (!force && now - lastSyncTime < adaptiveInterval - 50) return;
+      lastSyncTime = now;
+      const clientSent = now;
       socket.emit(
         'time_sync',
         {
@@ -47,17 +77,31 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
 
           const clientReceived = Date.now();
           const roundTrip = clientReceived - data.clientSent;
+          if (roundTrip > MAX_RTT) return; // Ignore high RTT samples
           const estimatedServerTime = data.serverTime + roundTrip / 2;
           const offset = estimatedServerTime - clientReceived;
 
-          // Smoothing: keep a rolling average of offsets
+          // Smoothing: keep a rolling window, filter outliers
           lastOffsets.push(offset);
+          lastRtts.push(roundTrip);
           if (lastOffsets.length > MAX_HISTORY) lastOffsets.shift();
-          const avgOffset =
-            lastOffsets.reduce((a, b) => a + b, 0) / lastOffsets.length;
+          if (lastRtts.length > MAX_HISTORY) lastRtts.shift();
 
+          // Outlier filtering: trimmed mean
+          const avgOffset = trimmedMean(lastOffsets, TRIM_RATIO);
+          const avgRtt = trimmedMean(lastRtts, TRIM_RATIO);
           setTimeOffset(avgOffset);
-          setRtt(roundTrip);
+          setRtt(avgRtt);
+
+          // Adaptive interval: shorter if unstable, longer if stable
+          const jitter = calcJitter(lastOffsets);
+          if (jitter > 20 || avgRtt > 120) {
+            adaptiveInterval = ADAPTIVE_INTERVAL_BAD; // Unstable, sync more often
+          } else if (jitter < JITTER_GOOD && avgRtt < AVG_RTT_GOOD) {
+            adaptiveInterval = ADAPTIVE_INTERVAL_GOOD; // Very stable, sync less often
+          } else {
+            adaptiveInterval = ADAPTIVE_INTERVAL_DEFAULT; // Default
+          }
 
           // Optionally, log diagnostics for debugging
           if (process.env.NODE_ENV !== 'production') {
@@ -69,6 +113,9 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
               roundTrip,
               offset,
               avgOffset,
+              avgRtt,
+              jitter,
+              adaptiveInterval,
               serverIso: data.serverIso,
               serverUptime: data.serverUptime,
               serverInfo: data.serverInfo,
@@ -80,12 +127,13 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
     }
 
     if (socketRef.current && connected) {
-      syncTime();
-      interval = setInterval(syncTime, 100); // every 2 seconds (tighter sync)
+      syncTime(true); // Initial sync
+      interval = setInterval(() => syncTime(), adaptiveInterval);
     }
     return () => {
       if (interval) clearInterval(interval);
       lastOffsets = [];
+      lastRtts = [];
     };
   }, [connected]);
 
@@ -160,6 +208,13 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
     });
   }, [controllerClientId, clientId, connected]);
 
+  // Expose a method to force immediate time sync (for use on drift)
+  function forceTimeSync() {
+    if (typeof window !== 'undefined' && window.__forceTimeSync) {
+      window.__forceTimeSync();
+    }
+  }
+
   // Expose getServerTime for precise scheduling
   function getServerTime() {
     return Date.now() + timeOffset;
@@ -175,11 +230,18 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
     timeOffset,
     rtt,
     getServerTime,
+    forceTimeSync, // for immediate sync
     pendingControllerRequests,
     controllerRequestReceived,
     controllerOfferReceived,
     controllerOfferSent,
     controllerOfferAccepted,
     controllerOfferDeclined,
+    // Diagnostics for UI
+    timeSyncDiagnostics: {
+      offset: timeOffset,
+      rtt,
+      // Optionally expose jitter and interval
+    },
   };
 } 

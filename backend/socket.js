@@ -119,11 +119,16 @@ export function setupSocket(io) {
       if (!sessionId) return callback && callback({ error: 'No sessionId provided' });
       const session = getSession(sessionId);
       if (!session) return callback && callback({ error: 'Session not found' });
+      // Get current track from queue and selectedTrackIdx
+      const queue = session.queue || [];
+      const selectedTrackIdx = typeof session.selectedTrackIdx === 'number' ? session.selectedTrackIdx : 0;
+      const currentTrack = (queue && queue.length > 0 && queue[selectedTrackIdx]) ? queue[selectedTrackIdx] : null;
       callback && callback({
         isPlaying: session.isPlaying,
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
-        controllerId: session.controllerId
+        controllerId: session.controllerId,
+        currentTrack
       });
     });
 
@@ -424,15 +429,12 @@ export function setupSocket(io) {
     });
 
     socket.on('add_to_queue', ({ sessionId, url, title } = {}, callback) => {
-      if (!sessionId || !url || typeof url !== 'string') return callback && callback({ error: 'Invalid input' });
-      const session = getSession(sessionId);
-      if (!session) return callback && callback({ error: 'Session not found' });
-      const clientId = getClientIdBySocket(sessionId, socket.id);
-      if (session.controllerClientId !== clientId) return callback && callback({ error: 'Not allowed' });
+      if (!sessionId || !url) return callback && callback({ error: 'Missing sessionId or url' });
       addToQueue(sessionId, url, title);
-      log('Queue add in session', sessionId, ':', url, 'Current queue:', getQueue(sessionId));
-      io.to(sessionId).emit('queue_update', getQueue(sessionId));
-      callback && callback({ success: true });
+      const queue = getQueue(sessionId);
+      log('[DEBUG] add_to_queue: session', sessionId, 'queue now:', queue);
+      io.to(sessionId).emit('queue_update', queue);
+      callback && callback({ success: true, queue });
     });
 
     socket.on('remove_from_queue', ({ sessionId, index } = {}, callback) => {
@@ -457,7 +459,6 @@ export function setupSocket(io) {
      * Defensive: Handles null/undefined event argument to avoid destructuring errors.
      */
     socket.on('track_change', (data, callback) => {
-      // Defensive: If data is null/undefined, set to empty object to avoid destructuring error
       data = data || {};
       const { sessionId, idx, reason } = data;
 
@@ -471,17 +472,17 @@ export function setupSocket(io) {
         return;
       }
       const clientId = getClientIdBySocket(sessionId, socket.id);
-      // Only allow the controller to change the track
       if (session.controllerClientId !== clientId) {
         if (callback) callback({ error: 'Not allowed' });
         return;
       }
 
-      // Get queue and track metadata if available
       const queue = getQueue(sessionId) || [];
       const track = (typeof idx === 'number' && queue[idx]) ? queue[idx] : null;
 
-      // Prepare payload with more info
+      // Debug log for queue and track
+      log('[DEBUG] track_change: session', sessionId, 'queue:', queue, 'idx:', idx, 'track:', track);
+
       const payload = {
         idx,
         track,
@@ -490,16 +491,9 @@ export function setupSocket(io) {
         timestamp: Date.now()
       };
 
-      // Broadcast to all clients in the session
-      io.to(sessionId).emit('track_change', payload);
-
-      // Optionally, emit queue_update for clients to refresh their queue state
       io.to(sessionId).emit('queue_update', queue);
-
-      // Log the track change for audit/debug
+      io.to(sessionId).emit('track_change', payload);
       log('Track change in session', sessionId, ':', payload);
-
-      // Optionally, callback to sender
       if (callback) callback({ success: true, ...payload });
     });
 
@@ -558,6 +552,17 @@ export function setupSocket(io) {
           });
         });
       }
+    });
+
+    // Store per-client drift for diagnostics/adaptive correction
+    const clientDriftMap = {};
+
+    socket.on('drift_report', ({ sessionId, drift, clientId, timestamp } = {}) => {
+      if (!sessionId || typeof drift !== 'number' || !clientId) return;
+      if (!clientDriftMap[sessionId]) clientDriftMap[sessionId] = {};
+      clientDriftMap[sessionId][clientId] = { drift, timestamp };
+      log(`[DRIFT] Session ${sessionId} Client ${clientId}: Drift=${drift.toFixed(3)}s at ${new Date(timestamp).toISOString()}`);
+      // (Optional) Adaptive correction logic can be added here
     });
 
     socket.on('disconnect', () => {
@@ -634,4 +639,17 @@ export function setupSocket(io) {
       }
     }
   }, 60 * 1000);
+
+  // Periodic authoritative sync broadcast (every 2 seconds)
+  setInterval(() => {
+    const sessions = getAllSessions();
+    for (const [sessionId, session] of Object.entries(sessions)) {
+      io.to(sessionId).emit('sync_state', {
+        isPlaying: session.isPlaying,
+        timestamp: session.timestamp,
+        lastUpdated: session.lastUpdated,
+        controllerId: session.controllerId
+      });
+    }
+  }, 2000);
 } 

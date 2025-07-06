@@ -14,8 +14,9 @@ if (typeof window !== 'undefined' && !window._audioPlayerErrorHandlerAdded) {
   window._audioPlayerErrorHandlerAdded = true;
 }
 
-const DRIFT_THRESHOLD = 0.1; // seconds (tighter sync)
-const PLAY_OFFSET = 0.05; // seconds (150ms future offset for play events)
+const DRIFT_THRESHOLD = 0.13; // seconds (tighter, robust to jitter)
+const PLAY_OFFSET = 0.35; // seconds (350ms future offset for play events)
+const DEFAULT_AUDIO_LATENCY = 0.08; // 80ms fallback if not measured
 
 function isFiniteNumber(n) {
   return typeof n === 'number' && isFinite(n);
@@ -93,6 +94,8 @@ export default function AudioPlayer({
   const audioRef = useRef(null);
   const [isSeeking, setIsSeeking] = useState(false);
   const [shouldAnimate, setShouldAnimate] = useState(false);
+  const [audioLatency, setAudioLatency] = useState(DEFAULT_AUDIO_LATENCY); // measured latency in seconds
+  const playRequestedAt = useRef(null);
 
   // Use controllerClientId/clientId for sticky controller logic
   const isController = controllerClientId && clientId && controllerClientId === clientId;
@@ -105,6 +108,10 @@ export default function AudioPlayer({
   const [displayedTitle, setDisplayedTitle] = useState(currentTrack?.title || '');
   const [animating, setAnimating] = useState(false);
   const [direction, setDirection] = useState('up');
+
+  // Jitter buffer: only correct drift if sustained for N checks
+  const DRIFT_JITTER_BUFFER = 1; // number of consecutive drift detections required
+  const driftCountRef = useRef(0);
 
   useEffect(() => {
     if ((currentTrack?.title || '') !== displayedTitle) {
@@ -207,13 +214,22 @@ export default function AudioPlayer({
     
     const update = () => setCurrentTime(audio.currentTime);
     const setDur = () => setDuration(audio.duration || 0);
+    const handlePlaying = () => {
+      if (playRequestedAt.current) {
+        const latency = (Date.now() - playRequestedAt.current) / 1000;
+        setAudioLatency(latency);
+        playRequestedAt.current = null;
+      }
+    };
     
     audio.addEventListener('timeupdate', update);
     audio.addEventListener('durationchange', setDur);
+    audio.addEventListener('playing', handlePlaying);
     
     return () => {
       audio.removeEventListener('timeupdate', update);
       audio.removeEventListener('durationchange', setDur);
+      audio.removeEventListener('playing', handlePlaying);
     };
   }, [audioUrl]);
 
@@ -249,8 +265,9 @@ export default function AudioPlayer({
       const audio = audioRef.current;
       if (!audio) return;
       // Calculate expected time
-      const now = Date.now();
-      const expected = timestamp + (now - lastUpdated) / 1000;
+      const now = getServerTime ? getServerTime() : Date.now();
+      // Compensate for measured audio latency
+      const expected = timestamp + (now - lastUpdated) / 1000 - audioLatency;
       if (!isFiniteNumber(expected)) {
         console.warn('SYNC_STATE: expected is not finite', { expected, timestamp, lastUpdated, now });
         setSyncStatus('Sync failed');
@@ -259,15 +276,34 @@ export default function AudioPlayer({
       }
       const drift = Math.abs(audio.currentTime - expected);
       if (drift > DRIFT_THRESHOLD) {
-        setSyncStatus('Drifted');
-        setCurrentTimeSafely(audio, expected, setCurrentTime);
-        setSyncStatus('Re-syncing...');
-        setTimeout(() => setSyncStatus('In Sync'), 800);
+        driftCountRef.current += 1;
+        if (driftCountRef.current >= DRIFT_JITTER_BUFFER) {
+          setSyncStatus('Drifted');
+          setCurrentTimeSafely(audio, expected, setCurrentTime);
+          setSyncStatus('Re-syncing...');
+          setTimeout(() => setSyncStatus('In Sync'), 800);
+          // Advanced: trigger immediate time sync if available
+          if (typeof socket?.forceTimeSync === 'function') {
+            socket.forceTimeSync();
+          }
+          // Report drift to server for diagnostics/adaptive correction
+          if (socket && socket.emit && socket.sessionId && typeof drift === 'number') {
+            socket.emit('drift_report', {
+              sessionId: socket.sessionId,
+              drift,
+              clientId,
+              timestamp: Date.now()
+            });
+          }
+          driftCountRef.current = 0;
+        }
       } else {
+        driftCountRef.current = 0;
         setSyncStatus('In Sync');
       }
       setIsPlaying(isPlaying);
       if (isPlaying) {
+        playRequestedAt.current = Date.now();
         audio.play();
       } else {
         // Ensure audio is definitely paused and reset to the expected time
@@ -300,21 +336,45 @@ export default function AudioPlayer({
         }
         const audio = audioRef.current;
         if (!audio) return;
-        const now = Date.now();
-        const expected = state.timestamp + (now - state.lastUpdated) / 1000;
+        const now = getServerTime ? getServerTime() : Date.now();
+        // Compensate for measured audio latency
+        const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency;
         if (!isFiniteNumber(expected)) {
           console.warn('Drift check: expected is not finite', { expected, state });
           return;
         }
-        const drift = Math.abs(audio.currentTime - expected);
+        // Use advanced time sync
+        const syncedNow = getServerTime ? getServerTime() : Date.now();
+        const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000;
+        const drift = Math.abs(audio.currentTime - expectedSynced);
         if (drift > DRIFT_THRESHOLD) {
-          setSyncStatus('Drifted');
-          setCurrentTimeSafely(audio, expected, setCurrentTime);
-          setSyncStatus('Re-syncing...');
-          setTimeout(() => setSyncStatus('In Sync'), 800);
+          driftCountRef.current += 1;
+          if (driftCountRef.current >= DRIFT_JITTER_BUFFER) {
+            setSyncStatus('Drifted');
+            setCurrentTimeSafely(audio, expectedSynced, setCurrentTime);
+            setSyncStatus('Re-syncing...');
+            setTimeout(() => setSyncStatus('In Sync'), 800);
+            // Advanced: trigger immediate time sync if available
+            if (typeof socket?.forceTimeSync === 'function') {
+              socket.forceTimeSync();
+            }
+            // Report drift to server for diagnostics/adaptive correction
+            if (socket && socket.emit && socket.sessionId && typeof drift === 'number') {
+              socket.emit('drift_report', {
+                sessionId: socket.sessionId,
+                drift,
+                clientId,
+                timestamp: Date.now()
+              });
+            }
+            driftCountRef.current = 0;
+          }
+        } else {
+          driftCountRef.current = 0;
+          setSyncStatus('In Sync');
         }
       });
-    }, 2000);
+    }, 800); // Drift check interval set to 800ms
     return () => clearInterval(interval);
   }, [socket, isController]);
 
@@ -341,8 +401,9 @@ export default function AudioPlayer({
           return;
         }
         
-        const now = Date.now();
-        const expected = state.timestamp + (now - state.lastUpdated) / 1000;
+        const now = getServerTime ? getServerTime() : Date.now();
+        // Compensate for measured audio latency
+        const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency;
         if (!isFiniteNumber(expected)) {
           console.warn('Invalid expected time, pausing audio');
           audio.pause();
@@ -350,14 +411,18 @@ export default function AudioPlayer({
           return;
         }
         
-        setCurrentTimeSafely(audio, expected, setCurrentTime);
+        // Use advanced time sync
+        const syncedNow = getServerTime ? getServerTime() : Date.now();
+        const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000;
+        setCurrentTimeSafely(audio, expectedSynced, setCurrentTime);
         setIsPlaying(state.isPlaying);
         if (state.isPlaying) {
+          playRequestedAt.current = Date.now();
           audio.play();
         } else {
           // Ensure audio is definitely paused and reset to the expected time
           audio.pause();
-          setCurrentTimeSafely(audio, expected, setCurrentTime);
+          setCurrentTimeSafely(audio, expectedSynced, setCurrentTime);
         }
         setLastSync(Date.now());
       });
@@ -386,6 +451,7 @@ export default function AudioPlayer({
 
   // Play/pause/seek handlers
   const handlePlay = () => {
+    playRequestedAt.current = Date.now();
     audioRef.current.play();
     setIsPlaying(true);
     emitPlay();
@@ -427,15 +493,19 @@ export default function AudioPlayer({
       }
       const audio = audioRef.current;
       if (!audio) return;
-      const now = Date.now();
-      const expected = state.timestamp + (now - state.lastUpdated) / 1000;
+      const now = getServerTime ? getServerTime() : Date.now();
+      // Compensate for measured audio latency
+      const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency;
       if (!isFiniteNumber(expected)) {
         console.warn('Manual resync: expected is not finite', { expected, state });
         setSyncStatus('Sync failed');
         setTimeout(() => setSyncStatus('In Sync'), 1200);
         return;
       }
-      setCurrentTimeSafely(audio, expected, setCurrentTime);
+      // Use advanced time sync
+      const syncedNow = getServerTime ? getServerTime() : Date.now();
+      const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000;
+      setCurrentTimeSafely(audio, expectedSynced, setCurrentTime);
       setSyncStatus('Re-syncing...');
       setTimeout(() => setSyncStatus('In Sync'), 800);
     });
