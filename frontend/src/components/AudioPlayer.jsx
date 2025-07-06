@@ -14,7 +14,7 @@ if (typeof window !== 'undefined' && !window._audioPlayerErrorHandlerAdded) {
   window._audioPlayerErrorHandlerAdded = true;
 }
 
-const DRIFT_THRESHOLD = 0.13; // seconds (tighter, robust to jitter)
+const DRIFT_THRESHOLD = 0.3; // seconds (less aggressive, was 0.13)
 const PLAY_OFFSET = 0.35; // seconds (350ms future offset for play events)
 const DEFAULT_AUDIO_LATENCY = 0.08; // 80ms fallback if not measured
 
@@ -22,52 +22,145 @@ function isFiniteNumber(n) {
   return typeof n === 'number' && isFinite(n);
 }
 
+/**
+ * Safely sets the currentTime of an audio element, handling cases where the audio is not yet ready.
+ * - If the audio is ready, sets currentTime immediately.
+ * - If not, waits for 'loadedmetadata' or 'canplay' events, whichever comes first.
+ * - Handles edge cases and logs detailed context for debugging.
+ * - Prevents duplicate event listeners and cleans up properly.
+ * - Optionally, can force a reload if duration is NaN and value is 0 (common browser bug).
+ */
 function setCurrentTimeSafely(audio, value, setCurrentTime) {
-  const logContext = { value, readyState: audio ? audio.readyState : null, duration: audio ? audio.duration : null };
-  
+  const logContext = {
+    value,
+    readyState: audio ? audio.readyState : null,
+    duration: audio ? audio.duration : null,
+    src: audio ? audio.currentSrc : null,
+  };
+
   // Early return if value is not finite
   if (!isFiniteNumber(value)) {
-    console.warn('setCurrentTimeSafely: value is not finite', logContext);
+    // Enhanced: throw for dev, warn for prod
+    if (process.env.NODE_ENV === 'development') {
+      throw new Error('setCurrentTimeSafely: value is not finite: ' + JSON.stringify(logContext));
+    } else {
+      console.warn('setCurrentTimeSafely: value is not finite', logContext);
+    }
     return;
   }
-  
+
   // Early return if audio element doesn't exist
   if (!audio) {
     console.warn('setCurrentTimeSafely: audio element not available', logContext);
     return;
   }
-  
+
+  // Helper to actually set currentTime and update state
+  const doSet = (context, eventType = 'immediate') => {
+    try {
+      // Only set if different to avoid unnecessary seeks
+      if (Math.abs(audio.currentTime - value) > 0.01) {
+        audio.currentTime = value;
+        setCurrentTime(value);
+        // Optionally, fire a custom event for debugging
+        // audio.dispatchEvent(new CustomEvent('currentTimeSetSafely', { detail: { value, eventType } }));
+        // Enhanced: log only in dev
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`[setCurrentTimeSafely] Set currentTime (${eventType})`, { ...context, actual: audio.currentTime });
+        }
+      }
+    } catch (e) {
+      console.warn(`[setCurrentTimeSafely] Failed to set currentTime (${eventType}):`, context, e);
+    }
+  };
+
+  // If audio is ready and duration is known, set immediately
   if (
     audio.readyState >= 1 &&
     audio.duration &&
     isFinite(audio.duration)
   ) {
-    try {
-      console.log('Setting currentTime immediately', logContext);
-      audio.currentTime = value;
-      setCurrentTime(value);
-    } catch (e) {
-      console.warn('Failed to set currentTime immediately:', logContext, e);
+    doSet(logContext, 'immediate');
+    return;
+  }
+
+  // If duration is NaN and value is 0, try to force reload (browser bug workaround)
+  if (audio.duration === undefined || isNaN(audio.duration)) {
+    if (value === 0 && audio.src && !audio.src.includes('forceReload')) {
+      // Append a dummy query param to force reload
+      audio.src = audio.src + (audio.src.includes('?') ? '&' : '?') + 'forceReload=' + Date.now();
+      // Optionally, log
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[setCurrentTimeSafely] Forcing reload due to NaN duration', logContext);
+      }
     }
-  } else {
-    console.log('Defer setCurrentTime: audio not ready yet (this is normal during initialization)', logContext);
-    const onLoaded = () => {
-        const context = { value, readyState: audio.readyState, duration: audio.duration };
-        if (audio.duration && isFinite(audio.duration)) {
-          try {
-            console.log('Setting currentTime after loadedmetadata', context);
-            audio.currentTime = value;
-            setCurrentTime(value);
-          } catch (e) {
-            console.warn('Failed to set currentTime after loadedmetadata:', context, e);
-          }
-        } else {
-          console.warn('Still not ready after loadedmetadata', context);
-        }
-        audio.removeEventListener('loadedmetadata', onLoaded);
+  }
+
+  // Otherwise, defer until audio is ready
+  let handled = false;
+  const cleanup = () => {
+    audio.removeEventListener('loadedmetadata', onLoaded);
+    audio.removeEventListener('canplay', onCanPlay);
+  };
+
+  const onLoaded = () => {
+    if (handled) return;
+    handled = true;
+    const context = {
+      value,
+      readyState: audio.readyState,
+      duration: audio.duration,
+      src: audio.currentSrc,
+      event: 'loadedmetadata',
     };
-      audio.addEventListener('loadedmetadata', onLoaded);
+    if (audio.duration && isFinite(audio.duration)) {
+      doSet(context, 'loadedmetadata');
+    } else {
+      console.warn('[setCurrentTimeSafely] Still not ready after loadedmetadata', context);
     }
+    cleanup();
+  };
+
+  const onCanPlay = () => {
+    if (handled) return;
+    handled = true;
+    const context = {
+      value,
+      readyState: audio.readyState,
+      duration: audio.duration,
+      src: audio.currentSrc,
+      event: 'canplay',
+    };
+    if (audio.duration && isFinite(audio.duration)) {
+      doSet(context, 'canplay');
+    } else {
+      console.warn('[setCurrentTimeSafely] Still not ready after canplay', context);
+    }
+    cleanup();
+  };
+
+  audio.addEventListener('loadedmetadata', onLoaded, { once: true });
+  audio.addEventListener('canplay', onCanPlay, { once: true });
+
+  // Enhanced: fallback timeout in case events never fire (e.g., broken stream)
+  setTimeout(() => {
+    if (!handled) {
+      handled = true;
+      const context = {
+        value,
+        readyState: audio.readyState,
+        duration: audio.duration,
+        src: audio.currentSrc,
+        event: 'timeout',
+      };
+      if (audio.duration && isFinite(audio.duration)) {
+        doSet(context, 'timeout');
+      } else {
+        console.warn('[setCurrentTimeSafely] Timeout waiting for audio readiness', context);
+      }
+      cleanup();
+    }
+  }, 3000);
 }
 
 export default function AudioPlayer({
@@ -96,6 +189,9 @@ export default function AudioPlayer({
   const [shouldAnimate, setShouldAnimate] = useState(false);
   const [audioLatency, setAudioLatency] = useState(DEFAULT_AUDIO_LATENCY); // measured latency in seconds
   const playRequestedAt = useRef(null);
+  const lastCorrectionRef = useRef(0);
+  const CORRECTION_COOLDOWN = 1500; // ms
+  const correctionInProgressRef = useRef(false);
 
   // Use controllerClientId/clientId for sticky controller logic
   const isController = controllerClientId && clientId && controllerClientId === clientId;
@@ -110,7 +206,7 @@ export default function AudioPlayer({
   const [direction, setDirection] = useState('up');
 
   // Jitter buffer: only correct drift if sustained for N checks
-  const DRIFT_JITTER_BUFFER = 1; // number of consecutive drift detections required
+  const DRIFT_JITTER_BUFFER = 3; // number of consecutive drift detections required (was 1)
   const driftCountRef = useRef(0);
 
   useEffect(() => {
@@ -245,11 +341,52 @@ export default function AudioPlayer({
     }
   }, [isController, isPlaying]);
 
-  // Socket event listeners
+  // Enhanced Socket event listeners with improved logging, error handling, and drift analytics
   useEffect(() => {
     if (!socket) return;
-    // Sync state from backend
-    const handleSyncState = ({ isPlaying, timestamp, lastUpdated, controllerId: ctrlId }) => {
+
+    let syncTimeout = null;
+    let resyncTimeout = null;
+
+    // Helper: log with context and level
+    const log = (level, ...args) => {
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console[level]?.('[AudioPlayer][sync_state]', ...args);
+      }
+    };
+
+    // Helper: show sync status for a limited time, then revert to "In Sync"
+    const showSyncStatus = (status, duration = 1200) => {
+      setSyncStatus(status);
+      if (syncTimeout) clearTimeout(syncTimeout);
+      syncTimeout = setTimeout(() => setSyncStatus('In Sync'), duration);
+    };
+
+    // Helper: emit drift report with more context
+    const emitDriftReport = (drift, expected, current, extra = {}) => {
+      if (socket && socket.emit && socket.sessionId && typeof drift === 'number') {
+        socket.emit('drift_report', {
+          sessionId: socket.sessionId,
+          drift,
+          expected,
+          current,
+          clientId,
+          timestamp: Date.now(),
+          ...extra,
+        });
+      }
+    };
+
+    // Enhanced sync state handler
+    const handleSyncState = ({
+      isPlaying,
+      timestamp,
+      lastUpdated,
+      controllerId: ctrlId,
+      trackId,
+      meta,
+    }) => {
       // Defensive: check for valid timestamp and lastUpdated
       if (
         typeof timestamp !== 'number' ||
@@ -257,72 +394,104 @@ export default function AudioPlayer({
         !isFinite(timestamp) ||
         !isFinite(lastUpdated)
       ) {
-        console.warn('SYNC_STATE: invalid state received', { isPlaying, timestamp, lastUpdated, ctrlId });
-        setSyncStatus('Sync failed');
-        setTimeout(() => setSyncStatus('In Sync'), 1200);
+        log('warn', 'SYNC_STATE: invalid state received', { isPlaying, timestamp, lastUpdated, ctrlId, trackId, meta });
+        showSyncStatus('Sync failed');
         return;
       }
       const audio = audioRef.current;
-      if (!audio) return;
+      if (!audio) {
+        log('warn', 'SYNC_STATE: audio element not available');
+        return;
+      }
       // Calculate expected time
       const now = getServerTime ? getServerTime() : Date.now();
       // Compensate for measured audio latency
       const expected = timestamp + (now - lastUpdated) / 1000 - audioLatency;
       if (!isFiniteNumber(expected)) {
-        console.warn('SYNC_STATE: expected is not finite', { expected, timestamp, lastUpdated, now });
-        setSyncStatus('Sync failed');
-        setTimeout(() => setSyncStatus('In Sync'), 1200);
+        log('warn', 'SYNC_STATE: expected is not finite', { expected, timestamp, lastUpdated, now });
+        showSyncStatus('Sync failed');
         return;
       }
       const drift = Math.abs(audio.currentTime - expected);
+
+      // Enhanced: keep drift history for analytics (last 10 drifts)
+      if (!window._audioDriftHistory) window._audioDriftHistory = [];
+      window._audioDriftHistory.push({
+        drift,
+        current: audio.currentTime,
+        expected,
+        timestamp: Date.now(),
+        isPlaying,
+        ctrlId,
+        trackId,
+      });
+      if (window._audioDriftHistory.length > 10) window._audioDriftHistory.shift();
+
+      // Log drift for debugging (dev only)
+      log('log', '[DriftCheck] SYNC_STATE drift:', drift, {
+        current: audio.currentTime,
+        expected,
+        isPlaying,
+        ctrlId,
+        trackId,
+        meta,
+      });
+
+      // Enhanced: show drift in UI if large
       if (drift > DRIFT_THRESHOLD) {
         driftCountRef.current += 1;
         if (driftCountRef.current >= DRIFT_JITTER_BUFFER) {
-          setSyncStatus('Drifted');
-          setCurrentTimeSafely(audio, expected, setCurrentTime);
+          showSyncStatus('Drifted', 1000);
+          maybeCorrectDrift(audio, expected);
           setSyncStatus('Re-syncing...');
-          setTimeout(() => setSyncStatus('In Sync'), 800);
-          // Advanced: trigger immediate time sync if available
+          if (resyncTimeout) clearTimeout(resyncTimeout);
+          resyncTimeout = setTimeout(() => setSyncStatus('In Sync'), 800);
+
           if (typeof socket?.forceTimeSync === 'function') {
             socket.forceTimeSync();
           }
-          // Report drift to server for diagnostics/adaptive correction
-          if (socket && socket.emit && socket.sessionId && typeof drift === 'number') {
-            socket.emit('drift_report', {
-              sessionId: socket.sessionId,
-              drift,
-              clientId,
-              timestamp: Date.now()
-            });
-          }
+          emitDriftReport(drift, expected, audio.currentTime, { ctrlId, trackId, meta });
           driftCountRef.current = 0;
         }
       } else {
         driftCountRef.current = 0;
         setSyncStatus('In Sync');
       }
+
       setIsPlaying(isPlaying);
-      if (isPlaying) {
-        playRequestedAt.current = Date.now();
-        audio.play();
-      } else {
-        // Ensure audio is definitely paused and reset to the expected time
+
+      // Only play/pause if state differs
+      if (isPlaying && audio.paused) {
+        audio.play().catch(e => {
+          log('warn', 'SYNC_STATE: failed to play audio', e);
+        });
+      } else if (!isPlaying && !audio.paused) {
         audio.pause();
-        setCurrentTimeSafely(audio, expected, setCurrentTime);
+        // Do not seek to correct drift if paused
       }
       setLastSync(Date.now());
     };
+
     socket.on('sync_state', handleSyncState);
+
     return () => {
       socket.off('sync_state', handleSyncState);
+      if (syncTimeout) clearTimeout(syncTimeout);
+      if (resyncTimeout) clearTimeout(resyncTimeout);
     };
-  }, [socket]);
+  }, [socket, audioLatency, getServerTime, clientId]);
 
-  // Periodic drift check (for followers)
+  // Enhanced periodic drift check (for followers)
   useEffect(() => {
     if (!socket || isController) return;
+
+    let lastDrift = 0;
+    let lastCorrection = 0;
+    let correctionCooldown = 1200; // ms, minimum time between corrections
+
     const interval = setInterval(() => {
       socket.emit('sync_request', { sessionId: socket.sessionId }, (state) => {
+        // Validate state
         if (
           !state ||
           typeof state.timestamp !== 'number' ||
@@ -330,62 +499,115 @@ export default function AudioPlayer({
           !isFinite(state.timestamp) ||
           !isFinite(state.lastUpdated)
         ) {
-          // Defensive: log and skip if state is invalid
-          console.warn('Drift check: invalid state received', { state });
+          if (process.env.NODE_ENV === 'development') {
+            // More detailed logging in dev
+            console.warn('[DriftCheck] Invalid state received', { state });
+          }
           return;
         }
+
         const audio = audioRef.current;
         if (!audio) return;
+
         const now = getServerTime ? getServerTime() : Date.now();
-        // Compensate for measured audio latency
         const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency;
         if (!isFiniteNumber(expected)) {
-          console.warn('Drift check: expected is not finite', { expected, state });
+          if (process.env.NODE_ENV === 'development') {
+            console.warn('[DriftCheck] Expected is not finite', { expected, state });
+          }
           return;
         }
-        // Use advanced time sync
+
         const syncedNow = getServerTime ? getServerTime() : Date.now();
         const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000;
         const drift = Math.abs(audio.currentTime - expectedSynced);
+
+        // Enhanced: log drift only if significant or in dev
+        if (drift > DRIFT_THRESHOLD || process.env.NODE_ENV === 'development') {
+          console.log(
+            '[DriftCheck] PERIODIC drift:',
+            drift.toFixed(3),
+            'current:',
+            audio.currentTime.toFixed(3),
+            'expected:',
+            expectedSynced.toFixed(3),
+            'isPlaying:', audio.paused ? 'paused' : 'playing'
+          );
+        }
+
+        // Only correct if not in cooldown
+        const nowMs = Date.now();
+        const canCorrect = nowMs - lastCorrection > correctionCooldown;
+
         if (drift > DRIFT_THRESHOLD) {
           driftCountRef.current += 1;
-          if (driftCountRef.current >= DRIFT_JITTER_BUFFER) {
+          lastDrift = drift;
+
+          if (driftCountRef.current >= DRIFT_JITTER_BUFFER && canCorrect) {
             setSyncStatus('Drifted');
-            setCurrentTimeSafely(audio, expectedSynced, setCurrentTime);
+            maybeCorrectDrift(audio, expectedSynced);
             setSyncStatus('Re-syncing...');
             setTimeout(() => setSyncStatus('In Sync'), 800);
-            // Advanced: trigger immediate time sync if available
+
             if (typeof socket?.forceTimeSync === 'function') {
               socket.forceTimeSync();
             }
-            // Report drift to server for diagnostics/adaptive correction
+
             if (socket && socket.emit && socket.sessionId && typeof drift === 'number') {
               socket.emit('drift_report', {
                 sessionId: socket.sessionId,
                 drift,
                 clientId,
-                timestamp: Date.now()
+                timestamp: nowMs
               });
             }
+
             driftCountRef.current = 0;
+            lastCorrection = nowMs;
           }
         } else {
+          if (driftCountRef.current > 0 && process.env.NODE_ENV === 'development') {
+            console.log('[DriftCheck] Drift back in threshold, resetting counter');
+          }
           driftCountRef.current = 0;
           setSyncStatus('In Sync');
         }
       });
     }, 800); // Drift check interval set to 800ms
-    return () => clearInterval(interval);
-  }, [socket, isController]);
 
-  // On mount, immediately request sync state on join
+    return () => clearInterval(interval);
+  }, [socket, isController, getServerTime, audioLatency, clientId]);
+
+  // Enhanced: On mount, immediately request sync state on join, with improved error handling, logging, and edge case resilience
   useEffect(() => {
     if (!socket) return;
-    if (socket.sessionId) {
-      socket.emit('sync_request', { sessionId: socket.sessionId }, (state) => {
+    if (!socket.sessionId) return;
+
+    // Helper for logging (dev only)
+    const log = (...args) => {
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.log('[AudioPlayer][sync_request]', ...args);
+      }
+    };
+
+    // Helper for warning (dev only)
+    const warn = (...args) => {
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.warn('[AudioPlayer][sync_request]', ...args);
+      }
+    };
+
+    // Defensive: wrap in try/catch for callback
+    socket.emit('sync_request', { sessionId: socket.sessionId }, (state) => {
+      try {
         const audio = audioRef.current;
-        if (!audio) return;
-        
+        if (!audio) {
+          warn('Audio element not available on sync_request');
+          return;
+        }
+
         // If no valid state received, ensure audio is paused and reset to beginning
         if (
           !state ||
@@ -394,161 +616,466 @@ export default function AudioPlayer({
           !isFinite(state.timestamp) ||
           !isFinite(state.lastUpdated)
         ) {
-          console.log('No valid sync state received, pausing audio and resetting to beginning');
+          warn('No valid sync state received, pausing audio and resetting to beginning', { state });
           audio.pause();
           setCurrentTimeSafely(audio, 0, setCurrentTime);
           setIsPlaying(false);
+          setLastSync(Date.now());
           return;
         }
-        
+
+        // Defensive: check for negative/NaN/absurd timestamps
+        if (state.timestamp < 0 || state.lastUpdated < 0) {
+          warn('Sync state has negative timestamp(s)', { state });
+          audio.pause();
+          setCurrentTimeSafely(audio, 0, setCurrentTime);
+          setIsPlaying(false);
+          setLastSync(Date.now());
+          return;
+        }
+
         const now = getServerTime ? getServerTime() : Date.now();
         // Compensate for measured audio latency
         const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency;
-        if (!isFiniteNumber(expected)) {
-          console.warn('Invalid expected time, pausing audio');
+        if (!isFiniteNumber(expected) || expected < 0) {
+          warn('Invalid expected time, pausing audio', { expected, state });
           audio.pause();
           setIsPlaying(false);
+          setLastSync(Date.now());
           return;
         }
-        
+
         // Use advanced time sync
         const syncedNow = getServerTime ? getServerTime() : Date.now();
         const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000;
-        setCurrentTimeSafely(audio, expectedSynced, setCurrentTime);
+
+        // Clamp expectedSynced to [0, duration] if possible
+        let safeExpected = expectedSynced;
+        if (audio.duration && isFinite(audio.duration)) {
+          safeExpected = Math.max(0, Math.min(expectedSynced, audio.duration));
+        } else {
+          safeExpected = Math.max(0, expectedSynced);
+        }
+
+        log('Syncing audio to', {
+          expectedSynced,
+          safeExpected,
+          isPlaying: state.isPlaying,
+          duration: audio.duration,
+          src: audio.currentSrc,
+        });
+
+        setCurrentTimeSafely(audio, safeExpected, setCurrentTime);
         setIsPlaying(state.isPlaying);
+
         if (state.isPlaying) {
           playRequestedAt.current = Date.now();
-          audio.play();
+          // Defensive: try/catch for play() (may throw in some browsers)
+          audio.play().catch((err) => {
+            warn('audio.play() failed on sync_request', err);
+          });
         } else {
           // Ensure audio is definitely paused and reset to the expected time
           audio.pause();
-          setCurrentTimeSafely(audio, expectedSynced, setCurrentTime);
+          setCurrentTimeSafely(audio, safeExpected, setCurrentTime);
         }
         setLastSync(Date.now());
-      });
-    }
-  }, [socket]);
+      } catch (err) {
+        warn('Exception in sync_request callback', err);
+      }
+    });
+  }, [socket, getServerTime, audioLatency]);
 
-  // Emit play/pause/seek events (controller only)
+  // Enhanced: Emit play/pause/seek events (controller only) with improved logging, error handling, and latency compensation
   const emitPlay = () => {
     if (isController && socket && getServerTime) {
       const now = getServerTime();
       const audio = audioRef.current;
       const playAt = (audio ? audio.currentTime : 0) + PLAY_OFFSET;
-      socket.emit('play', { sessionId: socket.sessionId, timestamp: playAt });
+      const payload = {
+        sessionId: socket.sessionId,
+        timestamp: playAt,
+        clientId,
+        emittedAt: now,
+        latency: audioLatency,
+      };
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.log('[AudioPlayer][emitPlay]', payload);
+      }
+      try {
+        socket.emit('play', payload);
+      } catch (err) {
+        if (process.env.NODE_ENV === 'development') {
+          // eslint-disable-next-line no-console
+          console.error('[AudioPlayer][emitPlay] Failed to emit play event', err, payload);
+        }
+      }
     }
   };
+
   const emitPause = () => {
     if (isController && socket) {
-      socket.emit('pause', { sessionId: socket.sessionId, timestamp: audioRef.current.currentTime });
+      const audio = audioRef.current;
+      const payload = {
+        sessionId: socket.sessionId,
+        timestamp: audio ? audio.currentTime : 0,
+        clientId,
+        emittedAt: getServerTime ? getServerTime() : Date.now(),
+      };
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.log('[AudioPlayer][emitPause]', payload);
+      }
+      try {
+        socket.emit('pause', payload);
+      } catch (err) {
+        if (process.env.NODE_ENV === 'development') {
+          // eslint-disable-next-line no-console
+          console.error('[AudioPlayer][emitPause] Failed to emit pause event', err, payload);
+        }
+      }
     }
   };
+
   const emitSeek = (time) => {
     if (isController && socket) {
-      socket.emit('seek', { sessionId: socket.sessionId, timestamp: time });
+      const payload = {
+        sessionId: socket.sessionId,
+        timestamp: time,
+        clientId,
+        emittedAt: getServerTime ? getServerTime() : Date.now(),
+      };
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.log('[AudioPlayer][emitSeek]', payload);
+      }
+      try {
+        socket.emit('seek', payload);
+      } catch (err) {
+        if (process.env.NODE_ENV === 'development') {
+          // eslint-disable-next-line no-console
+          console.error('[AudioPlayer][emitSeek] Failed to emit seek event', err, payload);
+        }
+      }
     }
   };
 
-  // Play/pause/seek handlers
-  const handlePlay = () => {
-    playRequestedAt.current = Date.now();
-    audioRef.current.play();
-    setIsPlaying(true);
-    emitPlay();
-  };
-  const handlePause = () => {
-    audioRef.current.pause();
-    setIsPlaying(false);
-    emitPause();
-  };
-  const handleSeek = (e) => {
-    const time = parseFloat(e.target.value);
-    if (!isFiniteNumber(time)) {
-      console.warn('Seek ignored: non-finite time', time);
+  // Enhanced Play/Pause/Seek handlers with improved error handling, logging, and edge case resilience
+
+  const handlePlay = async () => {
+    const audio = audioRef.current;
+    if (!audio) {
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.warn('[AudioPlayer][handlePlay] Audio element not available');
+      }
       return;
     }
-    setIsSeeking(true);
-    const audio = audioRef.current;
-    setCurrentTimeSafely(audio, time, setCurrentTime);
-    emitSeek(time);
-    setTimeout(() => setIsSeeking(false), 200);
+    playRequestedAt.current = Date.now();
+    try {
+      const playPromise = audio.play();
+      if (playPromise && typeof playPromise.then === 'function') {
+        await playPromise;
+      }
+      setIsPlaying(true);
+      emitPlay();
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.log('[AudioPlayer][handlePlay] Play triggered successfully');
+      }
+    } catch (err) {
+      setIsPlaying(false);
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.error('[AudioPlayer][handlePlay] Failed to play audio', err);
+      }
+    }
   };
 
-  // Manual re-sync
+  const handlePause = () => {
+    const audio = audioRef.current;
+    if (!audio) {
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.warn('[AudioPlayer][handlePause] Audio element not available');
+      }
+      return;
+    }
+    try {
+      audio.pause();
+      setIsPlaying(false);
+      emitPause();
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.log('[AudioPlayer][handlePause] Pause triggered successfully');
+      }
+    } catch (err) {
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.error('[AudioPlayer][handlePause] Failed to pause audio', err);
+      }
+    }
+  };
+
+  const handleSeek = (e) => {
+    let time;
+    if (typeof e === 'number') {
+      time = e;
+    } else if (e && typeof e.target?.value !== 'undefined') {
+      time = parseFloat(e.target.value);
+    } else {
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.warn('[AudioPlayer][handleSeek] Invalid event or value', e);
+      }
+      return;
+    }
+
+    if (!isFiniteNumber(time) || time < 0) {
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.warn('[AudioPlayer][handleSeek] Seek ignored: non-finite or negative time', time);
+      }
+      return;
+    }
+
+    setIsSeeking(true);
+    const audio = audioRef.current;
+    if (!audio) {
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.warn('[AudioPlayer][handleSeek] Audio element not available');
+      }
+      setIsSeeking(false);
+      return;
+    }
+
+    setCurrentTimeSafely(audio, time, setCurrentTime);
+    emitSeek(time);
+
+    // If the user seeks while paused, update UI immediately
+    if (audio.paused) {
+      setCurrentTime(time);
+    }
+
+    setTimeout(() => setIsSeeking(false), 200);
+
+    if (process.env.NODE_ENV === 'development') {
+      // eslint-disable-next-line no-console
+      console.log('[AudioPlayer][handleSeek] Seeked to', time);
+    }
+  };
+
+  // Enhanced Manual re-sync with improved logging, error handling, and user feedback
   const handleResync = () => {
-    if (!socket) return;
+    if (!socket) {
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.warn('[AudioPlayer][handleResync] No socket available');
+      }
+      setSyncStatus('Sync failed');
+      setTimeout(() => setSyncStatus('In Sync'), 1200);
+      return;
+    }
+
+    setSyncStatus('Re-syncing...');
+    let syncTimeout;
+    // Defensive: wrap callback in try/catch for resilience
     socket.emit('sync_request', { sessionId: socket.sessionId }, (state) => {
-      if (
-        !state ||
-        typeof state.timestamp !== 'number' ||
-        typeof state.lastUpdated !== 'number' ||
-        !isFinite(state.timestamp) ||
-        !isFinite(state.lastUpdated)
-      ) {
-        // Log the error as a single object for better grouping in the console
-        console.warn('Manual resync: invalid state received', { state });
+      try {
+        if (
+          !state ||
+          typeof state.timestamp !== 'number' ||
+          typeof state.lastUpdated !== 'number' ||
+          !isFinite(state.timestamp) ||
+          !isFinite(state.lastUpdated)
+        ) {
+          if (process.env.NODE_ENV === 'development') {
+            // eslint-disable-next-line no-console
+            console.warn('[AudioPlayer][handleResync] Invalid state received', { state });
+          }
+          setSyncStatus('Sync failed');
+          if (syncTimeout) clearTimeout(syncTimeout);
+          syncTimeout = setTimeout(() => setSyncStatus('In Sync'), 1200);
+          return;
+        }
+        const audio = audioRef.current;
+        if (!audio) {
+          if (process.env.NODE_ENV === 'development') {
+            // eslint-disable-next-line no-console
+            console.warn('[AudioPlayer][handleResync] Audio element not available');
+          }
+          setSyncStatus('Sync failed');
+          if (syncTimeout) clearTimeout(syncTimeout);
+          syncTimeout = setTimeout(() => setSyncStatus('In Sync'), 1200);
+          return;
+        }
+        const now = getServerTime ? getServerTime() : Date.now();
+        // Compensate for measured audio latency
+        const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency;
+        if (!isFiniteNumber(expected)) {
+          if (process.env.NODE_ENV === 'development') {
+            // eslint-disable-next-line no-console
+            console.warn('[AudioPlayer][handleResync] Expected is not finite', { expected, state });
+          }
+          setSyncStatus('Sync failed');
+          if (syncTimeout) clearTimeout(syncTimeout);
+          syncTimeout = setTimeout(() => setSyncStatus('In Sync'), 1200);
+          return;
+        }
+        // Use advanced time sync
+        const syncedNow = getServerTime ? getServerTime() : Date.now();
+        const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000;
+
+        // Log drift for analytics
+        const drift = Math.abs(audio.currentTime - expectedSynced);
+        if (process.env.NODE_ENV === 'development' || drift > DRIFT_THRESHOLD) {
+          // eslint-disable-next-line no-console
+          console.log('[AudioPlayer][handleResync] Manual resync drift:', drift.toFixed(3), 'current:', audio.currentTime.toFixed(3), 'expected:', expectedSynced.toFixed(3));
+        }
+
+        setCurrentTimeSafely(audio, expectedSynced, setCurrentTime);
+
+        // Optionally, play if should be playing (based on state)
+        if (typeof state.isPlaying === 'boolean') {
+          if (state.isPlaying && audio.paused) {
+            audio.play().catch(e => {
+              if (process.env.NODE_ENV === 'development') {
+                // eslint-disable-next-line no-console
+                console.warn('[AudioPlayer][handleResync] Failed to play after resync', e);
+              }
+            });
+          } else if (!state.isPlaying && !audio.paused) {
+            audio.pause();
+          }
+          setIsPlaying(state.isPlaying);
+        }
+
+        setSyncStatus('Re-syncing...');
+        if (syncTimeout) clearTimeout(syncTimeout);
+        syncTimeout = setTimeout(() => setSyncStatus('In Sync'), 800);
+
+        // Optionally, emit drift report for analytics
+        if (socket && socket.emit && socket.sessionId && typeof drift === 'number') {
+          socket.emit('drift_report', {
+            sessionId: socket.sessionId,
+            drift,
+            expected: expectedSynced,
+            current: audio.currentTime,
+            clientId,
+            timestamp: Date.now(),
+            manual: true,
+          });
+        }
+      } catch (err) {
+        if (process.env.NODE_ENV === 'development') {
+          // eslint-disable-next-line no-console
+          console.error('[AudioPlayer][handleResync] Exception during resync', err);
+        }
         setSyncStatus('Sync failed');
-        setTimeout(() => setSyncStatus('In Sync'), 1200);
-        return;
+        if (syncTimeout) clearTimeout(syncTimeout);
+        syncTimeout = setTimeout(() => setSyncStatus('In Sync'), 1200);
       }
-      const audio = audioRef.current;
-      if (!audio) return;
-      const now = getServerTime ? getServerTime() : Date.now();
-      // Compensate for measured audio latency
-      const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency;
-      if (!isFiniteNumber(expected)) {
-        console.warn('Manual resync: expected is not finite', { expected, state });
-        setSyncStatus('Sync failed');
-        setTimeout(() => setSyncStatus('In Sync'), 1200);
-        return;
-      }
-      // Use advanced time sync
-      const syncedNow = getServerTime ? getServerTime() : Date.now();
-      const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000;
-      setCurrentTimeSafely(audio, expectedSynced, setCurrentTime);
-      setSyncStatus('Re-syncing...');
-      setTimeout(() => setSyncStatus('In Sync'), 800);
     });
   };
 
+  /**
+   * Formats a time value in seconds to a human-readable string.
+   * - Handles negative, NaN, and very large values gracefully.
+   * - Supports hours for long durations (e.g., 1:23:45).
+   * - Pads minutes and seconds as needed.
+   * @param {number} t - Time in seconds.
+   * @returns {string} - Formatted time string.
+   */
   const formatTime = (t) => {
-    if (isNaN(t)) return '0:00';
-    const m = Math.floor(t / 60);
-    const s = Math.floor(t % 60).toString().padStart(2, '0');
-    return `${m}:${s}`;
+    if (typeof t !== 'number' || isNaN(t) || t < 0) return '0:00';
+    const totalSeconds = Math.floor(t);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = (totalSeconds % 60).toString().padStart(2, '0');
+    if (hours > 0) {
+      return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds}`;
+    }
+    return `${minutes}:${seconds}`;
   };
 
-  // Audio latency calibration effect
+  // Enhanced audio latency calibration effect
   useEffect(() => {
-    // Only calibrate once per session
+    // Only calibrate once per session and only if audio is ready and not already calibrated
     if (!audioRef.current || audioLatency !== DEFAULT_AUDIO_LATENCY) return;
 
     const audio = audioRef.current;
     let calibrationDone = false;
+    let timeoutId = null;
 
     const calibrateLatency = () => {
       if (calibrationDone) return;
       calibrationDone = true;
 
+      // Defensive: Save original state to restore after calibration
+      const wasPlaying = !audio.paused;
+      const originalTime = audio.currentTime;
+      const originalVolume = audio.volume;
+      const originalMuted = audio.muted;
+
+      // Mute audio to avoid user hearing the calibration blip
+      audio.muted = true;
+      audio.volume = 0;
+
       // Pause and reset audio
       audio.pause();
       audio.currentTime = 0;
 
-      const start = performance.now();
-      const onPlaying = () => {
-        const end = performance.now();
-        const measuredLatency = (end - start) / 1000; // in seconds
-        setAudioLatency(measuredLatency);
-        audio.removeEventListener('playing', onPlaying);
-        // Optionally, pause again after calibration
-        audio.pause();
+      // Wait for readyState to be at least HAVE_CURRENT_DATA
+      const waitForReady = () => {
+        if (audio.readyState < 2) {
+          timeoutId = setTimeout(waitForReady, 20);
+          return;
+        }
+        const start = performance.now();
+        const onPlaying = () => {
+          const end = performance.now();
+          const measuredLatency = (end - start) / 1000; // in seconds
+          setAudioLatency(measuredLatency);
+
+          // Clean up
+          audio.removeEventListener('playing', onPlaying);
+
+          // Restore original state
+          audio.pause();
+          audio.currentTime = originalTime;
+          audio.volume = originalVolume;
+          audio.muted = originalMuted;
+          if (wasPlaying) {
+            // Try to resume playback if it was playing before
+            audio.play().catch(() => {});
+          }
+
+          if (process.env.NODE_ENV === 'development') {
+            // eslint-disable-next-line no-console
+            console.log('[AudioPlayer][LatencyCalibration] Measured latency:', measuredLatency, 'seconds');
+          }
+        };
+
+        audio.addEventListener('playing', onPlaying);
+
+        // Try to play (may be blocked by autoplay policy)
+        audio.play().catch((err) => {
+          // Clean up if play fails
+          audio.removeEventListener('playing', onPlaying);
+          // Restore state
+          audio.currentTime = originalTime;
+          audio.volume = originalVolume;
+          audio.muted = originalMuted;
+          if (process.env.NODE_ENV === 'development') {
+            // eslint-disable-next-line no-console
+            console.warn('[AudioPlayer][LatencyCalibration] Play failed during calibration', err);
+          }
+        });
       };
 
-      audio.addEventListener('playing', onPlaying);
-      audio.play().catch(() => {
-        // Ignore play errors (e.g., autoplay restrictions)
-        audio.removeEventListener('playing', onPlaying);
-      });
+      waitForReady();
     };
 
     // Run calibration on mount or when audio is ready
@@ -561,8 +1088,101 @@ export default function AudioPlayer({
     // Cleanup
     return () => {
       audio.removeEventListener('canplay', calibrateLatency);
+      if (timeoutId) clearTimeout(timeoutId);
     };
   }, [audioRef, audioLatency]);
+
+  /**
+   * Attempts to correct audio drift by seeking to the expected time.
+   * Enhanced: 
+   *   - Adds detailed logging (dev only)
+   *   - Handles edge cases (audio not ready, expected not finite)
+   *   - Optionally fires a custom event for analytics/debugging
+   *   - Returns an object with status and details
+   */
+  function maybeCorrectDrift(audio, expected) {
+    // Defensive: check for valid audio and expected time
+    if (!audio || typeof audio.currentTime !== 'number') {
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.warn('[DriftCorrection] Audio element not available or invalid');
+      }
+      return { corrected: false, reason: 'audio_invalid' };
+    }
+    if (!isFiniteNumber(expected) || expected < 0) {
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.warn('[DriftCorrection] Expected time is not finite or negative', { expected });
+      }
+      return { corrected: false, reason: 'expected_invalid' };
+    }
+    if (correctionInProgressRef.current) {
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.log('[DriftCorrection] Correction already in progress');
+      }
+      return { corrected: false, reason: 'in_progress' };
+    }
+    const now = Date.now();
+    if (now - lastCorrectionRef.current < CORRECTION_COOLDOWN) {
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.log('[DriftCorrection] Correction cooldown active');
+      }
+      return { corrected: false, reason: 'cooldown' };
+    }
+    correctionInProgressRef.current = true;
+
+    // Only seek if audio is playing (never pause to correct drift)
+    if (!audio.paused) {
+      const before = audio.currentTime;
+      setCurrentTimeSafely(audio, expected, setCurrentTime);
+      lastCorrectionRef.current = now;
+
+      // Enhanced: fire a custom event for debugging/analytics
+      if (typeof window !== 'undefined' && typeof CustomEvent === 'function') {
+        try {
+          window.dispatchEvent(
+            new CustomEvent('audio-drift-corrected', {
+              detail: {
+                before,
+                after: expected,
+                at: now,
+                src: audio.currentSrc,
+              },
+            })
+          );
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.log(
+          '[DriftCorrection] Seeked to',
+          expected,
+          'from',
+          before,
+          'at',
+          now,
+          '| src:',
+          audio.currentSrc
+        );
+      }
+      setTimeout(() => {
+        correctionInProgressRef.current = false;
+      }, 500); // allow some time for audio to stabilize
+      return { corrected: true, before, after: expected, at: now };
+    } else {
+      correctionInProgressRef.current = false;
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.log('[DriftCorrection] Audio is paused, not correcting drift');
+      }
+      return { corrected: false, reason: 'paused' };
+    }
+  }
 
   // --- MOBILE REDESIGN ---
   if (mobile) {

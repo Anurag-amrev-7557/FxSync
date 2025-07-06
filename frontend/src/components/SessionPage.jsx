@@ -72,35 +72,98 @@ function SessionPage({
   const controllerStatus = useSmoothAppearance(isController, 200, 'animate-bounce-in')
   const mainContent = useSmoothAppearance(currentSessionId && connected, 300, 'animate-fade-in-slow')
 
-  // Auto-join session if sessionId is in URL
+  // Enhanced: Auto-join session if sessionId is in URL, with improved robustness, logging, and user experience
   useEffect(() => {
     if (urlSessionId && !currentSessionId) {
-      // Load saved session data
-      const savedSessionData = loadSessionData(urlSessionId)
-      const savedMessages = loadMessages(urlSessionId)
-      const savedQueue = loadQueue(urlSessionId)
-      
-      // Generate a random display name for auto-join if no saved data
-      let autoDisplayName
-      if (savedSessionData && savedSessionData.displayName) {
-        autoDisplayName = savedSessionData.displayName
-      } else {
-        const adjectives = ['Cool', 'Epic', 'Amazing', 'Awesome', 'Radical', 'Smooth', 'Groovy', 'Fresh']
-        const nouns = ['Listener', 'Groover', 'Vibes', 'Beats', 'Rhythm', 'Melody', 'Harmony', 'Sound']
-        const randomAdj = adjectives[Math.floor(Math.random() * adjectives.length)]
-        const randomNoun = nouns[Math.floor(Math.random() * nouns.length)]
-        autoDisplayName = `${randomAdj} ${randomNoun}`
+      // Defensive: Try/catch for localStorage access
+      let savedSessionData = null, savedMessages = [], savedQueue = [];
+      try {
+        savedSessionData = loadSessionData(urlSessionId);
+      } catch (e) {
+        if (process.env.NODE_ENV === 'development') {
+          // eslint-disable-next-line no-console
+          console.warn('[SessionPage][AutoJoin] Failed to load session data', e);
+        }
       }
-      
-      setCurrentSessionId(urlSessionId)
-      setDisplayName(autoDisplayName)
-      setMessages(savedMessages)
-      setQueue(savedQueue)
-      
-      // Save the session data
-      saveSessionData(urlSessionId, { displayName: autoDisplayName })
+      try {
+        savedMessages = loadMessages(urlSessionId) || [];
+      } catch (e) {
+        if (process.env.NODE_ENV === 'development') {
+          // eslint-disable-next-line no-console
+          console.warn('[SessionPage][AutoJoin] Failed to load messages', e);
+        }
+      }
+      try {
+        savedQueue = loadQueue(urlSessionId) || [];
+      } catch (e) {
+        if (process.env.NODE_ENV === 'development') {
+          // eslint-disable-next-line no-console
+          console.warn('[SessionPage][AutoJoin] Failed to load queue', e);
+        }
+      }
+
+      // Generate a random display name for auto-join if no saved data
+      let autoDisplayName;
+      if (savedSessionData && typeof savedSessionData.displayName === 'string' && savedSessionData.displayName.trim()) {
+        autoDisplayName = savedSessionData.displayName;
+      } else {
+        // Enhanced: More adjectives/nouns, avoid duplicate names in a session
+        const adjectives = [
+          'Cool', 'Epic', 'Amazing', 'Awesome', 'Radical', 'Smooth', 'Groovy', 'Fresh',
+          'Chill', 'Lively', 'Electric', 'Vivid', 'Sunny', 'Mellow', 'Funky', 'Dynamic'
+        ];
+        const nouns = [
+          'Listener', 'Groover', 'Vibes', 'Beats', 'Rhythm', 'Melody', 'Harmony', 'Sound',
+          'Bass', 'Wave', 'Tune', 'Jam', 'Note', 'Pulse', 'Echo', 'Chord'
+        ];
+        let tries = 0;
+        let generatedName = '';
+        do {
+          const randomAdj = adjectives[Math.floor(Math.random() * adjectives.length)];
+          const randomNoun = nouns[Math.floor(Math.random() * nouns.length)];
+          generatedName = `${randomAdj} ${randomNoun}`;
+          tries++;
+          // Optionally: check for duplicate names in the current session's clients
+        } while (
+          clients &&
+          Array.isArray(clients) &&
+          clients.some(c => c.displayName === generatedName) &&
+          tries < 10
+        );
+        autoDisplayName = generatedName;
+      }
+
+      // Logging for debugging
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.log('[SessionPage][AutoJoin] Joining session', {
+          urlSessionId,
+          autoDisplayName,
+          savedMessagesCount: savedMessages.length,
+          savedQueueCount: savedQueue.length,
+        });
+      }
+
+      setCurrentSessionId(urlSessionId);
+      setDisplayName(autoDisplayName);
+      setMessages(Array.isArray(savedMessages) ? savedMessages : []);
+      setQueue(Array.isArray(savedQueue) ? savedQueue : []);
+
+      // Save the session data (robustly merge with any existing data)
+      try {
+        saveSessionData(urlSessionId, {
+          ...(savedSessionData || {}),
+          displayName: autoDisplayName,
+        });
+      } catch (e) {
+        if (process.env.NODE_ENV === 'development') {
+          // eslint-disable-next-line no-console
+          console.warn('[SessionPage][AutoJoin] Failed to save session data', e);
+        }
+      }
     }
-  }, [urlSessionId, currentSessionId, setCurrentSessionId, setDisplayName])
+  // Add clients as a dependency for duplicate name avoidance
+  }, [urlSessionId, currentSessionId, setCurrentSessionId, setDisplayName, clients]);
 
   useEffect(() => {
     if (!socket) return
@@ -164,29 +227,70 @@ function SessionPage({
 
   useEffect(() => {
     if (!socket) return;
+
     const handleTrackChange = (payload) => {
-      // Support both old (number) and new (object) payloads for safety
-      const idx = typeof payload === 'object' && payload !== null ? payload.idx : payload;
-      const track = typeof payload === 'object' && payload !== null ? payload.track : null;
-      console.log('[DEBUG] Received track_change:', payload, { idx, track });
+      // Enhanced: Robustly handle various payload shapes and log more details
+      let idx, track, extra = {};
+      if (typeof payload === 'object' && payload !== null) {
+        idx = typeof payload.idx === 'number' ? payload.idx : null;
+        track = payload.track || null;
+        // Capture any extra fields for debugging
+        extra = Object.keys(payload).reduce((acc, key) => {
+          if (key !== 'idx' && key !== 'track') acc[key] = payload[key];
+          return acc;
+        }, {});
+      } else {
+        idx = payload;
+        track = null;
+      }
+
+      // Defensive: Validate idx
+      if (typeof idx !== 'number' || idx < 0) {
+        console.warn('[SessionPage][track_change] Invalid idx received:', idx, 'Payload:', payload);
+        return;
+      }
+
+      // Enhanced: Log with more context
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.log('[SessionPage][track_change] Received:', { payload, idx, track, extra, queueLength: queue?.length });
+      }
+
       // If queue is not set yet, buffer the track_change
-      if (!queue || queue.length === 0) {
-        console.log('[DEBUG] Buffering track_change until queue is set', { idx, track });
+      if (!Array.isArray(queue) || queue.length === 0) {
+        if (process.env.NODE_ENV === 'development') {
+          // eslint-disable-next-line no-console
+          console.log('[SessionPage][track_change] Buffering until queue is set', { idx, track });
+        }
         pendingTrackIdx.current = idx;
         pendingTrackIdx.currentTrack = track;
       } else {
+        // Enhanced: Clamp idx to valid range
+        const clampedIdx = Math.max(0, Math.min(idx, queue.length - 1));
         setCurrentTrackOverride(track || null);
-        setSelectedTrackIdx(idx);
-        console.log('[DEBUG] After immediate track_change:', {
-          queue,
-          selectedTrackIdx: idx,
-          currentTrackOverride: track
-        });
+        setSelectedTrackIdx(clampedIdx);
+
+        if (process.env.NODE_ENV === 'development') {
+          // eslint-disable-next-line no-console
+          console.log('[SessionPage][track_change] Applied immediately:', {
+            queue,
+            selectedTrackIdx: clampedIdx,
+            currentTrackOverride: track,
+            originalIdx: idx
+          });
+        }
       }
     };
+
     socket.on('track_change', handleTrackChange);
+
+    // Enhanced: Clean up and warn if handler was still active
     return () => {
       socket.off('track_change', handleTrackChange);
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.log('[SessionPage][track_change] Handler removed');
+      }
     };
   }, [socket, queue]);
 
@@ -208,35 +312,134 @@ function SessionPage({
     };
   }, [socket]);
 
-  // On mount or when joining a session, request sync state and set current track if provided
+  // Enhanced: On mount or when joining a session, request sync state, set current track, and handle edge cases robustly
   useEffect(() => {
     if (!socket || !currentSessionId) return;
+
+    let didCancel = false;
+
+    // Defensive: Add timeout fallback in case server doesn't respond
+    let syncTimeout = setTimeout(() => {
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.warn('[SessionPage][sync_request] Timed out waiting for sync state');
+      }
+    }, 4000);
+
     socket.emit('sync_request', { sessionId: currentSessionId }, (state) => {
+      clearTimeout(syncTimeout);
+      if (didCancel) return;
+
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.log('[SessionPage][sync_request] Received state:', state);
+      }
+
       if (state && state.currentTrack) {
         setCurrentTrackOverride(state.currentTrack);
-        // Try to find the index in the queue if possible
+
+        // Try to find the index in the queue if possible, fallback to 0 if not found
         if (queue && queue.length > 0) {
           const idx = queue.findIndex(
             (t) => t && state.currentTrack && t.url === state.currentTrack.url
           );
-          if (idx !== -1) setSelectedTrackIdx(idx);
+          if (idx !== -1) {
+            setSelectedTrackIdx(idx);
+            if (process.env.NODE_ENV === 'development') {
+              // eslint-disable-next-line no-console
+              console.log('[SessionPage][sync_request] Matched currentTrack in queue at idx', idx);
+            }
+          } else {
+            setSelectedTrackIdx(0);
+            if (process.env.NODE_ENV === 'development') {
+              // eslint-disable-next-line no-console
+              console.warn('[SessionPage][sync_request] currentTrack not found in queue, defaulting to idx 0');
+            }
+          }
+        } else {
+          setSelectedTrackIdx(0);
+          if (process.env.NODE_ENV === 'development') {
+            // eslint-disable-next-line no-console
+            console.warn('[SessionPage][sync_request] Queue empty or not loaded, defaulting to idx 0');
+          }
+        }
+      } else if (state && typeof state.currentTrackIdx === 'number' && queue && queue.length > 0) {
+        // Fallback: If only currentTrackIdx is provided
+        const clampedIdx = Math.max(0, Math.min(state.currentTrackIdx, queue.length - 1));
+        setSelectedTrackIdx(clampedIdx);
+        setCurrentTrackOverride(queue[clampedIdx] || null);
+        if (process.env.NODE_ENV === 'development') {
+          // eslint-disable-next-line no-console
+          console.log('[SessionPage][sync_request] Used currentTrackIdx fallback:', clampedIdx);
         }
       }
     });
-  }, [socket, currentSessionId]);
 
+    // Cleanup to avoid setting state after unmount
+    return () => {
+      didCancel = true;
+      clearTimeout(syncTimeout);
+    };
+  }, [socket, currentSessionId, queue]);
+
+  /**
+   * Enhanced handleJoin:
+   * - Loads saved messages and queue with error handling and fallbacks.
+   * - Sets current session, display name, messages, and queue.
+   * - Optionally focuses the chat input after join (if present).
+   * - Persists session data robustly.
+   * - Logs join events in development for debugging.
+   */
   const handleJoin = (sessionId, name) => {
-    // Load saved data for the session
-    const savedMessages = loadMessages(sessionId)
-    const savedQueue = loadQueue(sessionId)
-    
-    setCurrentSessionId(sessionId)
-    setDisplayName(name || '')
-    setMessages(savedMessages)
-    setQueue(savedQueue)
-    
-    // Save the session data
-    saveSessionData(sessionId, { displayName: name || '' })
+    let savedMessages = [];
+    let savedQueue = [];
+    let displayName = name || '';
+
+    // Defensive: Try/catch for localStorage access
+    try {
+      savedMessages = loadMessages(sessionId) || [];
+    } catch (e) {
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.warn('[SessionPage][handleJoin] Failed to load messages', e);
+      }
+      savedMessages = [];
+    }
+    try {
+      savedQueue = loadQueue(sessionId) || [];
+    } catch (e) {
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.warn('[SessionPage][handleJoin] Failed to load queue', e);
+      }
+      savedQueue = [];
+    }
+
+    setCurrentSessionId(sessionId);
+    setDisplayName(displayName);
+    setMessages(savedMessages);
+    setQueue(savedQueue);
+
+    // Save the session data robustly
+    try {
+      saveSessionData(sessionId, { displayName });
+    } catch (e) {
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.warn('[SessionPage][handleJoin] Failed to save session data', e);
+      }
+    }
+
+    // Optionally focus chat input after join (if present)
+    setTimeout(() => {
+      const chatInput = document.querySelector('input[name="chat"]');
+      if (chatInput) chatInput.focus();
+    }, 200);
+
+    if (process.env.NODE_ENV === 'development') {
+      // eslint-disable-next-line no-console
+      console.log('[SessionPage][handleJoin] Joined session', { sessionId, displayName, messages: savedMessages.length, queue: savedQueue.length });
+    }
   }
 
   const handleExitRoom = () => {
@@ -258,20 +461,48 @@ function SessionPage({
     setShowExitModal(false)
   }
 
-  // New handler for Playlist selection
+  // Enhanced handler for Playlist selection with improved robustness, logging, and user experience
   const handleSelectTrack = (idx, trackObj) => {
+    // Defensive: Validate idx and queue
+    if (typeof idx !== 'number' || idx < 0 || !Array.isArray(queue) || idx >= queue.length) {
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.warn('[SessionPage][handleSelectTrack] Invalid track index', { idx, queueLength: queue ? queue.length : null });
+      }
+      return;
+    }
+
+    // If a custom track object is provided (e.g., preview or external), override
     if (trackObj) {
       setCurrentTrackOverride(trackObj);
+      setSelectedTrackIdx(idx); // Keep selected index in sync for UI
       if (isController && socket) {
-        socket.emit('track_change', idx);
+        socket.emit('track_change', idx, { override: true, track: trackObj });
+      }
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.log('[SessionPage][handleSelectTrack] Overriding with custom track', { idx, trackObj });
       }
     } else {
+      // Clear override and select from queue
       setCurrentTrackOverride(null);
       setSelectedTrackIdx(idx);
       if (isController && socket) {
-        socket.emit('track_change', idx);
+        socket.emit('track_change', idx, { override: false });
+      }
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.log('[SessionPage][handleSelectTrack] Selected track from queue', { idx, track: queue[idx] });
       }
     }
+
+    // Optionally: Scroll to the selected track in the playlist UI for better UX
+    setTimeout(() => {
+      const trackEl = document.querySelector(`[data-track-idx="${idx}"]`);
+      if (trackEl && typeof trackEl.scrollIntoView === 'function') {
+        trackEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 100);
   };
 
   // In render, always derive currentTrack from latest queue and selectedTrackIdx

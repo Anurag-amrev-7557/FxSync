@@ -115,21 +115,53 @@ export function setupSocket(io) {
       });
     });
 
-    socket.on('sync_request', ({ sessionId } = {}, callback) => {
-      if (!sessionId) return callback && callback({ error: 'No sessionId provided' });
-      const session = getSession(sessionId);
-      if (!session) return callback && callback({ error: 'Session not found' });
-      // Get current track from queue and selectedTrackIdx
-      const queue = session.queue || [];
-      const selectedTrackIdx = typeof session.selectedTrackIdx === 'number' ? session.selectedTrackIdx : 0;
-      const currentTrack = (queue && queue.length > 0 && queue[selectedTrackIdx]) ? queue[selectedTrackIdx] : null;
-      callback && callback({
-        isPlaying: session.isPlaying,
-        timestamp: session.timestamp,
-        lastUpdated: session.lastUpdated,
-        controllerId: session.controllerId,
-        currentTrack
-      });
+    socket.on('sync_request', async ({ sessionId } = {}, callback) => {
+      try {
+        if (!sessionId) {
+          if (callback) callback({ error: 'No sessionId provided' });
+          return;
+        }
+        const session = getSession(sessionId);
+        if (!session) {
+          if (callback) callback({ error: 'Session not found' });
+          return;
+        }
+
+        // Get current track from queue and selectedTrackIdx
+        const queue = Array.isArray(session.queue) ? session.queue : [];
+        const selectedTrackIdx = Number.isInteger(session.selectedTrackIdx) ? session.selectedTrackIdx : 0;
+        const currentTrack = (queue.length > 0 && queue[selectedTrackIdx]) ? queue[selectedTrackIdx] : null;
+
+        // Enhanced: Provide more session state for robust client sync
+        const response = {
+          isPlaying: !!session.isPlaying,
+          timestamp: typeof session.timestamp === 'number' ? session.timestamp : 0,
+          lastUpdated: typeof session.lastUpdated === 'number' ? session.lastUpdated : Date.now(),
+          controllerId: session.controllerId || null,
+          controllerClientId: session.controllerClientId || null,
+          queue,
+          selectedTrackIdx,
+          currentTrack,
+          // Optionally, send session settings or metadata if available
+          sessionSettings: session.settings || {},
+          // Optionally, send drift info if tracked
+          drift: typeof session.drift === 'number' ? session.drift : null,
+        };
+
+        // Optionally, log for debugging in development
+        if (process.env.NODE_ENV === 'development') {
+          // eslint-disable-next-line no-console
+          console.log('[socket][sync_request] Responding to sync_request for session', sessionId, response);
+        }
+
+        if (callback) callback(response);
+      } catch (err) {
+        if (process.env.NODE_ENV === 'development') {
+          // eslint-disable-next-line no-console
+          console.error('[socket][sync_request] Error handling sync_request:', err);
+        }
+        if (callback) callback({ error: 'Internal server error' });
+      }
     });
 
     socket.on('request_controller', ({ sessionId } = {}, callback) => {
@@ -428,39 +460,151 @@ export function setupSocket(io) {
       io.to(sessionId).emit('reaction', formattedReaction);
     });
 
-    socket.on('add_to_queue', ({ sessionId, url, title } = {}, callback) => {
-      if (!sessionId || !url) return callback && callback({ error: 'Missing sessionId or url' });
-      addToQueue(sessionId, url, title);
-      const queue = getQueue(sessionId);
-      log('[DEBUG] add_to_queue: session', sessionId, 'queue now:', queue);
-      io.to(sessionId).emit('queue_update', queue);
-      callback && callback({ success: true, queue });
+    /**
+     * Enhanced add_to_queue event:
+     * - Validates input more strictly (URL, title).
+     * - Optionally supports metadata (artist, duration, etc) for future extensibility.
+     * - Prevents duplicate tracks (by URL) in the queue.
+     * - Optionally allows only the controller to add tracks (uncomment to enforce).
+     * - Broadcasts queue_update and emits a track_change if this is the first track.
+     * - Returns detailed result in callback.
+     */
+    socket.on('add_to_queue', (data = {}, callback) => {
+      const { sessionId, url, title, ...meta } = data || {};
+      if (!sessionId || typeof sessionId !== 'string' || !url || typeof url !== 'string') {
+        return callback && callback({ error: 'Missing or invalid sessionId or url' });
+      }
+      // Optionally: Only controller can add tracks (uncomment to enforce)
+      // const session = getSession(sessionId);
+      // const clientId = getClientIdBySocket(sessionId, socket.id);
+      // if (!session || session.controllerClientId !== clientId) {
+      //   return callback && callback({ error: 'Only the controller can add tracks' });
+      // }
+
+      // Enhanced: Prevent duplicate URLs in queue
+      const queue = getQueue(sessionId) || [];
+      if (queue.some(track => track && track.url === url)) {
+        return callback && callback({ error: 'Track already in queue' });
+      }
+
+      // Enhanced: Validate title (optional, allow empty but not non-string)
+      const safeTitle = typeof title === 'string' ? title : '';
+
+      // Enhanced: Support extra metadata (artist, duration, etc)
+      addToQueue(sessionId, url, safeTitle, meta);
+
+      const updatedQueue = getQueue(sessionId);
+
+      log('[DEBUG] add_to_queue: session', sessionId, 'queue now:', updatedQueue);
+
+      io.to(sessionId).emit('queue_update', updatedQueue);
+
+      // If this is the first track, emit a track_change event to set current track
+      if (updatedQueue.length === 1) {
+        io.to(sessionId).emit('track_change', {
+          idx: 0,
+          track: updatedQueue[0],
+          reason: 'first_track_added',
+          initiator: getClientIdBySocket(sessionId, socket.id)
+        });
+      }
+
+      callback && callback({ success: true, queue: updatedQueue });
     });
 
+    /**
+     * Enhanced remove_from_queue:
+     * - Validates input more strictly (sessionId, index).
+     * - Only controller can remove tracks.
+     * - Handles edge cases: removing current track, out-of-bounds, empty queue.
+     * - Broadcasts queue_update and, if needed, emits track_change if current track is removed.
+     * - Returns detailed result in callback.
+     * - Logs for debugging.
+     */
     socket.on('remove_from_queue', ({ sessionId, index } = {}, callback) => {
-      if (!sessionId || typeof index !== 'number') return callback && callback({ error: 'Invalid input' });
+      // Validate input
+      if (!sessionId || typeof sessionId !== 'string' || typeof index !== 'number' || index < 0) {
+        return callback && callback({ error: 'Invalid input' });
+      }
       const session = getSession(sessionId);
       if (!session) return callback && callback({ error: 'Session not found' });
       const clientId = getClientIdBySocket(sessionId, socket.id);
       if (session.controllerClientId !== clientId) return callback && callback({ error: 'Not allowed' });
-      if (!removeFromQueue(sessionId, index)) return callback && callback({ error: 'Invalid index' });
-      log('Queue remove in session', sessionId, ':', index);
-      io.to(sessionId).emit('queue_update', getQueue(sessionId));
-      callback && callback({ success: true });
+
+      const queue = getQueue(sessionId) || [];
+      if (index >= queue.length) {
+        return callback && callback({ error: 'Index out of bounds' });
+      }
+      const removedTrack = queue[index];
+
+      // Remove the track
+      const removed = removeFromQueue(sessionId, index);
+      if (!removed) return callback && callback({ error: 'Invalid index' });
+
+      const updatedQueue = getQueue(sessionId) || [];
+      log('[DEBUG] remove_from_queue: session', sessionId, 'removed index', index, 'track:', removedTrack, 'queue now:', updatedQueue);
+
+      // If the removed track was the current track, emit a track_change to update current track
+      let trackChangePayload = null;
+      if (typeof session.selectedTrackIdx === 'number' && session.selectedTrackIdx === index) {
+        // If queue is not empty, select next track (or previous if last was removed), else null
+        let newIdx = 0;
+        if (updatedQueue.length === 0) {
+          session.selectedTrackIdx = 0;
+          trackChangePayload = {
+            idx: null,
+            track: null,
+            reason: 'track_removed_queue_empty',
+            initiator: clientId,
+            timestamp: Date.now()
+          };
+        } else {
+          // If we removed the last track, move to previous; else, stay at same index
+          newIdx = Math.min(index, updatedQueue.length - 1);
+          session.selectedTrackIdx = newIdx;
+          trackChangePayload = {
+            idx: newIdx,
+            track: updatedQueue[newIdx],
+            reason: 'current_track_removed',
+            initiator: clientId,
+            timestamp: Date.now()
+          };
+        }
+        io.to(sessionId).emit('track_change', trackChangePayload);
+      } else if (
+        typeof session.selectedTrackIdx === 'number' &&
+        index < session.selectedTrackIdx
+      ) {
+        // If a track before the current was removed, decrement selectedTrackIdx
+        session.selectedTrackIdx = Math.max(0, session.selectedTrackIdx - 1);
+      }
+
+      io.to(sessionId).emit('queue_update', updatedQueue);
+
+      callback && callback({
+        success: true,
+        removedIndex: index,
+        removedTrack,
+        queue: updatedQueue,
+        ...(trackChangePayload ? { trackChange: trackChangePayload } : {})
+      });
     });
 
     /**
-     * Enhanced track_change event:
+     * Ultra-Enhanced track_change event:
      * - Only controller can change track.
      * - Broadcasts new track index and metadata to all clients.
-     * - Optionally supports a "reason" and "initiator" for diagnostics.
+     * - Supports "reason", "initiator", and "extra" for diagnostics.
      * - Emits a queue_update for clients to refresh their queue state.
-     * 
-     * Defensive: Handles null/undefined event argument to avoid destructuring errors.
+     * - Optionally supports "autoAdvance" and "force" flags for advanced control.
+     * - Handles out-of-bounds and empty queue cases gracefully.
+     * - Logs detailed diagnostics in development.
+     * - Optionally updates session.selectedTrackIdx for server-side state.
+     * - Optionally emits a "track_change_failed" event for error cases.
      */
     socket.on('track_change', (data, callback) => {
       data = data || {};
-      const { sessionId, idx, reason } = data;
+      const { sessionId, idx, reason, extra, autoAdvance, force } = data;
 
       if (!sessionId) {
         if (callback) callback({ error: 'No sessionId provided' });
@@ -474,26 +618,65 @@ export function setupSocket(io) {
       const clientId = getClientIdBySocket(sessionId, socket.id);
       if (session.controllerClientId !== clientId) {
         if (callback) callback({ error: 'Not allowed' });
+        io.to(socket.id).emit('track_change_failed', {
+          error: 'Not allowed',
+          sessionId,
+          attemptedBy: clientId,
+          timestamp: Date.now()
+        });
         return;
       }
 
       const queue = getQueue(sessionId) || [];
-      const track = (typeof idx === 'number' && queue[idx]) ? queue[idx] : null;
+      let newIdx = typeof idx === 'number' ? idx : 0;
+      let track = (queue.length > 0 && typeof newIdx === 'number' && queue[newIdx]) ? queue[newIdx] : null;
+
+      // Defensive: If idx is out of bounds, clamp to valid range or null
+      if (typeof newIdx === 'number' && (newIdx < 0 || newIdx >= queue.length)) {
+        if (queue.length === 0) {
+          newIdx = null;
+          track = null;
+        } else {
+          newIdx = Math.max(0, Math.min(newIdx, queue.length - 1));
+          track = queue[newIdx];
+        }
+      }
+
+      // Optionally update session.selectedTrackIdx for server-side state
+      if (typeof newIdx === 'number' && newIdx !== null) {
+        session.selectedTrackIdx = newIdx;
+      } else {
+        session.selectedTrackIdx = 0;
+      }
+
+      // Optionally support autoAdvance (e.g., for next/prev track)
+      let autoAdvanceInfo = {};
+      if (autoAdvance) {
+        autoAdvanceInfo = { autoAdvance: true };
+      }
+      if (force) {
+        autoAdvanceInfo.force = true;
+      }
 
       // Debug log for queue and track
-      log('[DEBUG] track_change: session', sessionId, 'queue:', queue, 'idx:', idx, 'track:', track);
+      if (process.env.NODE_ENV === 'development') {
+        log('[DEBUG][track_change] session:', sessionId, 'queue:', queue, 'idx:', newIdx, 'track:', track, 'reason:', reason, 'extra:', extra, 'autoAdvance:', autoAdvance, 'force:', force);
+      }
 
       const payload = {
-        idx,
+        idx: newIdx,
         track,
         reason: reason || null,
         initiator: clientId,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        ...autoAdvanceInfo,
+        ...(extra && typeof extra === 'object' ? { extra } : {})
       };
 
       io.to(sessionId).emit('queue_update', queue);
       io.to(sessionId).emit('track_change', payload);
       log('Track change in session', sessionId, ':', payload);
+
       if (callback) callback({ success: true, ...payload });
     });
 
