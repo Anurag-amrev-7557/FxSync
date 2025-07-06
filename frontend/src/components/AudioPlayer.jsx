@@ -518,6 +518,52 @@ export default function AudioPlayer({
     return `${m}:${s}`;
   };
 
+  // Audio latency calibration effect
+  useEffect(() => {
+    // Only calibrate once per session
+    if (!audioRef.current || audioLatency !== DEFAULT_AUDIO_LATENCY) return;
+
+    const audio = audioRef.current;
+    let calibrationDone = false;
+
+    const calibrateLatency = () => {
+      if (calibrationDone) return;
+      calibrationDone = true;
+
+      // Pause and reset audio
+      audio.pause();
+      audio.currentTime = 0;
+
+      const start = performance.now();
+      const onPlaying = () => {
+        const end = performance.now();
+        const measuredLatency = (end - start) / 1000; // in seconds
+        setAudioLatency(measuredLatency);
+        audio.removeEventListener('playing', onPlaying);
+        // Optionally, pause again after calibration
+        audio.pause();
+      };
+
+      audio.addEventListener('playing', onPlaying);
+      audio.play().catch(() => {
+        // Ignore play errors (e.g., autoplay restrictions)
+        audio.removeEventListener('playing', onPlaying);
+      });
+    };
+
+    // Run calibration on mount or when audio is ready
+    if (audio.readyState >= 2) {
+      calibrateLatency();
+    } else {
+      audio.addEventListener('canplay', calibrateLatency, { once: true });
+    }
+
+    // Cleanup
+    return () => {
+      audio.removeEventListener('canplay', calibrateLatency);
+    };
+  }, [audioRef, audioLatency]);
+
   // --- MOBILE REDESIGN ---
   if (mobile) {
     if (loading) {

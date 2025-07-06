@@ -640,16 +640,75 @@ export function setupSocket(io) {
     }
   }, 60 * 1000);
 
-  // Periodic authoritative sync broadcast (every 2 seconds)
+  // --- Adaptive sync_state broadcast ---
+  const BASE_SYNC_INTERVAL = 500; // ms (0.5s)
+  const HIGH_DRIFT_SYNC_INTERVAL = 200; // ms (0.2s)
+  const DRIFT_THRESHOLD = 0.2; // seconds
+  const DRIFT_WINDOW = 10000; // ms (10s)
+  const clientDriftMap = {}; // sessionId -> { clientId: { drift, timestamp } }
+
+  // Clean up old drift reports every minute
+  setInterval(() => {
+    const now = Date.now();
+    for (const sessionId in clientDriftMap) {
+      for (const clientId in clientDriftMap[sessionId]) {
+        if (now - clientDriftMap[sessionId][clientId].timestamp > DRIFT_WINDOW) {
+          delete clientDriftMap[sessionId][clientId];
+        }
+      }
+      if (Object.keys(clientDriftMap[sessionId]).length === 0) {
+        delete clientDriftMap[sessionId];
+      }
+    }
+  }, 60000);
+
+  // Adaptive sync broadcast
   setInterval(() => {
     const sessions = getAllSessions();
+    const now = Date.now();
     for (const [sessionId, session] of Object.entries(sessions)) {
-      io.to(sessionId).emit('sync_state', {
-        isPlaying: session.isPlaying,
-        timestamp: session.timestamp,
-        lastUpdated: session.lastUpdated,
-        controllerId: session.controllerId
-      });
+      let highDrift = false;
+      if (clientDriftMap[sessionId]) {
+        for (const { drift, timestamp } of Object.values(clientDriftMap[sessionId])) {
+          if (now - timestamp < DRIFT_WINDOW && drift > DRIFT_THRESHOLD) {
+            highDrift = true;
+            break;
+          }
+        }
+      }
+      if (!highDrift) {
+        io.to(sessionId).emit('sync_state', {
+          isPlaying: session.isPlaying,
+          timestamp: session.timestamp,
+          lastUpdated: session.lastUpdated,
+          controllerId: session.controllerId
+        });
+      }
     }
-  }, 2000);
+  }, BASE_SYNC_INTERVAL);
+
+  // High-drift sessions get extra syncs
+  setInterval(() => {
+    const sessions = getAllSessions();
+    const now = Date.now();
+    for (const [sessionId, session] of Object.entries(sessions)) {
+      let highDrift = false;
+      if (clientDriftMap[sessionId]) {
+        for (const { drift, timestamp } of Object.values(clientDriftMap[sessionId])) {
+          if (now - timestamp < DRIFT_WINDOW && drift > DRIFT_THRESHOLD) {
+            highDrift = true;
+            break;
+          }
+        }
+      }
+      if (highDrift) {
+        io.to(sessionId).emit('sync_state', {
+          isPlaying: session.isPlaying,
+          timestamp: session.timestamp,
+          lastUpdated: session.lastUpdated,
+          controllerId: session.controllerId
+        });
+      }
+    }
+  }, HIGH_DRIFT_SYNC_INTERVAL);
 } 
