@@ -1181,97 +1181,20 @@ export default function AudioPlayer({
     return `${minutes}:${seconds}`;
   };
 
-  // Enhanced audio latency calibration effect
+  // --- Automatic device latency estimation using AudioContext.baseLatency ---
   useEffect(() => {
-    // Only calibrate once per session and only if audio is ready and not already calibrated
-    if (!audioRef.current || audioLatency !== DEFAULT_AUDIO_LATENCY) return;
-
-    const audio = audioRef.current;
-    let calibrationDone = false;
-    let timeoutId = null;
-
-    const calibrateLatency = () => {
-      if (calibrationDone) return;
-      calibrationDone = true;
-
-      // Defensive: Save original state to restore after calibration
-      const wasPlaying = !audio.paused;
-      const originalTime = audio.currentTime;
-      const originalVolume = audio.volume;
-      const originalMuted = audio.muted;
-
-      // Mute audio to avoid user hearing the calibration blip
-      audio.muted = true;
-      audio.volume = 0;
-
-      // Pause and reset audio
-      audio.pause();
-      audio.currentTime = 0;
-
-      // Wait for readyState to be at least HAVE_CURRENT_DATA
-      const waitForReady = () => {
-        if (audio.readyState < 2) {
-          timeoutId = setTimeout(waitForReady, 20);
-          return;
-        }
-        const start = performance.now();
-        const onPlaying = () => {
-          const end = performance.now();
-          const measuredLatency = (end - start) / 1000; // in seconds
-          setAudioLatency(measuredLatency);
-
-          // Clean up
-          audio.removeEventListener('playing', onPlaying);
-
-          // Restore original state
-          audio.pause();
-          audio.currentTime = originalTime;
-          audio.volume = originalVolume;
-          audio.muted = originalMuted;
-          if (wasPlaying) {
-            // Try to resume playback if it was playing before
-            audio.play().catch(() => {});
-          }
-
-          if (process.env.NODE_ENV === 'development') {
-            // eslint-disable-next-line no-console
-            console.log('[AudioPlayer][LatencyCalibration] Measured latency:', measuredLatency, 'seconds');
-          }
-        };
-
-        audio.addEventListener('playing', onPlaying);
-
-        // Try to play (may be blocked by autoplay policy)
-        audio.play().catch((err) => {
-          // Clean up if play fails
-          audio.removeEventListener('playing', onPlaying);
-          // Restore state
-          audio.currentTime = originalTime;
-          audio.volume = originalVolume;
-          audio.muted = originalMuted;
-          if (process.env.NODE_ENV === 'development') {
-            // eslint-disable-next-line no-console
-            console.warn('[AudioPlayer][LatencyCalibration] Play failed during calibration', err);
-          }
-        });
-      };
-
-      waitForReady();
-    };
-
-    // Run calibration on mount or when audio is ready
-    if (audio.readyState >= 2) {
-      calibrateLatency();
-    } else {
-      audio.addEventListener('canplay', calibrateLatency, { once: true });
+    let ctx;
+    try {
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+      if (ctx.baseLatency && ctx.baseLatency > 0 && ctx.baseLatency < 1) {
+        setAudioLatency(ctx.baseLatency);
+      }
+    } catch (e) {
+      // Ignore, fallback to default
+    } finally {
+      if (ctx && typeof ctx.close === 'function') ctx.close();
     }
-
-    // Cleanup
-    return () => {
-      audio.removeEventListener('canplay', calibrateLatency);
-      if (timeoutId) clearTimeout(timeoutId);
-    };
-  }, [audioRef, audioLatency]);
+  }, []);
 
   // Smoothly animate displayedCurrentTime toward audio.currentTime
   useEffect(() => {

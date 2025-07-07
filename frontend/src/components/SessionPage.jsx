@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import SessionForm from './SessionForm'
 import AudioPlayer from './AudioPlayer'
@@ -42,7 +42,9 @@ function SessionPage({
   controllerOfferDeclined,
   sessionSyncState,
   rtt,
-  timeOffset
+  timeOffset,
+  jitter,
+  drift
 }) {
   const { sessionId: urlSessionId } = useParams()
   const [messages, setMessages] = useState([])
@@ -536,6 +538,17 @@ function SessionPage({
     }
   }, [sessionSyncState]);
 
+  // --- Sync Quality Calculation ---
+  const syncQuality = useMemo(() => {
+    // Use RTT, jitter, and drift if available
+    const r = rtt !== null && !isNaN(rtt) ? rtt : 0;
+    const j = jitter !== null && !isNaN(jitter) ? Math.abs(jitter) : 0;
+    const d = drift !== null && !isNaN(drift) ? Math.abs(drift) : 0;
+    if (r < 30 && j < 10 && d < 10) return { label: 'Good', color: 'bg-green-500', tooltip: 'Sync is excellent. Low latency, jitter, and drift.' };
+    if (r < 80 && j < 25 && d < 25) return { label: 'Fair', color: 'bg-yellow-500', tooltip: 'Sync is fair. Some latency, jitter, or drift detected.' };
+    return { label: 'Poor', color: 'bg-red-500', tooltip: 'Sync is poor. High latency, jitter, or drift.' };
+  }, [rtt, jitter, drift]);
+
   return (
     <div className="min-h-screen bg-neutral-950 text-white">
       {!currentSessionId ? (
@@ -561,9 +574,28 @@ function SessionPage({
               </div>
               {/* Center: RTT and Offset display */}
               <div className="flex-1 flex justify-center">
-                <div className="flex items-center gap-4 bg-neutral-800/60 px-4 py-1 rounded-lg text-xs font-mono text-neutral-200 border border-neutral-700">
-                  <span>RTT: <span className="font-bold text-blue-400">{rtt !== null && !isNaN(rtt) ? rtt.toFixed(1) : '--'}</span> ms</span>
-                  <span>Offset: <span className="font-bold text-green-400">{timeOffset !== null && !isNaN(timeOffset) ? timeOffset.toFixed(1) : '--'}</span> ms</span>
+                <div className="flex items-center gap-3 bg-neutral-800/70 px-4 py-1 rounded-full shadow-sm border border-neutral-700 backdrop-blur-md min-w-[210px] max-w-xs">
+                  {/* RTT */}
+                  <span className="flex items-center gap-1 text-xs font-medium text-blue-300" title={`RTT (Round Trip Time): Time for a message to go to the server and back. Lower is better.\nCurrent: ${rtt !== null && !isNaN(rtt) ? rtt.toFixed(1) : '--'} ms`}> 
+                    <svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" className="inline-block"><circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="2"/><path d="M10 6v4l2 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                    <span>{rtt !== null && !isNaN(rtt) ? rtt.toFixed(1) : '--'}</span>
+                    <span className="text-neutral-400 font-normal">ms</span>
+                  </span>
+                  {/* Divider */}
+                  <span className="w-1 h-1 bg-neutral-600 rounded-full mx-1"></span>
+                  {/* Offset */}
+                  <span className="flex items-center gap-1 text-xs font-medium text-green-300" title={`Offset: Estimated difference between your clock and the server.\nCurrent: ${timeOffset !== null && !isNaN(timeOffset) ? timeOffset.toFixed(1) : '--'} ms`}> 
+                    <svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" className="inline-block"><rect x="4" y="9" width="12" height="2" rx="1" fill="currentColor"/><rect x="9" y="4" width="2" height="12" rx="1" fill="currentColor"/></svg>
+                    <span>{timeOffset !== null && !isNaN(timeOffset) ? timeOffset.toFixed(1) : '--'}</span>
+                    <span className="text-neutral-400 font-normal">ms</span>
+                  </span>
+                  {/* Divider */}
+                  <span className="w-1 h-1 bg-neutral-600 rounded-full mx-1"></span>
+                  {/* Sync Quality Badge */}
+                  <span className={`flex items-center gap-1 text-xs font-semibold text-white px-2 py-0.5 rounded-full ${syncQuality.color} cursor-help`} title={syncQuality.tooltip}>
+                    <svg width="12" height="12" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" className="inline-block"><circle cx="10" cy="10" r="9" stroke="currentColor" strokeWidth="2" fill="none"/><circle cx="10" cy="10" r="4" fill="currentColor"/></svg>
+                    {syncQuality.label}
+                  </span>
                 </div>
               </div>
               <div className="flex items-center gap-4">

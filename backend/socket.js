@@ -741,8 +741,8 @@ export function setupSocket(io) {
           callback({
             serverTime: serverReceived,
             clientSent: parsedClientSent,
-            serverReceived,
-            serverProcessed,
+            serverReceived, // Always include when request was received
+            serverProcessed, // Always include when response is sent
             serverUptime: Math.round(process.uptime() * 1000),
             serverTimezoneOffset: new Date().getTimezoneOffset(),
             serverIso: new Date(serverReceived).toISOString(),
