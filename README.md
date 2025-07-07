@@ -31,13 +31,13 @@
 
 ```mermaid
 graph TD
-  Frontend[Frontend (React)] -- Socket.io --> Backend[Backend (Node.js)]
-  Backend -- REST API --> SessionManager[Session Manager]
-  Backend -- REST API --> ChatManager[Chat Manager]
-  Backend -- REST API --> FileManager[File Manager]
-  Backend -- REST API --> QueueManager[Queue Manager]
-  Backend -- File System --> Uploads[Uploads/Samples]
-  Frontend -- HTTP --> Backend
+  frontend["Frontend (React)"] -- "Socket.io" --> backend["Backend (Node.js)"]
+  backend -- "REST API" --> session["Session Manager"]
+  backend -- "REST API" --> chat["Chat Manager"]
+  backend -- "REST API" --> file["File Manager"]
+  backend -- "REST API" --> queue["Queue Manager"]
+  backend -- "File System" --> uploads["Uploads/Samples"]
+  frontend -- "HTTP" --> backend
 ```
 
 ---
