@@ -216,6 +216,7 @@ export default function AudioPlayer({
   mobile = false,
   isAudioTabActive = false,
   currentTrack = null,
+  rtt = null
 }) {
   const [audioUrl, setAudioUrl] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -476,8 +477,9 @@ export default function AudioPlayer({
         now = getNow(getServerTime);
         log('warn', 'SYNC_STATE: serverTime missing, using getNow(getServerTime)', { now });
       }
-      // Compensate for measured audio latency
-      const expected = timestamp + (now - lastUpdated) / 1000 - audioLatency;
+      // Compensate for measured audio latency and RTT (one-way delay)
+      const rttComp = rtt ? rtt / 2000 : 0; // ms to s, one-way
+      const expected = timestamp + (now - lastUpdated) / 1000 - audioLatency + rttComp;
       if (!isFiniteNumber(expected)) {
         log('warn', 'SYNC_STATE: expected is not finite', { expected, timestamp, lastUpdated, now });
         showSyncStatus('Sync failed');
@@ -550,7 +552,7 @@ export default function AudioPlayer({
       if (syncTimeout) clearTimeout(syncTimeout);
       if (resyncTimeout) clearTimeout(resyncTimeout);
     };
-  }, [socket, audioLatency, getServerTime, clientId]);
+  }, [socket, audioLatency, getServerTime, clientId, rtt]);
 
   // Enhanced periodic drift check (for followers)
   useEffect(() => {
@@ -581,7 +583,8 @@ export default function AudioPlayer({
         if (!audio) return;
 
         const now = getNow(getServerTime);
-        const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency;
+        const rttComp = rtt ? rtt / 2000 : 0; // ms to s, one-way
+        const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency + rttComp;
         if (!isFiniteNumber(expected)) {
           if (process.env.NODE_ENV === 'development') {
             console.warn('[DriftCheck] Expected is not finite', { expected, state });
@@ -590,7 +593,7 @@ export default function AudioPlayer({
         }
 
         const syncedNow = getNow(getServerTime);
-        const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000;
+        const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000 + rttComp;
         const drift = Math.abs(audio.currentTime - expectedSynced);
 
         // Enhanced: log drift only if significant or in dev
@@ -644,10 +647,10 @@ export default function AudioPlayer({
           setSyncStatus('In Sync');
         }
       });
-    }, 800); // Drift check interval set to 800ms
+    }, 1200);
 
     return () => clearInterval(interval);
-  }, [socket, isController, getServerTime, audioLatency, clientId]);
+  }, [socket, isController, getServerTime, audioLatency, clientId, rtt]);
 
   // Enhanced: On mount, immediately request sync state on join, with improved error handling, logging, and edge case resilience
   useEffect(() => {
@@ -706,8 +709,9 @@ export default function AudioPlayer({
         }
 
         const now = getNow(getServerTime);
-        // Compensate for measured audio latency
-        const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency;
+        // Compensate for measured audio latency and RTT (one-way delay)
+        const rttComp = rtt ? rtt / 2000 : 0; // ms to s, one-way
+        const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency + rttComp;
         if (!isFiniteNumber(expected) || expected < 0) {
           warn('Invalid expected time, pausing audio', { expected, state });
           audio.pause();
@@ -718,7 +722,7 @@ export default function AudioPlayer({
 
         // Use advanced time sync
         const syncedNow = getNow(getServerTime);
-        const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000;
+        const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000 + rttComp;
 
         // Clamp expectedSynced to [0, duration] if possible
         let safeExpected = expectedSynced;
@@ -755,7 +759,7 @@ export default function AudioPlayer({
         warn('Exception in sync_request callback', err);
       }
     });
-  }, [socket, getServerTime, audioLatency]);
+  }, [socket, getServerTime, audioLatency, rtt]);
 
   // Enhanced: Emit play/pause/seek events (controller only) with improved logging, error handling, and latency compensation
   const emitPlay = () => {
@@ -1007,8 +1011,9 @@ export default function AudioPlayer({
         }
         
         const now = getNow(getServerTime);
-        // Compensate for measured audio latency
-        const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency;
+        // Compensate for measured audio latency and RTT (one-way delay)
+        const rttComp = rtt ? rtt / 2000 : 0; // ms to s, one-way
+        const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency + rttComp;
         if (!isFiniteNumber(expected)) {
           if (process.env.NODE_ENV === 'development') {
             // eslint-disable-next-line no-console
@@ -1024,7 +1029,7 @@ export default function AudioPlayer({
         
         // Use advanced time sync
         const syncedNow = getNow(getServerTime);
-        const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000;
+        const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000 + rttComp;
 
         // Log drift for analytics
         const drift = Math.abs(audio.currentTime - expectedSynced);

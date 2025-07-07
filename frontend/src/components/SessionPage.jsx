@@ -40,7 +40,9 @@ function SessionPage({
   controllerOfferSent,
   controllerOfferAccepted,
   controllerOfferDeclined,
-  sessionSyncState
+  sessionSyncState,
+  rtt,
+  timeOffset
 }) {
   const { sessionId: urlSessionId } = useParams()
   const [messages, setMessages] = useState([])
@@ -557,7 +559,13 @@ function SessionPage({
                   <p className="text-xs text-neutral-400">Room: {currentSessionId}</p>
                 </div>
               </div>
-              
+              {/* Center: RTT and Offset display */}
+              <div className="flex-1 flex justify-center">
+                <div className="flex items-center gap-4 bg-neutral-800/60 px-4 py-1 rounded-lg text-xs font-mono text-neutral-200 border border-neutral-700">
+                  <span>RTT: <span className="font-bold text-blue-400">{rtt !== null && !isNaN(rtt) ? rtt.toFixed(1) : '--'}</span> ms</span>
+                  <span>Offset: <span className="font-bold text-green-400">{timeOffset !== null && !isNaN(timeOffset) ? timeOffset.toFixed(1) : '--'}</span> ms</span>
+                </div>
+              </div>
               <div className="flex items-center gap-4">
                 <div className={`flex items-center gap-2 text-sm transition-all duration-300 ${connectionStatus.animationClass}`}>
                   <div className={`w-2 h-2 rounded-full transition-all duration-300 ${connected ? 'bg-green-500' : 'bg-red-500'}`}></div>
@@ -621,6 +629,7 @@ function SessionPage({
                         clients={clients}
                         getServerTime={getServerTime}
                         currentTrack={currentTrack}
+                        rtt={rtt}
                       />
                     </div>
                     <div className="p-4">
@@ -752,6 +761,7 @@ function SessionPage({
                         mobile={true}
                         isAudioTabActive={mobileTab === 0}
                         currentTrack={currentTrack}
+                        rtt={rtt}
                       />
                     </div>
                   </div>
@@ -782,6 +792,7 @@ function SessionPage({
                         mobile={true}
                         isAudioTabActive={mobileTab === 1}
                         currentTrack={currentTrack}
+                        rtt={rtt}
                       />
                     </div>
                   </div>

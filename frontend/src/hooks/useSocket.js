@@ -256,11 +256,49 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
 
     const logPrefix = `[useSocket][${sessionId}]`;
 
+    // --- NTP-like multi-round time sync before joining session ---
+    async function ntpBatchSync(socket, rounds = 8) {
+      const samples = [];
+      for (let i = 0; i < rounds; i++) {
+        const now = Date.now();
+        await new Promise((resolve) => {
+          socket.emit(
+            'time_sync',
+            { clientSent: now, clientCallbackReceived: Date.now(), userAgent: navigator.userAgent },
+            (data) => {
+              if (
+                data &&
+                typeof data.serverTime === 'number' &&
+                typeof data.clientSent === 'number'
+              ) {
+                const clientReceived = Date.now();
+                const roundTrip = clientReceived - data.clientSent;
+                if (roundTrip > MAX_RTT) return resolve(); // Ignore high RTT
+                const estimatedServerTime = data.serverTime + roundTrip / 2;
+                const offset = estimatedServerTime - clientReceived;
+                samples.push({ offset, rtt: roundTrip });
+              }
+              setTimeout(resolve, 20); // Small delay between rounds
+            }
+          );
+        });
+      }
+      if (samples.length < 4) return; // Not enough samples
+      samples.sort((a, b) => a.rtt - b.rtt);
+      const trimmed = samples.slice(2, -2); // Remove top/bottom 2 RTTs
+      const avgOffset = trimmed.reduce((sum, s) => sum + s.offset, 0) / trimmed.length;
+      const avgRtt = trimmed.reduce((sum, s) => sum + s.rtt, 0) / trimmed.length;
+      setTimeOffset(avgOffset);
+      setRtt(avgRtt);
+    }
+
     // --- Event Handlers ---
-    const handleConnect = () => {
+    const handleConnect = async () => {
       console.info(`${logPrefix} Socket connected`);
       setConnected(true);
       reconnectAttempts = 0;
+      // --- Perform NTP-like batch sync before joining session ---
+      await ntpBatchSync(socket);
       socket.emit('join_session', { sessionId, displayName, deviceInfo, clientId }, (data) => {
         if (data?.error) {
           console.error(`${logPrefix} JOIN CALLBACK ERROR:`, data.error);
