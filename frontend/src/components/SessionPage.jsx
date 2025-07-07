@@ -301,6 +301,26 @@ function SessionPage({
     else if (selectedTrackIdx >= queue.length) setSelectedTrackIdx(0);
   }, [queue]);
 
+  // Ensure any buffered track_change is applied as soon as the queue is set
+  useEffect(() => {
+    if (Array.isArray(queue) && queue.length > 0 && pendingTrackIdx.current !== null) {
+      // Defensive: Clamp idx to valid range
+      const clampedIdx = Math.max(0, Math.min(pendingTrackIdx.current, queue.length - 1));
+      setCurrentTrackOverride(pendingTrackIdx.currentTrack || null);
+      setSelectedTrackIdx(clampedIdx);
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.log('[SessionPage][listener-fix] Applied buffered track_change after queue set:', {
+          clampedIdx,
+          currentTrack: pendingTrackIdx.currentTrack,
+          queue
+        });
+      }
+      pendingTrackIdx.current = null;
+      pendingTrackIdx.currentTrack = null;
+    }
+  }, [queue]);
+
   // Debug: Log all socket events received
   useEffect(() => {
     if (!socket) return;
@@ -469,7 +489,7 @@ function SessionPage({
       setCurrentTrackOverride(trackObj);
       setSelectedTrackIdx(idx !== null && typeof idx === 'number' ? idx : 0); // fallback to 0 if idx is null
       if (isController && socket) {
-        socket.emit('track_change', idx, { override: true, track: trackObj });
+        socket.emit('track_change', { sessionId: currentSessionId, idx }, { override: true, track: trackObj });
       }
       if (process.env.NODE_ENV === 'development') {
         // eslint-disable-next-line no-console
@@ -491,7 +511,7 @@ function SessionPage({
     setCurrentTrackOverride(null);
     setSelectedTrackIdx(idx);
     if (isController && socket) {
-      socket.emit('track_change', idx, { override: false });
+      socket.emit('track_change', { sessionId: currentSessionId, idx }, { override: false });
     }
     if (process.env.NODE_ENV === 'development') {
       // eslint-disable-next-line no-console

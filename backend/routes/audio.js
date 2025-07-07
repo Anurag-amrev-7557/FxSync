@@ -13,13 +13,9 @@ const AUDIO_BASE_PATH = process.env.AUDIO_BASE_PATH || '/audio';
 
 // Ensure uploads directory exists
 const uploadsDir = path.join(process.cwd(), 'uploads');
-(async () => {
-  try {
-    await fs.promises.mkdir(uploadsDir, { recursive: true });
-  } catch (err) {
-    // Directory creation failed
-  }
-})();
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
 
 // Set up multer for file uploads
 const storage = multer.diskStorage({
@@ -61,34 +57,30 @@ router.post('/upload', upload.single('music'), (req, res) => {
 router.use('/uploads', express.static(uploadsDir));
 
 // List all tracks (user uploads + samples)
-router.get('/all-tracks', async (req, res) => {
+router.get('/all-tracks', (req, res) => {
   const uploadsDir = path.join(process.cwd(), 'uploads');
   const samplesDir = path.join(uploadsDir, 'samples');
   let tracks = [];
 
   // Helper to add tracks from a directory
-  async function addTracksFromDir(dir, type, urlPrefix) {
-    try {
-      await fs.promises.access(dir);
-      const files = await fs.promises.readdir(dir);
-      files.forEach(file => {
-        if (file.endsWith('.mp3')) {
-          tracks.push({
-            title: file.replace(/\.mp3$/i, ''),
-            url: `${AUDIO_BASE_PATH}${urlPrefix}/${file}`,
-            type
-          });
-        }
-      });
-    } catch (err) {
-      // Directory does not exist or error reading, skip
-    }
+  function addTracksFromDir(dir, type, urlPrefix) {
+    if (!fs.existsSync(dir)) return;
+    const files = fs.readdirSync(dir);
+    files.forEach(file => {
+      if (file.endsWith('.mp3')) {
+        tracks.push({
+          title: file.replace(/\.mp3$/i, ''),
+          url: `${AUDIO_BASE_PATH}${urlPrefix}/${file}`,
+          type
+        });
+      }
+    });
   }
 
   // User uploads (exclude samples subdir)
-  await addTracksFromDir(uploadsDir, 'user', '/uploads');
+  addTracksFromDir(uploadsDir, 'user', '/uploads');
   // Sample tracks
-  await addTracksFromDir(samplesDir, 'sample', '/uploads/samples');
+  addTracksFromDir(samplesDir, 'sample', '/uploads/samples');
 
   res.json(tracks);
 });

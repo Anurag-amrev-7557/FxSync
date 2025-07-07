@@ -303,26 +303,21 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
               <div
                 key={track.url}
                 className="p-2 hover:bg-primary/10 transition-all duration-200 cursor-pointer flex items-center gap-3"
-                onClick={async () => {
-                  if (!isController || !socket) return;
-                  // Check if track is already in the queue
-                  const queueIdx = queue.findIndex(q => q.url === track.url);
-                  if (queueIdx !== -1) {
-                    // Already in queue, select it
-                    onSelectTrack && onSelectTrack(queueIdx, track);
+                onClick={() => {
+                  if (!isController || !socket || !sessionId) {
+                    // Just preview for non-controller or if missing socket/session
+                    onSelectTrack && onSelectTrack(null, track);
+                    return;
+                  }
+                  // If already in queue, select it
+                  const existingIdx = queue.findIndex(q => q.url === track.url);
+                  if (existingIdx !== -1) {
+                    onSelectTrack && onSelectTrack(existingIdx, track);
                   } else {
-                    // Not in queue, add it, then select it after confirmation
-                    // Optionally show loading UI here
-                    socket.emit('add_to_queue', { sessionId, url: track.url, title: track.title }, (res) => {
-                      // Wait a short moment for queue to update, then select
-                      setTimeout(() => {
-                        // Find the new index in the updated queue
-                        const newIdx = queue.findIndex(q => q.url === track.url);
-                        if (onSelectTrack) {
-                          // If not found, fallback to last index
-                          onSelectTrack(newIdx !== -1 ? newIdx : queue.length, track);
-                        }
-                      }, 300);
+                    // Add to queue, then select it after confirmation
+                    socket.emit('add_to_queue', { sessionId, url: track.url, title: track.title }, () => {
+                      // Use the new index (end of queue)
+                      onSelectTrack && onSelectTrack(queue.length, track);
                     });
                   }
                 }}
