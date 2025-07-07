@@ -5,9 +5,9 @@ import { getClientId } from '../utils/clientId';
 // --- Time Sync Tuning Constants ---
 const TRIM_RATIO = 0.22; // Outlier filtering trim ratio
 const MAX_RTT = 220; // ms, ignore samples above this
-const ADAPTIVE_INTERVAL_BAD = 800; // ms, unstable network
-const ADAPTIVE_INTERVAL_GOOD = 2500; // ms, very stable
-const ADAPTIVE_INTERVAL_DEFAULT = 1500; // ms, default
+const ADAPTIVE_INTERVAL_BAD = 400; // ms, unstable network
+const ADAPTIVE_INTERVAL_GOOD = 700; // ms, very stable
+const ADAPTIVE_INTERVAL_DEFAULT = 900; // ms, default
 const JITTER_BAD = 15; // ms
 const JITTER_GOOD = 10; // ms
 const AVG_RTT_BAD = 100; // ms

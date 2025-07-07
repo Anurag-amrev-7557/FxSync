@@ -15,10 +15,10 @@ if (typeof window !== 'undefined' && !window._audioPlayerErrorHandlerAdded) {
   window._audioPlayerErrorHandlerAdded = true;
 }
 
-const DRIFT_THRESHOLD = 0.3; // seconds (less aggressive, was 0.13)
+const DRIFT_THRESHOLD = 0.12; // seconds (was 0.3)
 const PLAY_OFFSET = 0.35; // seconds (350ms future offset for play events)
 const DEFAULT_AUDIO_LATENCY = 0.08; // 80ms fallback if not measured
-const MICRO_DRIFT_THRESHOLD = 0.08; // ultra-micro threshold (was 0.18)
+const MICRO_DRIFT_THRESHOLD = 0.04; // seconds (was 0.08)
 const MICRO_RATE_CAP = 0.03; // max playbackRate delta (was 0.07)
 const MICRO_CORRECTION_WINDOW = 250; // ms (was 420)
 const DRIFT_JITTER_BUFFER = 2; // consecutive drift detections before correction
