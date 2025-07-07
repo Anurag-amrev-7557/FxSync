@@ -267,8 +267,9 @@ export default function AudioPlayer({
   const [ws, setWs] = useState(null);
   useEffect(() => {
     const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
-    // Convert http/https to ws/wss for WebSocket
-    const wsUrl = backendUrl.replace(/^http/, 'wss');
+    // Convert http/https to ws/wss for WebSocket and add /ntp path
+    let wsUrl = backendUrl.replace(/^http/, 'ws');
+    if (!wsUrl.endsWith('/ntp')) wsUrl += '/ntp';
     const socket = new window.WebSocket(wsUrl);
     setWs(socket);
     return () => socket.close();
