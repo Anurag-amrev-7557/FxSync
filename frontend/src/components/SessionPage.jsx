@@ -39,7 +39,8 @@ function SessionPage({
   controllerOfferReceived,
   controllerOfferSent,
   controllerOfferAccepted,
-  controllerOfferDeclined
+  controllerOfferDeclined,
+  sessionSyncState
 }) {
   const { sessionId: urlSessionId } = useParams()
   const [messages, setMessages] = useState([])
@@ -463,6 +464,20 @@ function SessionPage({
 
   // Enhanced handler for Playlist selection with improved robustness, logging, and user experience
   const handleSelectTrack = (idx, trackObj) => {
+    // If a custom track object is provided (e.g., preview or external), override
+    if (trackObj) {
+      setCurrentTrackOverride(trackObj);
+      setSelectedTrackIdx(idx !== null && typeof idx === 'number' ? idx : 0); // fallback to 0 if idx is null
+      if (isController && socket) {
+        socket.emit('track_change', idx, { override: true, track: trackObj });
+      }
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.log('[SessionPage][handleSelectTrack] Overriding with custom track', { idx, trackObj });
+      }
+      return;
+    }
+
     // Defensive: Validate idx and queue
     if (typeof idx !== 'number' || idx < 0 || !Array.isArray(queue) || idx >= queue.length) {
       if (process.env.NODE_ENV === 'development') {
@@ -472,42 +487,32 @@ function SessionPage({
       return;
     }
 
-    // If a custom track object is provided (e.g., preview or external), override
-    if (trackObj) {
-      setCurrentTrackOverride(trackObj);
-      setSelectedTrackIdx(idx); // Keep selected index in sync for UI
-      if (isController && socket) {
-        socket.emit('track_change', idx, { override: true, track: trackObj });
-      }
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
-        console.log('[SessionPage][handleSelectTrack] Overriding with custom track', { idx, trackObj });
-      }
-    } else {
-      // Clear override and select from queue
-      setCurrentTrackOverride(null);
-      setSelectedTrackIdx(idx);
-      if (isController && socket) {
-        socket.emit('track_change', idx, { override: false });
-      }
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
-        console.log('[SessionPage][handleSelectTrack] Selected track from queue', { idx, track: queue[idx] });
-      }
+    // Clear override and select from queue
+    setCurrentTrackOverride(null);
+    setSelectedTrackIdx(idx);
+    if (isController && socket) {
+      socket.emit('track_change', idx, { override: false });
     }
-
-    // Optionally: Scroll to the selected track in the playlist UI for better UX
-    setTimeout(() => {
-      const trackEl = document.querySelector(`[data-track-idx="${idx}"]`);
-      if (trackEl && typeof trackEl.scrollIntoView === 'function') {
-        trackEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
-    }, 100);
+    if (process.env.NODE_ENV === 'development') {
+      // eslint-disable-next-line no-console
+      console.log('[SessionPage][handleSelectTrack] Selected track from queue', { idx, track: queue[idx] });
+    }
   };
 
   // In render, always derive currentTrack from latest queue and selectedTrackIdx
   const currentTrack = currentTrackOverride || (queue && queue.length > 0 ? queue[selectedTrackIdx] : null);
   console.log('[DEBUG] Render: currentTrack', currentTrack, 'selectedTrackIdx', selectedTrackIdx, 'queue', queue);
+
+  // When sessionSyncState changes (from join_session), initialize playback/session state
+  useEffect(() => {
+    if (sessionSyncState) {
+      if (Array.isArray(sessionSyncState.queue)) setQueue(sessionSyncState.queue);
+      if (typeof sessionSyncState.selectedTrackIdx === 'number') setSelectedTrackIdx(sessionSyncState.selectedTrackIdx);
+      if (sessionSyncState.currentTrack) setCurrentTrackOverride(sessionSyncState.currentTrack);
+      // Optionally: handle isPlaying, timestamp, etc. for AudioPlayer
+      // You can add more state initializations here as needed
+    }
+  }, [sessionSyncState]);
 
   return (
     <div className="min-h-screen bg-neutral-950 text-white">

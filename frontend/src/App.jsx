@@ -28,8 +28,11 @@ function App() {
     return `${randomAdj} ${randomNoun}`
   })
 
+  // Advanced sync state for session
+  const [sessionSyncState, setSessionSyncState] = useState(null);
+
   // Enhanced socket connection with better error handling
-  const socketStuff = useSocket(currentSessionId, displayName)
+  const socketStuff = useSocket(currentSessionId, displayName, undefined, setSessionSyncState)
 
   // Persist session data to localStorage
   useEffect(() => {
@@ -79,6 +82,8 @@ function App() {
                 setDisplayName={setDisplayName}
                 onLeaveSession={handleSessionLeave}
                 {...socketStuff}
+                sessionSyncState={sessionSyncState}
+                setSessionSyncState={setSessionSyncState}
               />
             }
           />
@@ -102,6 +107,8 @@ function App() {
                 setDisplayName={setDisplayName}
                 onLeaveSession={handleSessionLeave}
                 {...socketStuff}
+                sessionSyncState={sessionSyncState}
+                setSessionSyncState={setSessionSyncState}
               />
             }
           />

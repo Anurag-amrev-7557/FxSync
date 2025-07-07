@@ -8,6 +8,25 @@ import path from 'path';
 import dotenv from 'dotenv';
 dotenv.config();
 
+// Helper to build full session sync state for advanced sync
+function buildSessionSyncState(session) {
+  const queue = Array.isArray(session.queue) ? session.queue : [];
+  const selectedTrackIdx = Number.isInteger(session.selectedTrackIdx) ? session.selectedTrackIdx : 0;
+  const currentTrack = (queue.length > 0 && queue[selectedTrackIdx]) ? queue[selectedTrackIdx] : null;
+  return {
+    isPlaying: !!session.isPlaying,
+    timestamp: typeof session.timestamp === 'number' ? session.timestamp : 0,
+    lastUpdated: typeof session.lastUpdated === 'number' ? session.lastUpdated : Date.now(),
+    controllerId: session.controllerId || null,
+    controllerClientId: session.controllerClientId || null,
+    queue,
+    selectedTrackIdx,
+    currentTrack,
+    sessionSettings: session.settings || {},
+    drift: typeof session.drift === 'number' ? session.drift : null,
+  };
+}
+
 export function setupSocket(io) {
   io.on('connection', (socket) => {
     console.log('Socket connected:', socket.id);
@@ -16,7 +35,7 @@ export function setupSocket(io) {
       console.log('join_session event received', { sessionId, clientId });
       if (!sessionId || typeof sessionId !== 'string') {
         log('join_session: missing or invalid sessionId');
-        return callback && callback({ error: 'No sessionId provided' });
+        return typeof callback === "function" && callback({ error: 'No sessionId provided' });
       }
       let session = getSession(sessionId);
       if (!session) {
@@ -46,11 +65,11 @@ export function setupSocket(io) {
         controllerId: session.controllerId
       });
       // Always send the correct controllerClientId in the callback
-      callback && callback({
-        ...session,
+      const syncState = buildSessionSyncState(session);
+      typeof callback === "function" && callback({
+        ...syncState,
         sessionId,
         audioUrl: process.env.AUDIO_URL || 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
-        controllerClientId: session.controllerClientId
       });
       
       // Send current queue to the joining client
@@ -77,7 +96,8 @@ export function setupSocket(io) {
         isPlaying: true,
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
-        controllerId: socket.id
+        controllerId: socket.id,
+        serverTime: Date.now()
       });
     });
 
@@ -94,7 +114,8 @@ export function setupSocket(io) {
         isPlaying: false,
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
-        controllerId: socket.id
+        controllerId: socket.id,
+        serverTime: Date.now()
       });
     });
 
@@ -111,75 +132,53 @@ export function setupSocket(io) {
         isPlaying: session.isPlaying,
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
-        controllerId: socket.id
+        controllerId: socket.id,
+        serverTime: Date.now()
       });
     });
 
     socket.on('sync_request', async ({ sessionId } = {}, callback) => {
       try {
         if (!sessionId) {
-          if (callback) callback({ error: 'No sessionId provided' });
+          if (typeof callback === "function") callback({ error: 'No sessionId provided' });
           return;
         }
         const session = getSession(sessionId);
         if (!session) {
-          if (callback) callback({ error: 'Session not found' });
+          if (typeof callback === "function") callback({ error: 'Session not found' });
           return;
         }
-
-        // Get current track from queue and selectedTrackIdx
-        const queue = Array.isArray(session.queue) ? session.queue : [];
-        const selectedTrackIdx = Number.isInteger(session.selectedTrackIdx) ? session.selectedTrackIdx : 0;
-        const currentTrack = (queue.length > 0 && queue[selectedTrackIdx]) ? queue[selectedTrackIdx] : null;
-
-        // Enhanced: Provide more session state for robust client sync
-        const response = {
-          isPlaying: !!session.isPlaying,
-          timestamp: typeof session.timestamp === 'number' ? session.timestamp : 0,
-          lastUpdated: typeof session.lastUpdated === 'number' ? session.lastUpdated : Date.now(),
-          controllerId: session.controllerId || null,
-          controllerClientId: session.controllerClientId || null,
-          queue,
-          selectedTrackIdx,
-          currentTrack,
-          // Optionally, send session settings or metadata if available
-          sessionSettings: session.settings || {},
-          // Optionally, send drift info if tracked
-          drift: typeof session.drift === 'number' ? session.drift : null,
-        };
-
-        // Optionally, log for debugging in development
+        const response = buildSessionSyncState(session);
         if (process.env.NODE_ENV === 'development') {
           // eslint-disable-next-line no-console
           console.log('[socket][sync_request] Responding to sync_request for session', sessionId, response);
         }
-
-        if (callback) callback(response);
+        if (typeof callback === "function") callback(response);
       } catch (err) {
         if (process.env.NODE_ENV === 'development') {
           // eslint-disable-next-line no-console
           console.error('[socket][sync_request] Error handling sync_request:', err);
         }
-        if (callback) callback({ error: 'Internal server error' });
+        if (typeof callback === "function") callback({ error: 'Internal server error' });
       }
     });
 
     socket.on('request_controller', ({ sessionId } = {}, callback) => {
-      if (!sessionId) return callback && callback({ error: 'No sessionId provided' });
+      if (!sessionId) return typeof callback === "function" && callback({ error: 'No sessionId provided' });
       const session = getSession(sessionId);
-      if (!session) return callback && callback({ error: 'Session not found' });
+      if (!session) return typeof callback === "function" && callback({ error: 'Session not found' });
       
       const requesterClientId = getClientIdBySocket(sessionId, socket.id);
-      if (!requesterClientId) return callback && callback({ error: 'Client not found in session' });
+      if (!requesterClientId) return typeof callback === "function" && callback({ error: 'Client not found in session' });
       
       // Check if requester is already the controller
       if (session.controllerClientId === requesterClientId) {
-        return callback && callback({ error: 'You are already the controller' });
+        return typeof callback === "function" && callback({ error: 'You are already the controller' });
       }
       
       // Check if there's already a pending request from this client
       if (session.pendingControllerRequests.has(requesterClientId)) {
-        return callback && callback({ error: 'You already have a pending request' });
+        return typeof callback === "function" && callback({ error: 'You already have a pending request' });
       }
       
       // Get requester's display name
@@ -207,24 +206,24 @@ export function setupSocket(io) {
       io.to(sessionId).emit('controller_requests_update', getPendingControllerRequests(sessionId));
       
       log('Controller request from client', requesterClientId, 'in session', sessionId);
-      callback && callback({ success: true, message: 'Request sent to current controller' });
+      typeof callback === "function" && callback({ success: true, message: 'Request sent to current controller' });
     });
 
     socket.on('approve_controller_request', ({ sessionId, requesterClientId } = {}, callback) => {
-      if (!sessionId) return callback && callback({ error: 'No sessionId provided' });
-      if (!requesterClientId) return callback && callback({ error: 'No requesterClientId provided' });
+      if (!sessionId) return typeof callback === "function" && callback({ error: 'No sessionId provided' });
+      if (!requesterClientId) return typeof callback === "function" && callback({ error: 'No requesterClientId provided' });
       
       const session = getSession(sessionId);
-      if (!session) return callback && callback({ error: 'Session not found' });
+      if (!session) return typeof callback === "function" && callback({ error: 'Session not found' });
       
       const approverClientId = getClientIdBySocket(sessionId, socket.id);
       if (session.controllerClientId !== approverClientId) {
-        return callback && callback({ error: 'Only the current controller can approve requests' });
+        return typeof callback === "function" && callback({ error: 'Only the current controller can approve requests' });
       }
       
       // Check if the request still exists
       if (!session.pendingControllerRequests.has(requesterClientId)) {
-        return callback && callback({ error: 'Request not found or expired' });
+        return typeof callback === "function" && callback({ error: 'Request not found or expired' });
       }
       
       // Remove the request and transfer controller role
@@ -241,22 +240,23 @@ export function setupSocket(io) {
         isPlaying: session.isPlaying,
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
-        controllerId: getSocketIdByClientId(sessionId, requesterClientId)
+        controllerId: getSocketIdByClientId(sessionId, requesterClientId),
+        serverTime: Date.now()
       });
       
-      callback && callback({ success: true });
+      typeof callback === "function" && callback({ success: true });
     });
 
     socket.on('deny_controller_request', ({ sessionId, requesterClientId } = {}, callback) => {
-      if (!sessionId) return callback && callback({ error: 'No sessionId provided' });
-      if (!requesterClientId) return callback && callback({ error: 'No requesterClientId provided' });
+      if (!sessionId) return typeof callback === "function" && callback({ error: 'No sessionId provided' });
+      if (!requesterClientId) return typeof callback === "function" && callback({ error: 'No requesterClientId provided' });
       
       const session = getSession(sessionId);
-      if (!session) return callback && callback({ error: 'Session not found' });
+      if (!session) return typeof callback === "function" && callback({ error: 'Session not found' });
       
       const denierClientId = getClientIdBySocket(sessionId, socket.id);
       if (session.controllerClientId !== denierClientId) {
-        return callback && callback({ error: 'Only the current controller can deny requests' });
+        return typeof callback === "function" && callback({ error: 'Only the current controller can deny requests' });
       }
       
       // Remove the request
@@ -267,17 +267,17 @@ export function setupSocket(io) {
       // Notify all clients
       io.to(sessionId).emit('controller_requests_update', getPendingControllerRequests(sessionId));
       
-      callback && callback({ success: true });
+      typeof callback === "function" && callback({ success: true });
     });
 
     socket.on('cancel_controller_request', ({ sessionId } = {}, callback) => {
-      if (!sessionId) return callback && callback({ error: 'No sessionId provided' });
+      if (!sessionId) return typeof callback === "function" && callback({ error: 'No sessionId provided' });
       
       const session = getSession(sessionId);
-      if (!session) return callback && callback({ error: 'Session not found' });
+      if (!session) return typeof callback === "function" && callback({ error: 'Session not found' });
       
       const requesterClientId = getClientIdBySocket(sessionId, socket.id);
-      if (!requesterClientId) return callback && callback({ error: 'Client not found in session' });
+      if (!requesterClientId) return typeof callback === "function" && callback({ error: 'Client not found in session' });
       
       // Remove the request
       removeControllerRequest(sessionId, requesterClientId);
@@ -287,24 +287,24 @@ export function setupSocket(io) {
       // Notify all clients
       io.to(sessionId).emit('controller_requests_update', getPendingControllerRequests(sessionId));
       
-      callback && callback({ success: true });
+      typeof callback === "function" && callback({ success: true });
     });
 
     socket.on('offer_controller', ({ sessionId, targetClientId } = {}, callback) => {
-      if (!sessionId) return callback && callback({ error: 'No sessionId provided' });
-      if (!targetClientId) return callback && callback({ error: 'No targetClientId provided' });
+      if (!sessionId) return typeof callback === "function" && callback({ error: 'No sessionId provided' });
+      if (!targetClientId) return typeof callback === "function" && callback({ error: 'No targetClientId provided' });
       
       const session = getSession(sessionId);
-      if (!session) return callback && callback({ error: 'Session not found' });
+      if (!session) return typeof callback === "function" && callback({ error: 'Session not found' });
       
       const offererClientId = getClientIdBySocket(sessionId, socket.id);
       if (session.controllerClientId !== offererClientId) {
-        return callback && callback({ error: 'Only the current controller can offer controller role' });
+        return typeof callback === "function" && callback({ error: 'Only the current controller can offer controller role' });
       }
       
       // Check if target is already the controller
       if (session.controllerClientId === targetClientId) {
-        return callback && callback({ error: 'Target is already the controller' });
+        return typeof callback === "function" && callback({ error: 'Target is already the controller' });
       }
       
       // Get offerer's display name
@@ -340,22 +340,22 @@ export function setupSocket(io) {
       });
       
       log('Controller offer sent from', offererClientId, 'to', targetClientId, 'in session', sessionId);
-      callback && callback({ success: true, message: `Controller offer sent to ${targetName}` });
+      typeof callback === "function" && callback({ success: true, message: `Controller offer sent to ${targetName}` });
     });
 
     socket.on('accept_controller_offer', ({ sessionId, offererClientId } = {}, callback) => {
-      if (!sessionId) return callback && callback({ error: 'No sessionId provided' });
-      if (!offererClientId) return callback && callback({ error: 'No offererClientId provided' });
+      if (!sessionId) return typeof callback === "function" && callback({ error: 'No sessionId provided' });
+      if (!offererClientId) return typeof callback === "function" && callback({ error: 'No offererClientId provided' });
       
       const session = getSession(sessionId);
-      if (!session) return callback && callback({ error: 'Session not found' });
+      if (!session) return typeof callback === "function" && callback({ error: 'Session not found' });
       
       const accepterClientId = getClientIdBySocket(sessionId, socket.id);
-      if (!accepterClientId) return callback && callback({ error: 'Client not found in session' });
+      if (!accepterClientId) return typeof callback === "function" && callback({ error: 'Client not found in session' });
       
       // Verify the offerer is still the controller
       if (session.controllerClientId !== offererClientId) {
-        return callback && callback({ error: 'Offer is no longer valid' });
+        return typeof callback === "function" && callback({ error: 'Offer is no longer valid' });
       }
       
       // Transfer controller role
@@ -388,21 +388,22 @@ export function setupSocket(io) {
         isPlaying: session.isPlaying,
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
-        controllerId: getSocketIdByClientId(sessionId, accepterClientId)
+        controllerId: getSocketIdByClientId(sessionId, accepterClientId),
+        serverTime: Date.now()
       });
       
-      callback && callback({ success: true });
+      typeof callback === "function" && callback({ success: true });
     });
 
     socket.on('decline_controller_offer', ({ sessionId, offererClientId } = {}, callback) => {
-      if (!sessionId) return callback && callback({ error: 'No sessionId provided' });
-      if (!offererClientId) return callback && callback({ error: 'No offererClientId provided' });
+      if (!sessionId) return typeof callback === "function" && callback({ error: 'No sessionId provided' });
+      if (!offererClientId) return typeof callback === "function" && callback({ error: 'No offererClientId provided' });
       
       const session = getSession(sessionId);
-      if (!session) return callback && callback({ error: 'Session not found' });
+      if (!session) return typeof callback === "function" && callback({ error: 'Session not found' });
       
       const declinerClientId = getClientIdBySocket(sessionId, socket.id);
-      if (!declinerClientId) return callback && callback({ error: 'Client not found in session' });
+      if (!declinerClientId) return typeof callback === "function" && callback({ error: 'Client not found in session' });
       
       // Notify the offerer that their offer was declined
       const offererSocketId = getSocketIdByClientId(sessionId, offererClientId);
@@ -420,7 +421,7 @@ export function setupSocket(io) {
       
       log('Controller offer declined by client', declinerClientId, 'in session', sessionId);
       
-      callback && callback({ success: true });
+      typeof callback === "function" && callback({ success: true });
     });
 
     socket.on('chat_message', ({ sessionId, message, sender } = {}) => {
@@ -472,7 +473,7 @@ export function setupSocket(io) {
     socket.on('add_to_queue', (data = {}, callback) => {
       const { sessionId, url, title, ...meta } = data || {};
       if (!sessionId || typeof sessionId !== 'string' || !url || typeof url !== 'string') {
-        return callback && callback({ error: 'Missing or invalid sessionId or url' });
+        return typeof callback === "function" && callback({ error: 'Missing or invalid sessionId or url' });
       }
       // Optionally: Only controller can add tracks (uncomment to enforce)
       // const session = getSession(sessionId);
@@ -484,7 +485,7 @@ export function setupSocket(io) {
       // Enhanced: Prevent duplicate URLs in queue
       const queue = getQueue(sessionId) || [];
       if (queue.some(track => track && track.url === url)) {
-        return callback && callback({ error: 'Track already in queue' });
+        return typeof callback === "function" && callback({ error: 'Track already in queue' });
       }
 
       // Enhanced: Validate title (optional, allow empty but not non-string)
@@ -509,7 +510,7 @@ export function setupSocket(io) {
         });
       }
 
-      callback && callback({ success: true, queue: updatedQueue });
+      typeof callback === "function" && callback({ success: true, queue: updatedQueue });
     });
 
     /**
@@ -524,22 +525,22 @@ export function setupSocket(io) {
     socket.on('remove_from_queue', ({ sessionId, index } = {}, callback) => {
       // Validate input
       if (!sessionId || typeof sessionId !== 'string' || typeof index !== 'number' || index < 0) {
-        return callback && callback({ error: 'Invalid input' });
+        return typeof callback === "function" && callback({ error: 'Invalid input' });
       }
       const session = getSession(sessionId);
-      if (!session) return callback && callback({ error: 'Session not found' });
+      if (!session) return typeof callback === "function" && callback({ error: 'Session not found' });
       const clientId = getClientIdBySocket(sessionId, socket.id);
-      if (session.controllerClientId !== clientId) return callback && callback({ error: 'Not allowed' });
+      if (session.controllerClientId !== clientId) return typeof callback === "function" && callback({ error: 'Not allowed' });
 
       const queue = getQueue(sessionId) || [];
       if (index >= queue.length) {
-        return callback && callback({ error: 'Index out of bounds' });
+        return typeof callback === "function" && callback({ error: 'Index out of bounds' });
       }
       const removedTrack = queue[index];
 
       // Remove the track
       const removed = removeFromQueue(sessionId, index);
-      if (!removed) return callback && callback({ error: 'Invalid index' });
+      if (!removed) return typeof callback === "function" && callback({ error: 'Invalid index' });
 
       const updatedQueue = getQueue(sessionId) || [];
       log('[DEBUG] remove_from_queue: session', sessionId, 'removed index', index, 'track:', removedTrack, 'queue now:', updatedQueue);
@@ -581,7 +582,7 @@ export function setupSocket(io) {
 
       io.to(sessionId).emit('queue_update', updatedQueue);
 
-      callback && callback({
+      typeof callback === "function" && callback({
         success: true,
         removedIndex: index,
         removedTrack,
@@ -607,17 +608,17 @@ export function setupSocket(io) {
       const { sessionId, idx, reason, extra, autoAdvance, force } = data;
 
       if (!sessionId) {
-        if (callback) callback({ error: 'No sessionId provided' });
+        if (typeof callback === "function") callback({ error: 'No sessionId provided' });
         return;
       }
       const session = getSession(sessionId);
       if (!session) {
-        if (callback) callback({ error: 'Session not found' });
+        if (typeof callback === "function") callback({ error: 'Session not found' });
         return;
       }
       const clientId = getClientIdBySocket(sessionId, socket.id);
       if (session.controllerClientId !== clientId) {
-        if (callback) callback({ error: 'Not allowed' });
+        if (typeof callback === "function") callback({ error: 'Not allowed' });
         io.to(socket.id).emit('track_change_failed', {
           error: 'Not allowed',
           sessionId,
@@ -677,7 +678,7 @@ export function setupSocket(io) {
       io.to(sessionId).emit('track_change', payload);
       log('Track change in session', sessionId, ':', payload);
 
-      if (callback) callback({ success: true, ...payload });
+      if (typeof callback === "function") callback({ success: true, ...payload });
     });
 
     /**
@@ -708,7 +709,7 @@ export function setupSocket(io) {
         }
       }
 
-      if (typeof callback === 'function') {
+      if (typeof callback === "function") {
         // Simulate minimal processing delay for realism
         setImmediate(() => {
           const serverProcessed = Date.now();
@@ -864,7 +865,8 @@ export function setupSocket(io) {
           isPlaying: session.isPlaying,
           timestamp: session.timestamp,
           lastUpdated: session.lastUpdated,
-          controllerId: session.controllerId
+          controllerId: session.controllerId,
+          serverTime: Date.now()
         });
       }
     }
@@ -889,7 +891,8 @@ export function setupSocket(io) {
           isPlaying: session.isPlaying,
           timestamp: session.timestamp,
           lastUpdated: session.lastUpdated,
-          controllerId: session.controllerId
+          controllerId: session.controllerId,
+          serverTime: Date.now()
         });
       }
     }

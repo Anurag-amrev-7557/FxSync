@@ -386,6 +386,7 @@ export default function AudioPlayer({
       controllerId: ctrlId,
       trackId,
       meta,
+      serverTime,
     }) => {
       // Defensive: check for valid timestamp and lastUpdated
       if (
@@ -403,8 +404,17 @@ export default function AudioPlayer({
         log('warn', 'SYNC_STATE: audio element not available');
         return;
       }
-      // Calculate expected time
-      const now = getServerTime ? getServerTime() : Date.now();
+      // Use serverTime if present, else fallback
+      let now = null;
+      if (typeof serverTime === 'number' && isFinite(serverTime)) {
+        now = serverTime;
+      } else if (getServerTime) {
+        now = getServerTime();
+        log('warn', 'SYNC_STATE: serverTime missing, using getServerTime()', { now });
+      } else {
+        now = Date.now();
+        log('warn', 'SYNC_STATE: serverTime missing, using Date.now()', { now });
+      }
       // Compensate for measured audio latency
       const expected = timestamp + (now - lastUpdated) / 1000 - audioLatency;
       if (!isFiniteNumber(expected)) {
