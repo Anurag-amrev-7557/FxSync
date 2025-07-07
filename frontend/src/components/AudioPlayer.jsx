@@ -223,6 +223,7 @@ export default function AudioPlayer({
   ultraPreciseOffset,
   timeOffset, // fallback
   sessionSyncState = null,
+  forceNtpBatchSync,
 }) {
   const [audioUrl, setAudioUrl] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -604,6 +605,13 @@ export default function AudioPlayer({
     let correctionCooldown = 1200; // ms, minimum time between corrections
 
     const interval = setInterval(() => {
+      // Defensive check: only emit if sessionId is set
+      if (!socket.sessionId) {
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('[DriftCheck] No sessionId set on socket, skipping sync_request');
+        }
+        return;
+      }
       socket.emit('sync_request', { sessionId: socket.sessionId }, (state) => {
         // Validate state
         if (
@@ -1007,10 +1015,10 @@ export default function AudioPlayer({
     setResyncInProgress(true);
     setLastResyncTime(now);
     // --- Use NTP batch sync for manual resync if available ---
-    if (typeof socket.forceNtpBatchSync === 'function') {
+    if (typeof forceNtpBatchSync === 'function') {
       setSyncStatus('Running NTP batch sync...');
       try {
-        const result = socket.forceNtpBatchSync();
+        const result = forceNtpBatchSync();
         if (result && typeof result.then === 'function') {
           await result;
         }
@@ -1023,7 +1031,7 @@ export default function AudioPlayer({
         return;
       }
     } else {
-      setSyncStatus('NTP batch sync unavailable. Proceeding with basic resync.');
+      setSyncStatus('NTP batch syncing unavailable. Proceeding with basic sync');
     }
     // ... existing resync logic ...
     // Always reset resyncInProgress and syncStatus after a timeout

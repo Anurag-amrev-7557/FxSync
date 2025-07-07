@@ -1,0 +1,10 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Central record (white) -->
+  <circle cx="32" cy="32" r="16" fill="white"/>
+  <!-- Play button (black) -->
+  <polygon points="36,32 28,26 28,38" fill="black"/>
+  <!-- Radiating arcs (white) -->
+  <path d="M32 8a24 24 0 0 1 0 48" stroke="white" stroke-width="3" fill="none"/>
+  <path d="M32 14a18 18 0 0 1 0 36" stroke="white" stroke-width="2" fill="none"/>
+  <path d="M32 20a12 12 0 0 1 0 24" stroke="white" stroke-width="1.5" fill="none"/>
+</svg>

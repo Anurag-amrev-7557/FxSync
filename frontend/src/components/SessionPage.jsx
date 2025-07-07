@@ -45,7 +45,8 @@ function SessionPage({
   rtt,
   timeOffset,
   jitter,
-  drift
+  drift,
+  forceNtpBatchSync
 }) {
   const { sessionId: urlSessionId } = useParams()
   const [messages, setMessages] = useState([])
@@ -699,6 +700,7 @@ function SessionPage({
                         currentTrack={currentTrack}
                         rtt={rtt}
                         sessionSyncState={sessionSyncState}
+                        forceNtpBatchSync={forceNtpBatchSync}
                       />
                     </div>
                     <div className="p-4">
@@ -832,6 +834,7 @@ function SessionPage({
                         currentTrack={currentTrack}
                         rtt={rtt}
                         sessionSyncState={sessionSyncState}
+                        forceNtpBatchSync={forceNtpBatchSync}
                       />
                     </div>
                   </div>
@@ -864,6 +867,7 @@ function SessionPage({
                         currentTrack={currentTrack}
                         rtt={rtt}
                         sessionSyncState={sessionSyncState}
+                        forceNtpBatchSync={forceNtpBatchSync}
                       />
                     </div>
                   </div>
@@ -896,23 +900,6 @@ function SessionPage({
               setMobileTab={setMobileTab}
               handleExitRoom={handleExitRoom}
             />
-          </div>
-          {/* Peer Sync Diagnostics */}
-          <div className="mt-2 flex flex-col gap-1 text-xs text-neutral-400">
-            {peerSyncs.map((p, i) => (
-              p && paddedPeerIds[i] ? (
-                <div key={paddedPeerIds[i]}>
-                  Peer <span className="font-mono text-blue-300">{paddedPeerIds[i]}</span>:
-                  RTT <span className="font-mono text-blue-300">{p.peerRtt !== null ? p.peerRtt.toFixed(1) : '--'}</span> ms,
-                  Offset <span className="font-mono text-green-300">{p.peerOffset !== null ? p.peerOffset.toFixed(1) : '--'}</span> ms,
-                  State: <span className="font-mono">{p.connectionState}</span>
-                </div>
-              ) : null
-            ))}
-            <div>
-              <span className="font-semibold text-white">Ultra-precise offset used for sync:</span>
-              <span className="font-mono text-green-400 ml-2">{ultraPreciseOffset !== null ? ultraPreciseOffset.toFixed(1) : '--'} ms</span>
-            </div>
           </div>
         </>
       )}
