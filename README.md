@@ -30,14 +30,14 @@
 ## 🏗️ Architecture
 
 ```mermaid
-graph TD;
-  A[Frontend (React)] -- Socket.io --> B[Backend (Node.js)]
-  B -- REST API --> C[Session Manager]
-  B -- REST API --> D[Chat Manager]
-  B -- REST API --> E[File Manager]
-  B -- REST API --> F[Queue Manager]
-  B -- File System --> G[Uploads/Samples]
-  A -- HTTP --> B
+graph TD
+  Frontend[Frontend (React)] -- Socket.io --> Backend[Backend (Node.js)]
+  Backend -- REST API --> SessionManager[Session Manager]
+  Backend -- REST API --> ChatManager[Chat Manager]
+  Backend -- REST API --> FileManager[File Manager]
+  Backend -- REST API --> QueueManager[Queue Manager]
+  Backend -- File System --> Uploads[Uploads/Samples]
+  Frontend -- HTTP --> Backend
 ```
 
 ---
