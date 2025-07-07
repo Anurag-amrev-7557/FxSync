@@ -108,7 +108,7 @@ function SessionPage({
       if (savedSessionData && typeof savedSessionData.displayName === 'string' && savedSessionData.displayName.trim()) {
         autoDisplayName = savedSessionData.displayName;
       } else {
-        // Enhanced: More adjectives/nouns, avoid duplicate names in a session's clients
+        // Enhanced: More adjectives/nouns, avoid duplicate names in a session
         const adjectives = [
           'Cool', 'Epic', 'Amazing', 'Awesome', 'Radical', 'Smooth', 'Groovy', 'Fresh',
           'Chill', 'Lively', 'Electric', 'Vivid', 'Sunny', 'Mellow', 'Funky', 'Dynamic'
@@ -199,18 +199,26 @@ function SessionPage({
   useEffect(() => {
     if (!socket) return;
     const handleQueueUpdate = (q) => {
-      console.log('[DEBUG][queue_update] Received queue_update:', q);
+      console.log('[DEBUG] Received queue_update:', q);
       setQueue(q);
       // If a track_change was received before the queue, apply it now
       if (pendingTrackIdx.current !== null) {
-        console.log('[DEBUG][queue_update] Applying buffered track_change:', pendingTrackIdx.current, pendingTrackIdx.currentTrack);
-        setSelectedTrackIdx(Math.max(0, Math.min(pendingTrackIdx.current, q.length - 1)));
-        setCurrentTrackOverride(pendingTrackIdx.currentTrack || (q[pendingTrackIdx.current] || null));
+        console.log('[DEBUG] Applying buffered track_change:', pendingTrackIdx.current, pendingTrackIdx.currentTrack);
+        // If a track was also buffered, set it
+        if (pendingTrackIdx.currentTrack) {
+          setCurrentTrackOverride(pendingTrackIdx.currentTrack);
+        } else {
+          setCurrentTrackOverride(null);
+        }
+        setSelectedTrackIdx(pendingTrackIdx.current);
+        console.log('[DEBUG] After applying buffered track_change:', {
+          queue: q,
+          selectedTrackIdx: pendingTrackIdx.current,
+          currentTrackOverride: pendingTrackIdx.currentTrack
+        });
         pendingTrackIdx.current = null;
         pendingTrackIdx.currentTrack = null;
       }
-      // Always log the new queue and selected track
-      console.log('[DEBUG][queue_update] After update: queue:', q, 'selectedTrackIdx:', selectedTrackIdx, 'currentTrackOverride:', currentTrackOverride);
     };
     socket.on('queue_update', handleQueueUpdate);
     return () => {
@@ -244,27 +252,35 @@ function SessionPage({
       }
 
       // Enhanced: Log with more context
-      console.log('[SessionPage][track_change] Received:', { payload, idx, track, extra, queueLength: queue?.length });
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.log('[SessionPage][track_change] Received:', { payload, idx, track, extra, queueLength: queue?.length });
+      }
 
       // If queue is not set yet, buffer the track_change
       if (!Array.isArray(queue) || queue.length === 0) {
-        console.log('[SessionPage][track_change] Buffering until queue is set', { idx, track });
+        if (process.env.NODE_ENV === 'development') {
+          // eslint-disable-next-line no-console
+          console.log('[SessionPage][track_change] Buffering until queue is set', { idx, track });
+        }
         pendingTrackIdx.current = idx;
         pendingTrackIdx.currentTrack = track;
-        return;
+      } else {
+        // Enhanced: Clamp idx to valid range
+        const clampedIdx = Math.max(0, Math.min(idx, queue.length - 1));
+        setCurrentTrackOverride(track || null);
+        setSelectedTrackIdx(clampedIdx);
+
+        if (process.env.NODE_ENV === 'development') {
+          // eslint-disable-next-line no-console
+          console.log('[SessionPage][track_change] Applied immediately:', {
+            queue,
+            selectedTrackIdx: clampedIdx,
+            currentTrackOverride: track,
+            originalIdx: idx
+          });
+        }
       }
-
-      // Clamp idx to valid range
-      const clampedIdx = Math.max(0, Math.min(idx, queue.length - 1));
-      setSelectedTrackIdx(clampedIdx);
-      setCurrentTrackOverride(track || queue[clampedIdx] || null);
-
-      console.log('[SessionPage][track_change] Applied:', {
-        queue,
-        selectedTrackIdx: clampedIdx,
-        currentTrackOverride: track || queue[clampedIdx] || null,
-        originalIdx: idx
-      });
     };
 
     socket.on('track_change', handleTrackChange);
@@ -272,7 +288,10 @@ function SessionPage({
     // Enhanced: Clean up and warn if handler was still active
     return () => {
       socket.off('track_change', handleTrackChange);
-      console.log('[SessionPage][track_change] Handler removed');
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.log('[SessionPage][track_change] Handler removed');
+      }
     };
   }, [socket, queue]);
 
@@ -449,8 +468,8 @@ function SessionPage({
     if (trackObj) {
       setCurrentTrackOverride(trackObj);
       setSelectedTrackIdx(idx !== null && typeof idx === 'number' ? idx : 0); // fallback to 0 if idx is null
-      if (isController && socket && currentSessionId) {
-        socket.emit('track_change', { sessionId: currentSessionId, idx, override: true, track: trackObj });
+      if (isController && socket) {
+        socket.emit('track_change', idx, { override: true, track: trackObj });
       }
       if (process.env.NODE_ENV === 'development') {
         // eslint-disable-next-line no-console
@@ -471,8 +490,8 @@ function SessionPage({
     // Clear override and select from queue
     setCurrentTrackOverride(null);
     setSelectedTrackIdx(idx);
-    if (isController && socket && currentSessionId) {
-      socket.emit('track_change', { sessionId: currentSessionId, idx, override: false });
+    if (isController && socket) {
+      socket.emit('track_change', idx, { override: false });
     }
     if (process.env.NODE_ENV === 'development') {
       // eslint-disable-next-line no-console

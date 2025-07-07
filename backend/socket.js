@@ -6,6 +6,7 @@ import { getSessionFiles, removeSessionFiles } from './managers/fileManager.js';
 import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
+import { promises as fsp } from 'fs';
 dotenv.config();
 
 // Helper to build full session sync state for advanced sync
@@ -28,113 +29,154 @@ function buildSessionSyncState(session) {
 }
 
 export function setupSocket(io) {
+  // --- Add socket-to-session mapping ---
+  const socketSessionMap = new Map(); // socket.id -> sessionId
+
+  // --- Debounce maps for broadcasts ---
+  const clientsUpdateTimers = new Map(); // sessionId -> timer
+  const controllerRequestsUpdateTimers = new Map(); // sessionId -> timer
+
+  function debounceClientsUpdate(sessionId) {
+    if (clientsUpdateTimers.has(sessionId)) clearTimeout(clientsUpdateTimers.get(sessionId));
+    clientsUpdateTimers.set(sessionId, setTimeout(() => {
+      io.to(sessionId).emit('clients_update', getClients(sessionId));
+      clientsUpdateTimers.delete(sessionId);
+    }, 100));
+  }
+  function debounceControllerRequestsUpdate(sessionId) {
+    if (controllerRequestsUpdateTimers.has(sessionId)) clearTimeout(controllerRequestsUpdateTimers.get(sessionId));
+    controllerRequestsUpdateTimers.set(sessionId, setTimeout(() => {
+      io.to(sessionId).emit('controller_requests_update', getPendingControllerRequests(sessionId));
+      controllerRequestsUpdateTimers.delete(sessionId);
+    }, 100));
+  }
+
   io.on('connection', (socket) => {
     console.log('Socket connected:', socket.id);
 
-    socket.on('join_session', ({ sessionId, displayName, deviceInfo, clientId } = {}, callback) => {
-      console.log('join_session event received', { sessionId, clientId });
-      if (!sessionId || typeof sessionId !== 'string') {
-        log('join_session: missing or invalid sessionId');
-        return typeof callback === "function" && callback({ error: 'No sessionId provided' });
+    socket.on('join_session', async ({ sessionId, displayName, deviceInfo, clientId } = {}, callback) => {
+      try {
+        console.log('join_session event received', { sessionId, clientId });
+        if (!sessionId || typeof sessionId !== 'string') {
+          log('join_session: missing or invalid sessionId');
+          return typeof callback === "function" && callback({ error: 'No sessionId provided' });
+        }
+        let session = getSession(sessionId);
+        if (!session) {
+          session = createSession(sessionId, socket.id, clientId);
+          log('Session created:', sessionId);
+        }
+        addClient(sessionId, socket.id, displayName, deviceInfo, clientId);
+        socket.join(sessionId);
+        // --- Track socket-to-session mapping ---
+        socketSessionMap.set(socket.id, sessionId);
+        log('Socket', socket.id, 'joined session', sessionId, 'as client', clientId);
+        // Ensure controllerClientId is set (first joiner becomes controller)
+        let becameController = false;
+        if (!session.controllerClientId) {
+          session.controllerClientId = clientId;
+          session.controllerId = socket.id;
+          becameController = true;
+        }
+        // If this clientId is the controller, update controllerId to this socket
+        if (session.controllerClientId === clientId) {
+          session.controllerId = socket.id;
+          becameController = true;
+        }
+        // Debug log for controller assignment
+        console.log('JOIN CALLBACK:', {
+          controllerClientId: session.controllerClientId,
+          clientId,
+          sessionId,
+          controllerId: session.controllerId
+        });
+        // Always send the correct controllerClientId in the callback
+        const syncState = buildSessionSyncState(session);
+        typeof callback === "function" && callback({
+          ...syncState,
+          sessionId,
+          audioUrl: process.env.AUDIO_URL || 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
+        });
+        
+        // Send current queue to the joining client
+        socket.emit('queue_update', getQueue(sessionId));
+        
+        debounceClientsUpdate(sessionId);
+        if (becameController) {
+          io.to(sessionId).emit('controller_change', socket.id);
+          io.to(sessionId).emit('controller_client_change', clientId);
+        }
+        log('Client joined session', sessionId, 'Current queue:', getQueue(sessionId));
+      } catch (err) {
+        log('Error in join_session:', err);
+        if (typeof callback === 'function') callback({ error: 'Internal server error' });
       }
-      let session = getSession(sessionId);
-      if (!session) {
-        session = createSession(sessionId, socket.id, clientId);
-        log('Session created:', sessionId);
-      }
-      addClient(sessionId, socket.id, displayName, deviceInfo, clientId);
-      socket.join(sessionId);
-      log('Socket', socket.id, 'joined session', sessionId, 'as client', clientId);
-      // Ensure controllerClientId is set (first joiner becomes controller)
-      let becameController = false;
-      if (!session.controllerClientId) {
-        session.controllerClientId = clientId;
-        session.controllerId = socket.id;
-        becameController = true;
-      }
-      // If this clientId is the controller, update controllerId to this socket
-      if (session.controllerClientId === clientId) {
-        session.controllerId = socket.id;
-        becameController = true;
-      }
-      // Debug log for controller assignment
-      console.log('JOIN CALLBACK:', {
-        controllerClientId: session.controllerClientId,
-        clientId,
-        sessionId,
-        controllerId: session.controllerId
-      });
-      // Always send the correct controllerClientId in the callback
-      const syncState = buildSessionSyncState(session);
-      typeof callback === "function" && callback({
-        ...syncState,
-        sessionId,
-        audioUrl: process.env.AUDIO_URL || 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
-      });
-      
-      // Send current queue to the joining client
-      socket.emit('queue_update', getQueue(sessionId));
-      
-      io.to(sessionId).emit('clients_update', getClients(sessionId));
-      if (becameController) {
-        io.to(sessionId).emit('controller_change', socket.id);
-        io.to(sessionId).emit('controller_client_change', clientId);
-      }
-      log('Client joined session', sessionId, 'Current queue:', getQueue(sessionId));
     });
 
-    socket.on('play', ({ sessionId, timestamp } = {}) => {
-      if (!sessionId || typeof timestamp !== 'number') return;
-      const session = getSession(sessionId);
-      if (!session) return;
-      const clientId = getClientIdBySocket(sessionId, socket.id);
-      if (session.controllerClientId !== clientId) return;
-      updatePlayback(sessionId, { isPlaying: true, timestamp, controllerId: socket.id });
-      log('Play in session', sessionId, 'at', timestamp);
-      console.log('Emitting sync_state to session', sessionId, 'clients:', Array.from(session.clients.keys()));
-      io.to(sessionId).emit('sync_state', {
-        isPlaying: true,
-        timestamp: session.timestamp,
-        lastUpdated: session.lastUpdated,
-        controllerId: socket.id,
-        serverTime: Date.now()
-      });
+    socket.on('play', async ({ sessionId, timestamp } = {}) => {
+      try {
+        if (!sessionId || typeof timestamp !== 'number') return;
+        const session = getSession(sessionId);
+        if (!session) return;
+        const clientId = getClientIdBySocket(sessionId, socket.id);
+        if (session.controllerClientId !== clientId) return;
+        updatePlayback(sessionId, { isPlaying: true, timestamp, controllerId: socket.id });
+        log('Play in session', sessionId, 'at', timestamp);
+        console.log('Emitting sync_state to session', sessionId, 'clients:', Array.from(session.clients.keys()));
+        io.to(sessionId).emit('sync_state', {
+          isPlaying: true,
+          timestamp: session.timestamp,
+          lastUpdated: session.lastUpdated,
+          controllerId: socket.id,
+          serverTime: Date.now()
+        });
+      } catch (err) {
+        log('Error in play:', err);
+      }
     });
 
-    socket.on('pause', ({ sessionId, timestamp } = {}) => {
-      if (!sessionId || typeof timestamp !== 'number') return;
-      const session = getSession(sessionId);
-      if (!session) return;
-      const clientId = getClientIdBySocket(sessionId, socket.id);
-      if (session.controllerClientId !== clientId) return;
-      updatePlayback(sessionId, { isPlaying: false, timestamp, controllerId: socket.id });
-      log('Pause in session', sessionId, 'at', timestamp);
-      console.log('Emitting sync_state to session', sessionId, 'clients:', Array.from(session.clients.keys()));
-      io.to(sessionId).emit('sync_state', {
-        isPlaying: false,
-        timestamp: session.timestamp,
-        lastUpdated: session.lastUpdated,
-        controllerId: socket.id,
-        serverTime: Date.now()
-      });
+    socket.on('pause', async ({ sessionId, timestamp } = {}) => {
+      try {
+        if (!sessionId || typeof timestamp !== 'number') return;
+        const session = getSession(sessionId);
+        if (!session) return;
+        const clientId = getClientIdBySocket(sessionId, socket.id);
+        if (session.controllerClientId !== clientId) return;
+        updatePlayback(sessionId, { isPlaying: false, timestamp, controllerId: socket.id });
+        log('Pause in session', sessionId, 'at', timestamp);
+        console.log('Emitting sync_state to session', sessionId, 'clients:', Array.from(session.clients.keys()));
+        io.to(sessionId).emit('sync_state', {
+          isPlaying: false,
+          timestamp: session.timestamp,
+          lastUpdated: session.lastUpdated,
+          controllerId: socket.id,
+          serverTime: Date.now()
+        });
+      } catch (err) {
+        log('Error in pause:', err);
+      }
     });
 
-    socket.on('seek', ({ sessionId, timestamp } = {}) => {
-      if (!sessionId || typeof timestamp !== 'number') return;
-      const session = getSession(sessionId);
-      if (!session) return;
-      const clientId = getClientIdBySocket(sessionId, socket.id);
-      if (session.controllerClientId !== clientId) return;
-      updateTimestamp(sessionId, timestamp, socket.id);
-      log('Seek in session', sessionId, 'to', timestamp);
-      console.log('Emitting sync_state to session', sessionId, 'clients:', Array.from(session.clients.keys()));
-      io.to(sessionId).emit('sync_state', {
-        isPlaying: session.isPlaying,
-        timestamp: session.timestamp,
-        lastUpdated: session.lastUpdated,
-        controllerId: socket.id,
-        serverTime: Date.now()
-      });
+    socket.on('seek', async ({ sessionId, timestamp } = {}) => {
+      try {
+        if (!sessionId || typeof timestamp !== 'number') return;
+        const session = getSession(sessionId);
+        if (!session) return;
+        const clientId = getClientIdBySocket(sessionId, socket.id);
+        if (session.controllerClientId !== clientId) return;
+        updateTimestamp(sessionId, timestamp, socket.id);
+        log('Seek in session', sessionId, 'to', timestamp);
+        console.log('Emitting sync_state to session', sessionId, 'clients:', Array.from(session.clients.keys()));
+        io.to(sessionId).emit('sync_state', {
+          isPlaying: session.isPlaying,
+          timestamp: session.timestamp,
+          lastUpdated: session.lastUpdated,
+          controllerId: socket.id,
+          serverTime: Date.now()
+        });
+      } catch (err) {
+        log('Error in seek:', err);
+      }
     });
 
     socket.on('sync_request', async ({ sessionId } = {}, callback) => {
@@ -155,6 +197,7 @@ export function setupSocket(io) {
         }
         if (typeof callback === "function") callback(response);
       } catch (err) {
+        log('Error in sync_request:', err);
         if (process.env.NODE_ENV === 'development') {
           // eslint-disable-next-line no-console
           console.error('[socket][sync_request] Error handling sync_request:', err);
@@ -203,7 +246,7 @@ export function setupSocket(io) {
       }
       
       // Notify all clients about the pending request
-      io.to(sessionId).emit('controller_requests_update', getPendingControllerRequests(sessionId));
+      debounceControllerRequestsUpdate(sessionId);
       
       log('Controller request from client', requesterClientId, 'in session', sessionId);
       typeof callback === "function" && callback({ success: true, message: 'Request sent to current controller' });
@@ -235,7 +278,7 @@ export function setupSocket(io) {
       // Notify all clients
       io.to(sessionId).emit('controller_change', getSocketIdByClientId(sessionId, requesterClientId));
       io.to(sessionId).emit('controller_client_change', requesterClientId);
-      io.to(sessionId).emit('controller_requests_update', getPendingControllerRequests(sessionId));
+      debounceControllerRequestsUpdate(sessionId);
       io.to(sessionId).emit('sync_state', {
         isPlaying: session.isPlaying,
         timestamp: session.timestamp,
@@ -265,7 +308,7 @@ export function setupSocket(io) {
       log('Controller request denied for client', requesterClientId, 'in session', sessionId);
       
       // Notify all clients
-      io.to(sessionId).emit('controller_requests_update', getPendingControllerRequests(sessionId));
+      debounceControllerRequestsUpdate(sessionId);
       
       typeof callback === "function" && callback({ success: true });
     });
@@ -285,7 +328,7 @@ export function setupSocket(io) {
       log('Controller request cancelled by client', requesterClientId, 'in session', sessionId);
       
       // Notify all clients
-      io.to(sessionId).emit('controller_requests_update', getPendingControllerRequests(sessionId));
+      debounceControllerRequestsUpdate(sessionId);
       
       typeof callback === "function" && callback({ success: true });
     });
@@ -632,9 +675,6 @@ export function setupSocket(io) {
       let newIdx = typeof idx === 'number' ? idx : 0;
       let track = (queue.length > 0 && typeof newIdx === 'number' && queue[newIdx]) ? queue[newIdx] : null;
 
-      // Debug log for queue and track BEFORE emitting events
-      console.log('[SOCKET][track_change] About to emit. sessionId:', sessionId, 'queue:', queue, 'newIdx:', newIdx, 'track:', track, 'session:', JSON.stringify(session));
-
       // Defensive: If idx is out of bounds, clamp to valid range or null
       if (typeof newIdx === 'number' && (newIdx < 0 || newIdx >= queue.length)) {
         if (queue.length === 0) {
@@ -680,15 +720,6 @@ export function setupSocket(io) {
       io.to(sessionId).emit('queue_update', queue);
       io.to(sessionId).emit('track_change', payload);
       log('Track change in session', sessionId, ':', payload);
-
-      // Emit sync_state after track change so all clients get the latest play state and timestamp
-      io.to(sessionId).emit('sync_state', {
-        isPlaying: session.isPlaying,
-        timestamp: session.timestamp,
-        lastUpdated: session.lastUpdated,
-        controllerId: session.controllerId,
-        serverTime: Date.now()
-      });
 
       if (typeof callback === "function") callback({ success: true, ...payload });
     });
@@ -753,94 +784,63 @@ export function setupSocket(io) {
     // Store per-client drift for diagnostics/adaptive correction
     const clientDriftMap = {};
 
-    socket.on('drift_report', ({ sessionId, drift, clientId, timestamp, manual, resyncDuration, beforeDrift, afterDrift, improvement } = {}) => {
+    socket.on('drift_report', ({ sessionId, drift, clientId, timestamp } = {}) => {
       if (!sessionId || typeof drift !== 'number' || !clientId) return;
       if (!clientDriftMap[sessionId]) clientDriftMap[sessionId] = {};
       clientDriftMap[sessionId][clientId] = { drift, timestamp };
-      
-      // Enhanced logging with more context
-      let logMessage = `[DRIFT] Session ${sessionId} Client ${clientId}: Drift=${drift.toFixed(3)}s at ${new Date(timestamp).toISOString()}`;
-      
-      if (manual) {
-        logMessage += ` (MANUAL RESYNC)`;
-        if (typeof resyncDuration === 'number') {
-          logMessage += ` Duration: ${resyncDuration.toFixed(1)}ms`;
-        }
-        if (typeof beforeDrift === 'number' && typeof afterDrift === 'number') {
-          logMessage += ` Before: ${beforeDrift.toFixed(3)}s After: ${afterDrift.toFixed(3)}s`;
-        }
-        if (typeof improvement === 'number') {
-          logMessage += ` Improvement: ${improvement.toFixed(3)}s`;
-        }
-      }
-      
-      log(logMessage);
-      
-      // Store additional analytics for manual resyncs
-      if (manual && typeof improvement === 'number') {
-        if (!clientDriftMap[sessionId][clientId].resyncHistory) {
-          clientDriftMap[sessionId][clientId].resyncHistory = [];
-        }
-        clientDriftMap[sessionId][clientId].resyncHistory.push({
-          timestamp,
-          beforeDrift,
-          afterDrift,
-          improvement,
-          resyncDuration
-        });
-        
-        // Keep only last 10 resyncs
-        if (clientDriftMap[sessionId][clientId].resyncHistory.length > 10) {
-          clientDriftMap[sessionId][clientId].resyncHistory.shift();
-        }
-      }
-      
+      log(`[DRIFT] Session ${sessionId} Client ${clientId}: Drift=${drift.toFixed(3)}s at ${new Date(timestamp).toISOString()}`);
       // (Optional) Adaptive correction logic can be added here
     });
 
-    socket.on('disconnect', () => {
-      for (const [sessionId, session] of Object.entries(getAllSessions())) {
-        const clientId = getClientIdBySocket(sessionId, socket.id);
-        removeClient(sessionId, socket.id);
-        // Clean up any pending controller requests from this client
-        if (clientId) {
-          removeControllerRequest(sessionId, clientId);
-        }
-        if (session.controllerId === socket.id) {
-          const newSocketId = getSocketIdByClientId(sessionId, session.controllerClientId);
-          session.controllerId = newSocketId;
-          io.to(sessionId).emit('controller_change', newSocketId);
-        }
-        // Only delete files if the session is now empty
-        if (getClients(sessionId).length === 0) {
-          // Delete all files for this session (user uploads only)
-          const sessionFiles = getSessionFiles(sessionId);
-          const uploadsDir = path.join(process.cwd(), 'uploads');
-          const samplesDir = path.join(uploadsDir, 'samples');
-          const sampleFiles = fs.existsSync(samplesDir) ? new Set(fs.readdirSync(samplesDir)) : new Set();
-          Object.values(sessionFiles).forEach(fileList => {
-            fileList.forEach(filename => {
-              // Only delete files that are NOT in the samples directory and not a sample file
-              if (!filename.startsWith('samples/') && !sampleFiles.has(filename)) {
-                const filePath = path.join(uploadsDir, filename);
-                fs.unlink(filePath, (err) => {
-                  if (err) {
-                    console.error(`[CLEANUP] Failed to delete file ${filePath}:`, err);
-                  } else {
-                    log(`[CLEANUP] Deleted user-uploaded file: ${filePath}`);
-                  }
-                });
-              } else {
-                log(`[CLEANUP] Skipped sample file: ${filename}`);
-              }
+    socket.on('disconnect', async () => {
+      // --- Use socket-to-session mapping for efficient cleanup ---
+      const sessionId = socketSessionMap.get(socket.id);
+      if (sessionId) {
+        const session = getSession(sessionId);
+        if (session) {
+          const clientId = getClientIdBySocket(sessionId, socket.id);
+          removeClient(sessionId, socket.id);
+          if (clientId) {
+            removeControllerRequest(sessionId, clientId);
+          }
+          if (session.controllerId === socket.id) {
+            const newSocketId = getSocketIdByClientId(sessionId, session.controllerClientId);
+            session.controllerId = newSocketId;
+            io.to(sessionId).emit('controller_change', newSocketId);
+          }
+          if (getClients(sessionId).length === 0) {
+            const sessionFiles = getSessionFiles(sessionId);
+            const uploadsDir = path.join(process.cwd(), 'uploads');
+            const samplesDir = path.join(uploadsDir, 'samples');
+            const sampleFiles = fs.existsSync(samplesDir) ? new Set(fs.readdirSync(samplesDir)) : new Set();
+            // --- Batch file deletions ---
+            const unlinkPromises = [];
+            Object.values(sessionFiles).forEach(fileList => {
+              fileList.forEach(filename => {
+                if (!filename.startsWith('samples/') && !sampleFiles.has(filename)) {
+                  const filePath = path.join(uploadsDir, filename);
+                  unlinkPromises.push(
+                    fsp.unlink(filePath).then(() => {
+                      log(`[CLEANUP] Deleted user-uploaded file: ${filePath}`);
+                    }).catch(err => {
+                      console.error(`[CLEANUP] Failed to delete file ${filePath}:`, err);
+                    })
+                  );
+                } else {
+                  log(`[CLEANUP] Skipped sample file: ${filename}`);
+                }
+              });
             });
-          });
-          removeSessionFiles(sessionId);
-          deleteSession(sessionId);
-          log(`[CLEANUP] Session deleted (empty): ${sessionId}`);
+            await Promise.all(unlinkPromises);
+            removeSessionFiles(sessionId);
+            deleteSession(sessionId);
+            log(`[CLEANUP] Session deleted (empty): ${sessionId}`);
+          }
+          debounceClientsUpdate(sessionId);
+          debounceControllerRequestsUpdate(sessionId);
         }
-        io.to(sessionId).emit('clients_update', getClients(sessionId));
-        io.to(sessionId).emit('controller_requests_update', getPendingControllerRequests(sessionId));
+        // Remove mapping
+        socketSessionMap.delete(socket.id);
       }
       log('Socket disconnected:', socket.id);
     });
@@ -848,6 +848,8 @@ export function setupSocket(io) {
 
   // Session timeout/cleanup (1 hour inactivity)
   const SESSION_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour
+  // Remove the separate drift cleanup interval and combine with session cleanup:
+  // --- Combined session timeout and drift cleanup ---
   setInterval(() => {
     const now = Date.now();
     const sessions = getAllSessions();
@@ -867,22 +869,11 @@ export function setupSocket(io) {
         const hadExpiredRequests = session.pendingControllerRequests.size > 0;
         clearExpiredControllerRequests(sessionId);
         if (hadExpiredRequests && session.pendingControllerRequests.size === 0) {
-          io.to(sessionId).emit('controller_requests_update', []);
+          debounceControllerRequestsUpdate(sessionId);
         }
       }
     }
-  }, 60 * 1000);
-
-  // --- Adaptive sync_state broadcast ---
-  const BASE_SYNC_INTERVAL = 300; // ms (was 500)
-  const HIGH_DRIFT_SYNC_INTERVAL = 100; // ms (was 200)
-  const DRIFT_THRESHOLD = 0.2; // seconds
-  const DRIFT_WINDOW = 10000; // ms (10s)
-  const clientDriftMap = {}; // sessionId -> { clientId: { drift, timestamp } }
-
-  // Clean up old drift reports every minute
-  setInterval(() => {
-    const now = Date.now();
+    // --- Drift cleanup ---
     for (const sessionId in clientDriftMap) {
       for (const clientId in clientDriftMap[sessionId]) {
         if (now - clientDriftMap[sessionId][clientId].timestamp > DRIFT_WINDOW) {
@@ -893,7 +884,14 @@ export function setupSocket(io) {
         delete clientDriftMap[sessionId];
       }
     }
-  }, 60000);
+  }, 60 * 1000);
+
+  // --- Adaptive sync_state broadcast ---
+  const BASE_SYNC_INTERVAL = 500; // ms (0.5s)
+  const HIGH_DRIFT_SYNC_INTERVAL = 200; // ms (0.2s)
+  const DRIFT_THRESHOLD = 0.2; // seconds
+  const DRIFT_WINDOW = 10000; // ms (10s)
+  const clientDriftMap = {}; // sessionId -> { clientId: { drift, timestamp } }
 
   // Adaptive sync broadcast
   setInterval(() => {

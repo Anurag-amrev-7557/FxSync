@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState } from 'react';
 import SyncStatus from './SyncStatus';
 import useSmoothAppearance from '../hooks/useSmoothAppearance';
 import LoadingSpinner from './LoadingSpinner';
-import ResyncAnalytics from './ResyncAnalytics';
 
 // Add global error handlers
 if (typeof window !== 'undefined' && !window._audioPlayerErrorHandlerAdded) {
@@ -15,16 +14,12 @@ if (typeof window !== 'undefined' && !window._audioPlayerErrorHandlerAdded) {
   window._audioPlayerErrorHandlerAdded = true;
 }
 
-const DRIFT_THRESHOLD = 0.12; // seconds (was 0.3)
+const DRIFT_THRESHOLD = 0.3; // seconds (less aggressive, was 0.13)
 const PLAY_OFFSET = 0.35; // seconds (350ms future offset for play events)
 const DEFAULT_AUDIO_LATENCY = 0.08; // 80ms fallback if not measured
-const MICRO_DRIFT_THRESHOLD = 0.04; // seconds (was 0.08)
+const MICRO_DRIFT_THRESHOLD = 0.08; // ultra-micro threshold (was 0.18)
 const MICRO_RATE_CAP = 0.03; // max playbackRate delta (was 0.07)
 const MICRO_CORRECTION_WINDOW = 250; // ms (was 420)
-const DRIFT_JITTER_BUFFER = 2; // consecutive drift detections before correction
-const RESYNC_COOLDOWN_MS = 2000; // minimum time between manual resyncs
-const RESYNC_HISTORY_SIZE = 5; // number of recent resyncs to track
-const SMART_RESYNC_THRESHOLD = 0.5; // drift threshold for smart resync suggestion
 
 function isFiniteNumber(n) {
   return typeof n === 'number' && isFinite(n);
@@ -247,20 +242,8 @@ export default function AudioPlayer({
   const [animating, setAnimating] = useState(false);
   const [direction, setDirection] = useState('up');
 
-  // Enhanced resync state
-  const [resyncHistory, setResyncHistory] = useState([]);
-  const [lastResyncTime, setLastResyncTime] = useState(0);
-  const [resyncInProgress, setResyncInProgress] = useState(false);
-  const [smartResyncSuggestion, setSmartResyncSuggestion] = useState(false);
-  const [resyncStats, setResyncStats] = useState({
-    totalResyncs: 0,
-    successfulResyncs: 0,
-    failedResyncs: 0,
-    averageDrift: 0,
-    lastDrift: 0
-  });
-
   // Jitter buffer: only correct drift if sustained for N checks
+  const DRIFT_JITTER_BUFFER = 3; // number of consecutive drift detections required (was 1)
   const driftCountRef = useRef(0);
 
   useEffect(() => {
@@ -315,16 +298,6 @@ export default function AudioPlayer({
       setAudioError(null);
     }
   }, [currentTrack]);
-
-  // Auto-play audio for listeners when audioUrl changes and should be playing
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    if (!isController && isPlaying && audioUrl) {
-      // Try to play the audio (catch errors silently)
-      audio.play().catch(() => {});
-    }
-  }, [audioUrl, isPlaying, isController]);
 
   // Fetch default audio URL only if no currentTrack
   useEffect(() => {
@@ -938,18 +911,8 @@ export default function AudioPlayer({
     }
   };
 
-  // Enhanced Manual re-sync with improved logging, error handling, user feedback, and analytics
+  // Enhanced Manual re-sync with improved logging, error handling, and user feedback
   const handleResync = () => {
-    const now = Date.now();
-    
-    // Check cooldown
-    if (now - lastResyncTime < RESYNC_COOLDOWN_MS) {
-      const remainingCooldown = Math.ceil((RESYNC_COOLDOWN_MS - (now - lastResyncTime)) / 1000);
-      setSyncStatus(`Wait ${remainingCooldown}s`);
-      setTimeout(() => setSyncStatus('In Sync'), 1500);
-      return;
-    }
-
     if (!socket) {
       if (process.env.NODE_ENV === 'development') {
         // eslint-disable-next-line no-console
@@ -957,22 +920,14 @@ export default function AudioPlayer({
       }
       setSyncStatus('Sync failed');
       setTimeout(() => setSyncStatus('In Sync'), 1200);
-      updateResyncHistory('failed', 0, 'No socket available');
       return;
     }
 
-    setResyncInProgress(true);
     setSyncStatus('Re-syncing...');
-    setLastResyncTime(now);
-    
     let syncTimeout;
-    const resyncStartTime = performance.now();
-    
     // Defensive: wrap callback in try/catch for resilience
     socket.emit('sync_request', { sessionId: socket.sessionId }, (state) => {
       try {
-        const resyncDuration = performance.now() - resyncStartTime;
-        
         if (
           !state ||
           typeof state.timestamp !== 'number' ||
@@ -987,11 +942,8 @@ export default function AudioPlayer({
           setSyncStatus('Sync failed');
           if (syncTimeout) clearTimeout(syncTimeout);
           syncTimeout = setTimeout(() => setSyncStatus('In Sync'), 1200);
-          updateResyncHistory('failed', 0, 'Invalid state received', resyncDuration);
-          setResyncInProgress(false);
           return;
         }
-        
         const audio = audioRef.current;
         if (!audio) {
           if (process.env.NODE_ENV === 'development') {
@@ -1001,11 +953,8 @@ export default function AudioPlayer({
           setSyncStatus('Sync failed');
           if (syncTimeout) clearTimeout(syncTimeout);
           syncTimeout = setTimeout(() => setSyncStatus('In Sync'), 1200);
-          updateResyncHistory('failed', 0, 'Audio element not available', resyncDuration);
-          setResyncInProgress(false);
           return;
         }
-        
         const now = getNow(getServerTime);
         // Compensate for measured audio latency
         const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency;
@@ -1017,11 +966,8 @@ export default function AudioPlayer({
           setSyncStatus('Sync failed');
           if (syncTimeout) clearTimeout(syncTimeout);
           syncTimeout = setTimeout(() => setSyncStatus('In Sync'), 1200);
-          updateResyncHistory('failed', 0, 'Invalid expected time', resyncDuration);
-          setResyncInProgress(false);
           return;
         }
-        
         // Use advanced time sync
         const syncedNow = getNow(getServerTime);
         const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000;
@@ -1033,26 +979,7 @@ export default function AudioPlayer({
           console.log('[AudioPlayer][handleResync] Manual resync drift:', drift.toFixed(3), 'current:', audio.currentTime.toFixed(3), 'expected:', expectedSynced.toFixed(3));
         }
 
-        // Enhanced: Show drift improvement in status
-        const beforeDrift = drift;
         setCurrentTimeSafely(audio, expectedSynced, setCurrentTime);
-        const afterDrift = Math.abs(audio.currentTime - expectedSynced);
-        
-        // Determine resync success and provide feedback
-        let resyncResult = 'success';
-        let statusMessage = 'Re-syncing...';
-        
-        if (afterDrift < beforeDrift) {
-          const improvement = (beforeDrift - afterDrift).toFixed(3);
-          statusMessage = `Improved ${improvement}s`;
-          resyncResult = 'success';
-        } else if (afterDrift < DRIFT_THRESHOLD) {
-          statusMessage = 'Synced';
-          resyncResult = 'success';
-        } else {
-          statusMessage = 'Still drifted';
-          resyncResult = 'partial';
-        }
 
         // Optionally, play if should be playing (based on state)
         if (typeof state.isPlaying === 'boolean') {
@@ -1069,12 +996,9 @@ export default function AudioPlayer({
           setIsPlaying(state.isPlaying);
         }
 
-        setSyncStatus(statusMessage);
+        setSyncStatus('Re-syncing...');
         if (syncTimeout) clearTimeout(syncTimeout);
-        syncTimeout = setTimeout(() => setSyncStatus('In Sync'), 1200);
-
-        // Update resync history and stats
-        updateResyncHistory(resyncResult, afterDrift, statusMessage, resyncDuration);
+        syncTimeout = setTimeout(() => setSyncStatus('In Sync'), 800);
 
         // Optionally, emit drift report for analytics
         if (socket && socket.emit && socket.sessionId && typeof drift === 'number') {
@@ -1086,14 +1010,8 @@ export default function AudioPlayer({
             clientId,
             timestamp: Date.now(),
             manual: true,
-            resyncDuration,
-            beforeDrift,
-            afterDrift,
-            improvement: beforeDrift - afterDrift
           });
         }
-        
-        setResyncInProgress(false);
       } catch (err) {
         if (process.env.NODE_ENV === 'development') {
           // eslint-disable-next-line no-console
@@ -1102,59 +1020,9 @@ export default function AudioPlayer({
         setSyncStatus('Sync failed');
         if (syncTimeout) clearTimeout(syncTimeout);
         syncTimeout = setTimeout(() => setSyncStatus('In Sync'), 1200);
-        updateResyncHistory('failed', 0, 'Exception occurred', performance.now() - resyncStartTime);
-        setResyncInProgress(false);
       }
     });
   };
-
-  // Helper function to update resync history and stats
-  const updateResyncHistory = (result, drift, message, duration) => {
-    const resyncEntry = {
-      timestamp: Date.now(),
-      result,
-      drift: parseFloat(drift.toFixed(3)),
-      message,
-      duration: parseFloat(duration.toFixed(1)),
-      trackId: currentTrack?.id || 'unknown'
-    };
-
-    setResyncHistory(prev => {
-      const newHistory = [resyncEntry, ...prev.slice(0, RESYNC_HISTORY_SIZE - 1)];
-      return newHistory;
-    });
-
-    // Update stats
-    setResyncStats(prev => {
-      const totalResyncs = prev.totalResyncs + 1;
-      const successfulResyncs = prev.successfulResyncs + (result === 'success' ? 1 : 0);
-      const failedResyncs = prev.failedResyncs + (result === 'failed' ? 1 : 0);
-      
-      // Calculate average drift from recent history
-      const recentDrifts = [drift, ...resyncHistory.slice(0, 4).map(r => r.drift)];
-      const averageDrift = recentDrifts.reduce((sum, d) => sum + d, 0) / recentDrifts.length;
-      
-      return {
-        totalResyncs,
-        successfulResyncs,
-        failedResyncs,
-        averageDrift: parseFloat(averageDrift.toFixed(3)),
-        lastDrift: parseFloat(drift.toFixed(3))
-      };
-    });
-  };
-
-  // Smart resync suggestion based on drift patterns
-  useEffect(() => {
-    if (resyncStats.lastDrift > SMART_RESYNC_THRESHOLD && !resyncInProgress) {
-      setSmartResyncSuggestion(true);
-      // Auto-hide suggestion after 10 seconds
-      const timer = setTimeout(() => setSmartResyncSuggestion(false), 10000);
-      return () => clearTimeout(timer);
-    } else {
-      setSmartResyncSuggestion(false);
-    }
-  }, [resyncStats.lastDrift, resyncInProgress]);
 
   /**
    * Formats a time value in seconds to a human-readable string.
@@ -1498,32 +1366,13 @@ export default function AudioPlayer({
               )}
             </button>
             <button
-              className={`ml-2 px-3 py-2 rounded-lg text-xs font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 shadow ${
-                resyncInProgress 
-                  ? 'bg-blue-600 text-white' 
-                  : smartResyncSuggestion 
-                    ? 'bg-orange-600 hover:bg-orange-700 text-white' 
-                    : 'bg-neutral-800 hover:bg-neutral-700 text-white'
-              }`}
+              className="ml-2 px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-white rounded-lg text-xs font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 shadow"
               onClick={handleResync}
-              disabled={disabled || !audioUrl || resyncInProgress}
+              disabled={disabled || !audioUrl}
               aria-label="Re-sync"
             >
-              {resyncInProgress ? (
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
-                  <path d="M21 12a9 9 0 11-6.219-8.56"></path>
-                </svg>
-              ) : (
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
-                  <path d="M21 3v5h-5"></path>
-                  <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
-                  <path d="M3 21v-5h5"></path>
-                </svg>
-              )}
-              <span className="hidden sm:inline">
-                {resyncInProgress ? 'Syncing...' : smartResyncSuggestion ? 'Sync*' : 'Sync'}
-              </span>
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path><path d="M21 3v5h-5"></path><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path><path d="M3 21v-5h5"></path></svg>
+              <span className="hidden sm:inline">Sync</span>
             </button>
           </div>
         </div>
@@ -1656,45 +1505,25 @@ export default function AudioPlayer({
             </button>
             
             <button
-              className={`px-3 py-2 rounded-lg text-sm transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 ${
-                resyncInProgress 
-                  ? 'bg-blue-600 text-white' 
-                  : smartResyncSuggestion 
-                    ? 'bg-orange-600 hover:bg-orange-700 text-white' 
-                    : 'bg-neutral-800 hover:bg-neutral-700 text-white'
-              }`}
+              className="px-3 py-2 bg-neutral-800 hover:bg-neutral-700 text-white rounded-lg text-sm transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               onClick={handleResync}
-              disabled={disabled || !audioUrl || resyncInProgress}
+              disabled={disabled || !audioUrl}
             >
-              {resyncInProgress ? (
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
-                  <path d="M21 12a9 9 0 11-6.219-8.56"></path>
-                </svg>
-              ) : (
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
-                  <path d="M21 3v5h-5"></path>
-                  <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
-                  <path d="M3 21v-5h5"></path>
-                </svg>
-              )}
-              {resyncInProgress ? 'Syncing...' : smartResyncSuggestion ? 'Re-sync*' : 'Re-sync'}
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
+                <path d="M21 3v5h-5"></path>
+                <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
+                <path d="M3 21v-5h5"></path>
+              </svg>
+              Re-sync
             </button>
           </div>
 
           <div className="text-right">
-            <SyncStatus 
-              status={syncStatus} 
-              showSmartSuggestion={smartResyncSuggestion}
-            />
+            <SyncStatus status={syncStatus} />
             <div className="text-neutral-400 text-xs mt-1">
               {isController ? 'You are the controller' : 'You are a listener'}
             </div>
-            {resyncStats.totalResyncs > 0 && (
-              <div className="text-neutral-500 text-xs mt-1">
-                Sync: {resyncStats.successfulResyncs}/{resyncStats.totalResyncs} successful
-              </div>
-            )}
           </div>
         </div>
       </div>
