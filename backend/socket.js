@@ -753,11 +753,48 @@ export function setupSocket(io) {
     // Store per-client drift for diagnostics/adaptive correction
     const clientDriftMap = {};
 
-    socket.on('drift_report', ({ sessionId, drift, clientId, timestamp } = {}) => {
+    socket.on('drift_report', ({ sessionId, drift, clientId, timestamp, manual, resyncDuration, beforeDrift, afterDrift, improvement } = {}) => {
       if (!sessionId || typeof drift !== 'number' || !clientId) return;
       if (!clientDriftMap[sessionId]) clientDriftMap[sessionId] = {};
       clientDriftMap[sessionId][clientId] = { drift, timestamp };
-      log(`[DRIFT] Session ${sessionId} Client ${clientId}: Drift=${drift.toFixed(3)}s at ${new Date(timestamp).toISOString()}`);
+      
+      // Enhanced logging with more context
+      let logMessage = `[DRIFT] Session ${sessionId} Client ${clientId}: Drift=${drift.toFixed(3)}s at ${new Date(timestamp).toISOString()}`;
+      
+      if (manual) {
+        logMessage += ` (MANUAL RESYNC)`;
+        if (typeof resyncDuration === 'number') {
+          logMessage += ` Duration: ${resyncDuration.toFixed(1)}ms`;
+        }
+        if (typeof beforeDrift === 'number' && typeof afterDrift === 'number') {
+          logMessage += ` Before: ${beforeDrift.toFixed(3)}s After: ${afterDrift.toFixed(3)}s`;
+        }
+        if (typeof improvement === 'number') {
+          logMessage += ` Improvement: ${improvement.toFixed(3)}s`;
+        }
+      }
+      
+      log(logMessage);
+      
+      // Store additional analytics for manual resyncs
+      if (manual && typeof improvement === 'number') {
+        if (!clientDriftMap[sessionId][clientId].resyncHistory) {
+          clientDriftMap[sessionId][clientId].resyncHistory = [];
+        }
+        clientDriftMap[sessionId][clientId].resyncHistory.push({
+          timestamp,
+          beforeDrift,
+          afterDrift,
+          improvement,
+          resyncDuration
+        });
+        
+        // Keep only last 10 resyncs
+        if (clientDriftMap[sessionId][clientId].resyncHistory.length > 10) {
+          clientDriftMap[sessionId][clientId].resyncHistory.shift();
+        }
+      }
+      
       // (Optional) Adaptive correction logic can be added here
     });
 
