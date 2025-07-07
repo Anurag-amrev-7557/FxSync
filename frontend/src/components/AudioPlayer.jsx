@@ -3,6 +3,7 @@ import SyncStatus from './SyncStatus';
 import useSmoothAppearance from '../hooks/useSmoothAppearance';
 import LoadingSpinner from './LoadingSpinner';
 import ResyncAnalytics from './ResyncAnalytics';
+import useNTPTimeSync from '../hooks/useNTPTimeSync';
 
 // Add global error handlers
 if (typeof window !== 'undefined' && !window._audioPlayerErrorHandlerAdded) {
@@ -212,7 +213,6 @@ export default function AudioPlayer({
   controllerClientId,
   clientId,
   clients = [],
-  getServerTime,
   mobile = false,
   isAudioTabActive = false,
   currentTrack = null,
@@ -262,6 +262,18 @@ export default function AudioPlayer({
 
   // Jitter buffer: only correct drift if sustained for N checks
   const driftCountRef = useRef(0);
+
+  // --- NTP Time Sync Integration ---
+  const [ws, setWs] = useState(null);
+  useEffect(() => {
+    const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
+    // Convert http/https to ws/wss for WebSocket
+    const wsUrl = backendUrl.replace(/^http/, 'wss');
+    const socket = new window.WebSocket(wsUrl);
+    setWs(socket);
+    return () => socket.close();
+  }, []);
+  const { getServerTime, clockOffset, averageRTT } = useNTPTimeSync(ws);
 
   useEffect(() => {
     if ((currentTrack?.title || '') !== displayedTitle) {
@@ -540,7 +552,7 @@ export default function AudioPlayer({
         audio.pause();
         // Do not seek to correct drift if paused
       }
-      setLastSync(Date.now());
+      setLastSync(getServerTime());
     };
 
     socket.on('sync_state', handleSyncState);
@@ -580,7 +592,7 @@ export default function AudioPlayer({
         const audio = audioRef.current;
         if (!audio) return;
 
-        const now = getNow(getServerTime);
+        const now = getServerTime();
         const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency;
         if (!isFiniteNumber(expected)) {
           if (process.env.NODE_ENV === 'development') {
@@ -589,7 +601,7 @@ export default function AudioPlayer({
           return;
         }
 
-        const syncedNow = getNow(getServerTime);
+        const syncedNow = getServerTime();
         const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000;
         const drift = Math.abs(audio.currentTime - expectedSynced);
 
@@ -691,7 +703,7 @@ export default function AudioPlayer({
           audio.pause();
           setCurrentTimeSafely(audio, 0, setCurrentTime);
           setIsPlaying(false);
-          setLastSync(Date.now());
+          setLastSync(getServerTime());
           return;
         }
 
@@ -701,23 +713,23 @@ export default function AudioPlayer({
           audio.pause();
           setCurrentTimeSafely(audio, 0, setCurrentTime);
           setIsPlaying(false);
-          setLastSync(Date.now());
+          setLastSync(getServerTime());
           return;
         }
 
-        const now = getNow(getServerTime);
+        const now = getServerTime();
         // Compensate for measured audio latency
         const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency;
         if (!isFiniteNumber(expected) || expected < 0) {
           warn('Invalid expected time, pausing audio', { expected, state });
           audio.pause();
           setIsPlaying(false);
-          setLastSync(Date.now());
+          setLastSync(getServerTime());
           return;
         }
 
         // Use advanced time sync
-        const syncedNow = getNow(getServerTime);
+        const syncedNow = getServerTime();
         const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000;
 
         // Clamp expectedSynced to [0, duration] if possible
@@ -750,7 +762,7 @@ export default function AudioPlayer({
           audio.pause();
           setCurrentTimeSafely(audio, safeExpected, setCurrentTime);
         }
-        setLastSync(Date.now());
+        setLastSync(getServerTime());
       } catch (err) {
         warn('Exception in sync_request callback', err);
       }
@@ -760,7 +772,7 @@ export default function AudioPlayer({
   // Enhanced: Emit play/pause/seek events (controller only) with improved logging, error handling, and latency compensation
   const emitPlay = () => {
     if (isController && socket && getServerTime) {
-      const now = getNow(getServerTime);
+      const now = getServerTime();
       const audio = audioRef.current;
       const playAt = (audio ? audio.currentTime : 0) + PLAY_OFFSET;
       const payload = {
@@ -792,7 +804,7 @@ export default function AudioPlayer({
         sessionId: socket.sessionId,
         timestamp: audio ? audio.currentTime : 0,
         clientId,
-        emittedAt: getNow(getServerTime),
+        emittedAt: getServerTime(),
       };
       if (process.env.NODE_ENV === 'development') {
         // eslint-disable-next-line no-console
@@ -815,7 +827,7 @@ export default function AudioPlayer({
         sessionId: socket.sessionId,
         timestamp: time,
         clientId,
-        emittedAt: getNow(getServerTime),
+        emittedAt: getServerTime(),
       };
       if (process.env.NODE_ENV === 'development') {
         // eslint-disable-next-line no-console
@@ -1006,7 +1018,7 @@ export default function AudioPlayer({
           return;
         }
         
-        const now = getNow(getServerTime);
+        const now = getServerTime();
         // Compensate for measured audio latency
         const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency;
         if (!isFiniteNumber(expected)) {
@@ -1023,7 +1035,7 @@ export default function AudioPlayer({
         }
         
         // Use advanced time sync
-        const syncedNow = getNow(getServerTime);
+        const syncedNow = getServerTime();
         const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000;
 
         // Log drift for analytics
@@ -1697,6 +1709,11 @@ export default function AudioPlayer({
             )}
           </div>
         </div>
+      </div>
+
+      {/* NTP Time Sync Integration */}
+      <div className="text-xs text-neutral-400 mb-2">
+        Server Time: {getServerTime().toFixed(0)} | Offset: {clockOffset.toFixed(2)} ms | RTT: {averageRTT && averageRTT.toFixed(2)} ms
       </div>
     </div>
   );
