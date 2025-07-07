@@ -303,7 +303,24 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
               <div
                 key={track.url}
                 className="p-2 hover:bg-primary/10 transition-all duration-200 cursor-pointer flex items-center gap-3"
-                onClick={() => onSelectTrack && onSelectTrack(null, track)}
+                onClick={() => {
+                  if (!isController || !socket || !sessionId) {
+                    // Just preview for non-controller or if missing socket/session
+                    onSelectTrack && onSelectTrack(null, track);
+                    return;
+                  }
+                  // If already in queue, select it
+                  const existingIdx = queue.findIndex(q => q.url === track.url);
+                  if (existingIdx !== -1) {
+                    onSelectTrack && onSelectTrack(existingIdx, track);
+                  } else {
+                    // Add to queue, then select it after confirmation
+                    socket.emit('add_to_queue', { sessionId, url: track.url, title: track.title }, () => {
+                      // Use the new index (end of queue)
+                      onSelectTrack && onSelectTrack(queue.length, track);
+                    });
+                  }
+                }}
                 title={`Play ${track.title}`}
               >
                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${track.type === 'sample' ? 'bg-blue-800' : 'bg-neutral-800'}`}> 

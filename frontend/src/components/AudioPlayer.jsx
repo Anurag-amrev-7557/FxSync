@@ -17,6 +17,9 @@ if (typeof window !== 'undefined' && !window._audioPlayerErrorHandlerAdded) {
 const DRIFT_THRESHOLD = 0.3; // seconds (less aggressive, was 0.13)
 const PLAY_OFFSET = 0.35; // seconds (350ms future offset for play events)
 const DEFAULT_AUDIO_LATENCY = 0.08; // 80ms fallback if not measured
+const MICRO_DRIFT_THRESHOLD = 0.08; // ultra-micro threshold (was 0.18)
+const MICRO_RATE_CAP = 0.03; // max playbackRate delta (was 0.07)
+const MICRO_CORRECTION_WINDOW = 250; // ms (was 420)
 
 function isFiniteNumber(n) {
   return typeof n === 'number' && isFinite(n);
@@ -163,6 +166,39 @@ function setCurrentTimeSafely(audio, value, setCurrentTime) {
   }, 3000);
 }
 
+// Optimized helper to get the most accurate server time for syncing
+function getNow(getServerTime) {
+  // Use performance.now() for high-resolution local fallback
+  const localNow = () => (window.performance ? performance.timeOrigin + performance.now() : Date.now());
+
+  if (typeof getServerTime === 'function') {
+    try {
+      const now = getServerTime();
+      if (typeof now === 'number' && isFinite(now) && now > 0) {
+        return now;
+      } else {
+        if (process.env.NODE_ENV === 'development') {
+          // eslint-disable-next-line no-console
+          console.warn('[AudioPlayer][getNow] getServerTime() returned invalid value:', now, 'Falling back to high-res local time.');
+        }
+        return localNow();
+      }
+    } catch (e) {
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.error('[AudioPlayer][getNow] getServerTime threw error:', e, 'Falling back to high-res local time.');
+      }
+      return localNow();
+    }
+  } else {
+    if (process.env.NODE_ENV === 'development') {
+      // eslint-disable-next-line no-console
+      console.warn('[AudioPlayer][getNow] getServerTime is missing! Falling back to high-res local time. This may cause sync drift.');
+    }
+    return localNow();
+  }
+}
+
 export default function AudioPlayer({
   disabled = false,
   socket,
@@ -192,6 +228,7 @@ export default function AudioPlayer({
   const lastCorrectionRef = useRef(0);
   const CORRECTION_COOLDOWN = 1500; // ms
   const correctionInProgressRef = useRef(false);
+  const [displayedCurrentTime, setDisplayedCurrentTime] = useState(0);
 
   // Use controllerClientId/clientId for sticky controller logic
   const isController = controllerClientId && clientId && controllerClientId === clientId;
@@ -261,6 +298,16 @@ export default function AudioPlayer({
       setAudioError(null);
     }
   }, [currentTrack]);
+
+  // Auto-play audio for listeners when audioUrl changes and should be playing
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (!isController && isPlaying && audioUrl) {
+      // Try to play the audio (catch errors silently)
+      audio.play().catch(() => {});
+    }
+  }, [audioUrl, isPlaying, isController]);
 
   // Fetch default audio URL only if no currentTrack
   useEffect(() => {
@@ -408,12 +455,9 @@ export default function AudioPlayer({
       let now = null;
       if (typeof serverTime === 'number' && isFinite(serverTime)) {
         now = serverTime;
-      } else if (getServerTime) {
-        now = getServerTime();
-        log('warn', 'SYNC_STATE: serverTime missing, using getServerTime()', { now });
       } else {
-        now = Date.now();
-        log('warn', 'SYNC_STATE: serverTime missing, using Date.now()', { now });
+        now = getNow(getServerTime);
+        log('warn', 'SYNC_STATE: serverTime missing, using getNow(getServerTime)', { now });
       }
       // Compensate for measured audio latency
       const expected = timestamp + (now - lastUpdated) / 1000 - audioLatency;
@@ -519,7 +563,7 @@ export default function AudioPlayer({
         const audio = audioRef.current;
         if (!audio) return;
 
-        const now = getServerTime ? getServerTime() : Date.now();
+        const now = getNow(getServerTime);
         const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency;
         if (!isFiniteNumber(expected)) {
           if (process.env.NODE_ENV === 'development') {
@@ -528,7 +572,7 @@ export default function AudioPlayer({
           return;
         }
 
-        const syncedNow = getServerTime ? getServerTime() : Date.now();
+        const syncedNow = getNow(getServerTime);
         const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000;
         const drift = Math.abs(audio.currentTime - expectedSynced);
 
@@ -644,7 +688,7 @@ export default function AudioPlayer({
           return;
         }
 
-        const now = getServerTime ? getServerTime() : Date.now();
+        const now = getNow(getServerTime);
         // Compensate for measured audio latency
         const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency;
         if (!isFiniteNumber(expected) || expected < 0) {
@@ -656,7 +700,7 @@ export default function AudioPlayer({
         }
 
         // Use advanced time sync
-        const syncedNow = getServerTime ? getServerTime() : Date.now();
+        const syncedNow = getNow(getServerTime);
         const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000;
 
         // Clamp expectedSynced to [0, duration] if possible
@@ -699,7 +743,7 @@ export default function AudioPlayer({
   // Enhanced: Emit play/pause/seek events (controller only) with improved logging, error handling, and latency compensation
   const emitPlay = () => {
     if (isController && socket && getServerTime) {
-      const now = getServerTime();
+      const now = getNow(getServerTime);
       const audio = audioRef.current;
       const playAt = (audio ? audio.currentTime : 0) + PLAY_OFFSET;
       const payload = {
@@ -731,7 +775,7 @@ export default function AudioPlayer({
         sessionId: socket.sessionId,
         timestamp: audio ? audio.currentTime : 0,
         clientId,
-        emittedAt: getServerTime ? getServerTime() : Date.now(),
+        emittedAt: getNow(getServerTime),
       };
       if (process.env.NODE_ENV === 'development') {
         // eslint-disable-next-line no-console
@@ -754,7 +798,7 @@ export default function AudioPlayer({
         sessionId: socket.sessionId,
         timestamp: time,
         clientId,
-        emittedAt: getServerTime ? getServerTime() : Date.now(),
+        emittedAt: getNow(getServerTime),
       };
       if (process.env.NODE_ENV === 'development') {
         // eslint-disable-next-line no-console
@@ -921,7 +965,7 @@ export default function AudioPlayer({
           syncTimeout = setTimeout(() => setSyncStatus('In Sync'), 1200);
           return;
         }
-        const now = getServerTime ? getServerTime() : Date.now();
+        const now = getNow(getServerTime);
         // Compensate for measured audio latency
         const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency;
         if (!isFiniteNumber(expected)) {
@@ -935,7 +979,7 @@ export default function AudioPlayer({
           return;
         }
         // Use advanced time sync
-        const syncedNow = getServerTime ? getServerTime() : Date.now();
+        const syncedNow = getNow(getServerTime);
         const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000;
 
         // Log drift for analytics
@@ -1102,6 +1146,25 @@ export default function AudioPlayer({
     };
   }, [audioRef, audioLatency]);
 
+  // Smoothly animate displayedCurrentTime toward audio.currentTime
+  useEffect(() => {
+    let raf;
+    const animate = () => {
+      const audio = audioRef.current;
+      if (!audio) return;
+      const actual = audio.currentTime;
+      setDisplayedCurrentTime(prev => {
+        // If the difference is tiny, snap to actual
+        if (Math.abs(prev - actual) < 0.015) return actual;
+        // Otherwise, ease toward actual (lerp)
+        return prev + (actual - prev) * 0.22;
+      });
+      raf = requestAnimationFrame(animate);
+    };
+    raf = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(raf);
+  }, [audioUrl]);
+
   /**
    * Attempts to correct audio drift by seeking to the expected time.
    * Enhanced: 
@@ -1143,47 +1206,63 @@ export default function AudioPlayer({
     }
     correctionInProgressRef.current = true;
 
-    // Only seek if audio is playing (never pause to correct drift)
+    // Only correct if audio is playing (never pause to correct drift)
     if (!audio.paused) {
       const before = audio.currentTime;
-      setCurrentTimeSafely(audio, expected, setCurrentTime);
-      lastCorrectionRef.current = now;
-
-      // Enhanced: fire a custom event for debugging/analytics
-      if (typeof window !== 'undefined' && typeof CustomEvent === 'function') {
-        try {
-          window.dispatchEvent(
-            new CustomEvent('audio-drift-corrected', {
-              detail: {
-                before,
-                after: expected,
-                at: now,
-                src: audio.currentSrc,
-              },
-            })
-          );
-        } catch (e) {
-          // ignore
+      const drift = expected - before;
+      // Ultra-micro-correction for very small drifts
+      if (Math.abs(drift) < MICRO_DRIFT_THRESHOLD) {
+        // Calculate a very gentle playbackRate adjustment (ultra-micro)
+        const rate = 1 + Math.max(-MICRO_RATE_CAP, Math.min(MICRO_RATE_CAP, drift * 0.7));
+        audio.playbackRate = rate;
+        if (process.env.NODE_ENV === 'development') {
+          // eslint-disable-next-line no-console
+          console.log('[DriftCorrection] Ultra-micro-correcting with playbackRate', rate, 'for drift', drift);
         }
+        setTimeout(() => {
+          audio.playbackRate = 1;
+          correctionInProgressRef.current = false;
+        }, MICRO_CORRECTION_WINDOW); // ultra-micro correction window
+        return { corrected: true, micro: true, before, after: expected, drift, rate };
+      } else {
+        setCurrentTimeSafely(audio, expected, setCurrentTime);
+        lastCorrectionRef.current = now;
+        // Enhanced: fire a custom event for debugging/analytics
+        if (typeof window !== 'undefined' && typeof CustomEvent === 'function') {
+          try {
+            window.dispatchEvent(
+              new CustomEvent('audio-drift-corrected', {
+                detail: {
+                  before,
+                  after: expected,
+                  at: now,
+                  src: audio.currentSrc,
+                },
+              })
+            );
+          } catch (e) {
+            // ignore
+          }
+        }
+        if (process.env.NODE_ENV === 'development') {
+          // eslint-disable-next-line no-console
+          console.log(
+            '[DriftCorrection] Seeked to',
+            expected,
+            'from',
+            before,
+            'at',
+            now,
+            '| src:',
+            audio.currentSrc
+          );
+        }
+        setTimeout(() => {
+          audio.playbackRate = 1;
+          correctionInProgressRef.current = false;
+        }, 500); // allow some time for audio to stabilize
+        return { corrected: true, before, after: expected, at: now };
       }
-
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
-        console.log(
-          '[DriftCorrection] Seeked to',
-          expected,
-          'from',
-          before,
-          'at',
-          now,
-          '| src:',
-          audio.currentSrc
-        );
-      }
-      setTimeout(() => {
-        correctionInProgressRef.current = false;
-      }, 500); // allow some time for audio to stabilize
-      return { corrected: true, before, after: expected, at: now };
     } else {
       correctionInProgressRef.current = false;
       if (process.env.NODE_ENV === 'development') {
@@ -1268,13 +1347,13 @@ export default function AudioPlayer({
           </div>
           {/* Progress bar */}
           <div className="flex items-center gap-2 w-full">
-            <span className="text-[11px] text-neutral-400 w-8 text-left font-mono">{formatTime(currentTime)}</span>
+            <span className="text-[11px] text-neutral-400 w-8 text-left font-mono">{formatTime(displayedCurrentTime)}</span>
             <input
               type="range"
               min={0}
               max={isFinite(duration) ? duration : 0}
               step={0.01}
-              value={isFinite(currentTime) ? currentTime : 0}
+              value={isFinite(displayedCurrentTime) ? displayedCurrentTime : 0}
               onChange={handleSeek}
               className="flex-1 h-3 bg-neutral-800 rounded-full appearance-none cursor-pointer accent-primary"
               style={{ WebkitAppearance: 'none', appearance: 'none' }}
@@ -1387,7 +1466,7 @@ export default function AudioPlayer({
           </div>
           <div className="text-right">
             <div className="text-white font-mono text-sm">
-              {formatTime(currentTime)} / {formatTime(duration)}
+              {formatTime(displayedCurrentTime)} / {formatTime(duration)}
             </div>
             <div className="text-neutral-400 text-xs">Duration</div>
           </div>
@@ -1400,7 +1479,7 @@ export default function AudioPlayer({
             min={0}
             max={isFinite(duration) ? duration : 0}
             step={0.01}
-            value={isFinite(currentTime) ? currentTime : 0}
+            value={isFinite(displayedCurrentTime) ? displayedCurrentTime : 0}
             onChange={handleSeek}
             className="w-full h-2 bg-neutral-800 rounded-lg appearance-none cursor-pointer"
             style={{

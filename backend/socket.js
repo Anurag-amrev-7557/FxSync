@@ -632,6 +632,9 @@ export function setupSocket(io) {
       let newIdx = typeof idx === 'number' ? idx : 0;
       let track = (queue.length > 0 && typeof newIdx === 'number' && queue[newIdx]) ? queue[newIdx] : null;
 
+      // Debug log for queue and track BEFORE emitting events
+      console.log('[SOCKET][track_change] About to emit. sessionId:', sessionId, 'queue:', queue, 'newIdx:', newIdx, 'track:', track, 'session:', JSON.stringify(session));
+
       // Defensive: If idx is out of bounds, clamp to valid range or null
       if (typeof newIdx === 'number' && (newIdx < 0 || newIdx >= queue.length)) {
         if (queue.length === 0) {
@@ -677,6 +680,15 @@ export function setupSocket(io) {
       io.to(sessionId).emit('queue_update', queue);
       io.to(sessionId).emit('track_change', payload);
       log('Track change in session', sessionId, ':', payload);
+
+      // Emit sync_state after track change so all clients get the latest play state and timestamp
+      io.to(sessionId).emit('sync_state', {
+        isPlaying: session.isPlaying,
+        timestamp: session.timestamp,
+        lastUpdated: session.lastUpdated,
+        controllerId: session.controllerId,
+        serverTime: Date.now()
+      });
 
       if (typeof callback === "function") callback({ success: true, ...payload });
     });
