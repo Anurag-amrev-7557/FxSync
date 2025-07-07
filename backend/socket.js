@@ -852,6 +852,26 @@ export function setupSocket(io) {
       }
       log('Socket disconnected:', socket.id);
     });
+
+    // --- WebRTC Peer-to-Peer Signaling for Time Sync ---
+    socket.on('peer-offer', ({ to, from, offer }) => {
+      const targetSocket = Array.from(io.sockets.sockets.values()).find(s => s.clientId === to || s.id === to);
+      if (targetSocket) {
+        targetSocket.emit('peer-offer', { from, offer });
+      }
+    });
+    socket.on('peer-answer', ({ to, from, answer }) => {
+      const targetSocket = Array.from(io.sockets.sockets.values()).find(s => s.clientId === to || s.id === to);
+      if (targetSocket) {
+        targetSocket.emit('peer-answer', { from, answer });
+      }
+    });
+    socket.on('peer-ice-candidate', ({ to, from, candidate }) => {
+      const targetSocket = Array.from(io.sockets.sockets.values()).find(s => s.clientId === to || s.id === to);
+      if (targetSocket) {
+        targetSocket.emit('peer-ice-candidate', { from, candidate });
+      }
+    });
   });
 
   // Session timeout/cleanup (1 hour inactivity)

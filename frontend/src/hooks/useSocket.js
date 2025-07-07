@@ -31,6 +31,63 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
   const socketRef = useRef(null);
   const clientId = getClientId();
 
+  // --- NTP-like multi-round time sync before joining session ---
+  async function ntpBatchSync(socket, rounds = 8) {
+    const samples = [];
+    for (let i = 0; i < rounds; i++) {
+      const now = Date.now();
+      await new Promise((resolve) => {
+        socket.emit(
+          'time_sync',
+          { clientSent: now, clientCallbackReceived: Date.now(), userAgent: navigator.userAgent },
+          (data) => {
+            if (
+              data &&
+              typeof data.serverReceived === 'number' &&
+              typeof data.serverProcessed === 'number' &&
+              typeof data.clientSent === 'number'
+            ) {
+              const clientReceived = Date.now();
+              // Use midpoint between serverReceived and serverProcessed for more accurate offset
+              const serverMid = (data.serverReceived + data.serverProcessed) / 2;
+              const roundTrip = clientReceived - data.clientSent;
+              if (roundTrip > MAX_RTT) return resolve(); // Ignore high RTT
+              const offset = serverMid - clientReceived;
+              samples.push({ offset, rtt: roundTrip });
+            } else if (
+              data &&
+              typeof data.serverTime === 'number' &&
+              typeof data.clientSent === 'number'
+            ) {
+              // Fallback to old method if serverReceived/Processed missing
+              const clientReceived = Date.now();
+              const roundTrip = clientReceived - data.clientSent;
+              if (roundTrip > MAX_RTT) return resolve();
+              const estimatedServerTime = data.serverTime + roundTrip / 2;
+              const offset = estimatedServerTime - clientReceived;
+              samples.push({ offset, rtt: roundTrip });
+            }
+            setTimeout(resolve, 20); // Small delay between rounds
+          }
+        );
+      });
+    }
+    if (samples.length < 4) return; // Not enough samples
+    samples.sort((a, b) => a.rtt - b.rtt);
+    const trimmed = samples.slice(2, -2); // Remove top/bottom 2 RTTs
+    // Weighted offset calculation: 50% lowest, 30% second, 20% third
+    let avgOffset;
+    if (trimmed.length >= 3) {
+      const [best, second, third] = trimmed;
+      avgOffset = (best.offset * 0.5 + second.offset * 0.3 + third.offset * 0.2) / 1.0;
+    } else {
+      avgOffset = trimmed.reduce((sum, s) => sum + s.offset, 0) / trimmed.length;
+    }
+    const avgRtt = trimmed.reduce((sum, s) => sum + s.rtt, 0) / trimmed.length;
+    setTimeOffset(avgOffset);
+    setRtt(avgRtt);
+  }
+
   // Further enhanced time sync logic with drift smoothing, error handling, diagnostics, and visibility/reactivity improvements
   useEffect(() => {
     let interval;
@@ -296,63 +353,6 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
 
     const logPrefix = `[useSocket][${sessionId}]`;
 
-    // --- NTP-like multi-round time sync before joining session ---
-    async function ntpBatchSync(socket, rounds = 8) {
-      const samples = [];
-      for (let i = 0; i < rounds; i++) {
-        const now = Date.now();
-        await new Promise((resolve) => {
-          socket.emit(
-            'time_sync',
-            { clientSent: now, clientCallbackReceived: Date.now(), userAgent: navigator.userAgent },
-            (data) => {
-              if (
-                data &&
-                typeof data.serverReceived === 'number' &&
-                typeof data.serverProcessed === 'number' &&
-                typeof data.clientSent === 'number'
-              ) {
-                const clientReceived = Date.now();
-                // Use midpoint between serverReceived and serverProcessed for more accurate offset
-                const serverMid = (data.serverReceived + data.serverProcessed) / 2;
-                const roundTrip = clientReceived - data.clientSent;
-                if (roundTrip > MAX_RTT) return resolve(); // Ignore high RTT
-                const offset = serverMid - clientReceived;
-                samples.push({ offset, rtt: roundTrip });
-              } else if (
-                data &&
-                typeof data.serverTime === 'number' &&
-                typeof data.clientSent === 'number'
-              ) {
-                // Fallback to old method if serverReceived/Processed missing
-                const clientReceived = Date.now();
-                const roundTrip = clientReceived - data.clientSent;
-                if (roundTrip > MAX_RTT) return resolve();
-                const estimatedServerTime = data.serverTime + roundTrip / 2;
-                const offset = estimatedServerTime - clientReceived;
-                samples.push({ offset, rtt: roundTrip });
-              }
-              setTimeout(resolve, 20); // Small delay between rounds
-            }
-          );
-        });
-      }
-      if (samples.length < 4) return; // Not enough samples
-      samples.sort((a, b) => a.rtt - b.rtt);
-      const trimmed = samples.slice(2, -2); // Remove top/bottom 2 RTTs
-      // Weighted offset calculation: 50% lowest, 30% second, 20% third
-      let avgOffset;
-      if (trimmed.length >= 3) {
-        const [best, second, third] = trimmed;
-        avgOffset = (best.offset * 0.5 + second.offset * 0.3 + third.offset * 0.2) / 1.0;
-      } else {
-        avgOffset = trimmed.reduce((sum, s) => sum + s.offset, 0) / trimmed.length;
-      }
-      const avgRtt = trimmed.reduce((sum, s) => sum + s.rtt, 0) / trimmed.length;
-      setTimeOffset(avgOffset);
-      setRtt(avgRtt);
-    }
-
     // --- Event Handlers ---
     const handleConnect = async () => {
       console.info(`${logPrefix} Socket connected`);
@@ -500,6 +500,13 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
     }
   }
 
+  // Expose a method to force immediate NTP batch sync (for manual resync)
+  function forceNtpBatchSync() {
+    if (socketRef.current) {
+      ntpBatchSync(socketRef.current);
+    }
+  }
+
   // Enhanced getServerTime: returns both raw and Date object, and diagnostics
   function getServerTime(options = {}) {
     // options: { asDate: boolean, withDiagnostics: boolean }
@@ -590,5 +597,6 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
         socketRef.current.off(event, handler);
       }
     },
+    forceNtpBatchSync,
   };
 } 

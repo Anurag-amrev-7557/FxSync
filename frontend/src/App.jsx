@@ -32,8 +32,7 @@ function App() {
   const [sessionSyncState, setSessionSyncState] = useState(null);
 
   // Enhanced socket connection with better error handling
-  const socketStuff = useSocket(currentSessionId, displayName, undefined, setSessionSyncState)
-  const { rtt, timeOffset } = socketStuff;
+  const { rtt, timeOffset, jitter, drift, ...socketStuff } = useSocket(currentSessionId, displayName, undefined, setSessionSyncState)
 
   // Persist session data to localStorage
   useEffect(() => {
@@ -87,6 +86,8 @@ function App() {
                 setSessionSyncState={setSessionSyncState}
                 rtt={rtt}
                 timeOffset={timeOffset}
+                jitter={jitter}
+                drift={drift}
               />
             }
           />
@@ -114,6 +115,8 @@ function App() {
                 setSessionSyncState={setSessionSyncState}
                 rtt={rtt}
                 timeOffset={timeOffset}
+                jitter={jitter}
+                drift={drift}
               />
             }
           />

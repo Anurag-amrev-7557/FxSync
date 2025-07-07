@@ -20,6 +20,7 @@ import {
   clearSessionData,
   cleanupOldSessions 
 } from '../utils/persistence'
+import usePeerTimeSync from '../hooks/usePeerTimeSync'
 
 function SessionPage({
   currentSessionId,
@@ -55,6 +56,7 @@ function SessionPage({
   const [selectedTrackIdx, setSelectedTrackIdx] = useState(0);
   const [currentTrackOverride, setCurrentTrackOverride] = useState(null);
   const pendingTrackIdx = useRef(null); // Buffer for track_change before queue is set
+  const [peerIds, setPeerIds] = useState([]);
 
   // Clean up old sessions on component mount
   useEffect(() => {
@@ -549,6 +551,40 @@ function SessionPage({
     return { label: 'Poor', color: 'bg-red-500', tooltip: 'Sync is poor. High latency, jitter, or drift.' };
   }, [rtt, jitter, drift]);
 
+  // --- Peer Discovery ---
+  useEffect(() => {
+    if (!socket) return;
+    const handleClientsUpdate = (clients) => {
+      // Exclude self
+      setPeerIds(clients.filter(c => c.clientId && c.clientId !== clientId).map(c => c.clientId));
+    };
+    socket.on('clients_update', handleClientsUpdate);
+    return () => socket.off('clients_update', handleClientsUpdate);
+  }, [socket, clientId]);
+
+  // --- Peer-to-Peer Time Sync (Fixed Hooks) ---
+  const MAX_PEERS = 5;
+  const paddedPeerIds = [...peerIds.slice(0, MAX_PEERS)];
+  while (paddedPeerIds.length < MAX_PEERS) paddedPeerIds.push(null);
+
+  const peerSyncA = usePeerTimeSync(socket, clientId, paddedPeerIds[0]);
+  const peerSyncB = usePeerTimeSync(socket, clientId, paddedPeerIds[1]);
+  const peerSyncC = usePeerTimeSync(socket, clientId, paddedPeerIds[2]);
+  const peerSyncD = usePeerTimeSync(socket, clientId, paddedPeerIds[3]);
+  const peerSyncE = usePeerTimeSync(socket, clientId, paddedPeerIds[4]);
+  const peerSyncs = [peerSyncA, peerSyncB, peerSyncC, peerSyncD, peerSyncE];
+
+  // --- Combine Peer and Server Sync ---
+  const allOffsets = [
+    ...peerSyncs.map((p, i) => (p && paddedPeerIds[i] && p.connectionState === 'connected' && p.peerRtt !== null) ? { offset: p.peerOffset, rtt: p.peerRtt } : null).filter(Boolean),
+    { offset: timeOffset, rtt: rtt }
+  ];
+  const best = allOffsets.reduce((a, b) => (a.rtt < b.rtt ? a : b));
+  const ultraPreciseOffset = best.offset;
+
+  // Debug log for ultra-precise offset
+  console.log('Ultra-precise offset:', ultraPreciseOffset, 'All offsets:', allOffsets);
+
   return (
     <div className="min-h-screen bg-neutral-950 text-white">
       {!currentSessionId ? (
@@ -568,15 +604,15 @@ function SessionPage({
                   </svg>
                 </div>
                 <div>
-                  <h1 className="text-lg font-semibold gradient-text">FxSync</h1>
+                  <h1 className="text-lg font-semibold text-white">FxSync</h1>
                   <p className="text-xs text-neutral-400">Room: {currentSessionId}</p>
                 </div>
               </div>
               {/* Center: RTT and Offset display */}
               <div className="flex-1 flex justify-center">
-                <div className="flex items-center gap-3 bg-neutral-800/70 px-4 py-1 rounded-full shadow-sm border border-neutral-700 backdrop-blur-md min-w-[210px] max-w-xs">
+                <div className="flex items-center gap-3 bg-neutral-800/70 px-1 py-1 rounded-full shadow-sm border border-neutral-700 backdrop-blur-md min-w-[210px] max-w-xs">
                   {/* RTT */}
-                  <span className="flex items-center gap-1 text-xs font-medium text-blue-300" title={`RTT (Round Trip Time): Time for a message to go to the server and back. Lower is better.\nCurrent: ${rtt !== null && !isNaN(rtt) ? rtt.toFixed(1) : '--'} ms`}> 
+                  <span className="flex ml-1 items-center gap-1 text-xs font-medium text-blue-300" title={`RTT (Round Trip Time): Time for a message to go to the server and back. Lower is better.\nCurrent: ${rtt !== null && !isNaN(rtt) ? rtt.toFixed(1) : '--'} ms`}> 
                     <svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" className="inline-block"><circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="2"/><path d="M10 6v4l2 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
                     <span>{rtt !== null && !isNaN(rtt) ? rtt.toFixed(1) : '--'}</span>
                     <span className="text-neutral-400 font-normal">ms</span>
@@ -662,6 +698,7 @@ function SessionPage({
                         getServerTime={getServerTime}
                         currentTrack={currentTrack}
                         rtt={rtt}
+                        sessionSyncState={sessionSyncState}
                       />
                     </div>
                     <div className="p-4">
@@ -735,7 +772,7 @@ function SessionPage({
                   </svg>
                 </div>
                 <div>
-                  <h1 className="text-lg font-semibold gradient-text">FxSync</h1>
+                  <h1 className="text-lg font-semibold text-white">FxSync</h1>
                   <p className="text-xs text-neutral-400">Room: {currentSessionId}</p>
                 </div>
               </div>
@@ -794,6 +831,7 @@ function SessionPage({
                         isAudioTabActive={mobileTab === 0}
                         currentTrack={currentTrack}
                         rtt={rtt}
+                        sessionSyncState={sessionSyncState}
                       />
                     </div>
                   </div>
@@ -825,6 +863,7 @@ function SessionPage({
                         isAudioTabActive={mobileTab === 1}
                         currentTrack={currentTrack}
                         rtt={rtt}
+                        sessionSyncState={sessionSyncState}
                       />
                     </div>
                   </div>
@@ -857,6 +896,23 @@ function SessionPage({
               setMobileTab={setMobileTab}
               handleExitRoom={handleExitRoom}
             />
+          </div>
+          {/* Peer Sync Diagnostics */}
+          <div className="mt-2 flex flex-col gap-1 text-xs text-neutral-400">
+            {peerSyncs.map((p, i) => (
+              p && paddedPeerIds[i] ? (
+                <div key={paddedPeerIds[i]}>
+                  Peer <span className="font-mono text-blue-300">{paddedPeerIds[i]}</span>:
+                  RTT <span className="font-mono text-blue-300">{p.peerRtt !== null ? p.peerRtt.toFixed(1) : '--'}</span> ms,
+                  Offset <span className="font-mono text-green-300">{p.peerOffset !== null ? p.peerOffset.toFixed(1) : '--'}</span> ms,
+                  State: <span className="font-mono">{p.connectionState}</span>
+                </div>
+              ) : null
+            ))}
+            <div>
+              <span className="font-semibold text-white">Ultra-precise offset used for sync:</span>
+              <span className="font-mono text-green-400 ml-2">{ultraPreciseOffset !== null ? ultraPreciseOffset.toFixed(1) : '--'} ms</span>
+            </div>
           </div>
         </>
       )}
