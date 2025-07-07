@@ -137,29 +137,6 @@ export function setupSocket(io) {
       });
     });
 
-    // Enhanced: Handle immediate sync state broadcasts for better timing
-    socket.on('sync_state_broadcast', ({ sessionId, isPlaying, timestamp, lastUpdated, controllerId, serverTime } = {}) => {
-      if (!sessionId || typeof timestamp !== 'number') return;
-      const session = getSession(sessionId);
-      if (!session) return;
-      const clientId = getClientIdBySocket(sessionId, socket.id);
-      if (session.controllerClientId !== clientId) return;
-      
-      // Update session state
-      updatePlayback(sessionId, { isPlaying, timestamp, controllerId });
-      
-      // Immediately broadcast to all clients
-      io.to(sessionId).emit('sync_state', {
-        isPlaying,
-        timestamp,
-        lastUpdated: lastUpdated || Date.now(),
-        controllerId,
-        serverTime: serverTime || Date.now()
-      });
-      
-      log('Immediate sync_state broadcast for session', sessionId, 'timestamp:', timestamp);
-    });
-
     socket.on('sync_request', async ({ sessionId } = {}, callback) => {
       try {
         if (!sessionId) {
@@ -860,9 +837,9 @@ export function setupSocket(io) {
   }, 60 * 1000);
 
   // --- Adaptive sync_state broadcast ---
-  const BASE_SYNC_INTERVAL = 300; // ms (reduced from 500ms for more frequent sync)
-  const HIGH_DRIFT_SYNC_INTERVAL = 150; // ms (reduced from 200ms for faster high-drift sync)
-  const DRIFT_THRESHOLD = 0.15; // seconds (reduced from 0.2s to match frontend)
+  const BASE_SYNC_INTERVAL = 500; // ms (0.5s)
+  const HIGH_DRIFT_SYNC_INTERVAL = 200; // ms (0.2s)
+  const DRIFT_THRESHOLD = 0.2; // seconds
   const DRIFT_WINDOW = 10000; // ms (10s)
   const clientDriftMap = {}; // sessionId -> { clientId: { drift, timestamp } }
 

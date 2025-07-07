@@ -14,12 +14,12 @@ if (typeof window !== 'undefined' && !window._audioPlayerErrorHandlerAdded) {
   window._audioPlayerErrorHandlerAdded = true;
 }
 
-const DRIFT_THRESHOLD = 0.15; // seconds (reduced from 0.3 for more responsive sync)
-const PLAY_OFFSET = 0.2; // seconds (reduced from 0.35 for tighter timing)
+const DRIFT_THRESHOLD = 0.3; // seconds (less aggressive, was 0.13)
+const PLAY_OFFSET = 0.35; // seconds (350ms future offset for play events)
 const DEFAULT_AUDIO_LATENCY = 0.08; // 80ms fallback if not measured
-const MICRO_DRIFT_THRESHOLD = 0.05; // ultra-micro threshold (reduced from 0.08)
-const MICRO_RATE_CAP = 0.02; // max playbackRate delta (reduced from 0.03 for smoother correction)
-const MICRO_CORRECTION_WINDOW = 200; // ms (reduced from 250 for faster response)
+const MICRO_DRIFT_THRESHOLD = 0.08; // ultra-micro threshold (was 0.18)
+const MICRO_RATE_CAP = 0.03; // max playbackRate delta (was 0.07)
+const MICRO_CORRECTION_WINDOW = 250; // ms (was 420)
 
 function isFiniteNumber(n) {
   return typeof n === 'number' && isFinite(n);
@@ -226,7 +226,7 @@ export default function AudioPlayer({
   const [audioLatency, setAudioLatency] = useState(DEFAULT_AUDIO_LATENCY); // measured latency in seconds
   const playRequestedAt = useRef(null);
   const lastCorrectionRef = useRef(0);
-  const CORRECTION_COOLDOWN = 800; // ms (reduced from 1500 for more frequent corrections)
+  const CORRECTION_COOLDOWN = 1500; // ms
   const correctionInProgressRef = useRef(false);
   const [displayedCurrentTime, setDisplayedCurrentTime] = useState(0);
 
@@ -243,7 +243,7 @@ export default function AudioPlayer({
   const [direction, setDirection] = useState('up');
 
   // Jitter buffer: only correct drift if sustained for N checks
-  const DRIFT_JITTER_BUFFER = 2; // number of consecutive drift detections required (reduced from 3 for faster response)
+  const DRIFT_JITTER_BUFFER = 3; // number of consecutive drift detections required (was 1)
   const driftCountRef = useRef(0);
 
   useEffect(() => {
@@ -541,7 +541,7 @@ export default function AudioPlayer({
 
     let lastDrift = 0;
     let lastCorrection = 0;
-    let correctionCooldown = 800; // ms, minimum time between corrections (reduced from 1200)
+    let correctionCooldown = 1200; // ms, minimum time between corrections
 
     const interval = setInterval(() => {
       socket.emit('sync_request', { sessionId: socket.sessionId }, (state) => {
@@ -627,49 +627,10 @@ export default function AudioPlayer({
           setSyncStatus('In Sync');
         }
       });
-    }, 600); // Drift check interval reduced to 600ms for more responsive sync
+    }, 800); // Drift check interval set to 800ms
 
     return () => clearInterval(interval);
   }, [socket, isController, getServerTime, audioLatency, clientId]);
-
-  // Additional high-frequency sync check when audio is actively playing (for followers)
-  useEffect(() => {
-    if (!socket || isController || !isPlaying) return;
-
-    const interval = setInterval(() => {
-      socket.emit('sync_request', { sessionId: socket.sessionId }, (state) => {
-        if (
-          !state ||
-          typeof state.timestamp !== 'number' ||
-          typeof state.lastUpdated !== 'number' ||
-          !isFinite(state.timestamp) ||
-          !isFinite(state.lastUpdated)
-        ) {
-          return;
-        }
-
-        const audio = audioRef.current;
-        if (!audio || audio.paused) return;
-
-        const syncedNow = getNow(getServerTime);
-        const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000;
-        const drift = Math.abs(audio.currentTime - expectedSynced);
-
-        // More aggressive correction for active playback
-        if (drift > DRIFT_THRESHOLD * 0.5) { // Lower threshold for active playback
-          driftCountRef.current += 1;
-          if (driftCountRef.current >= 1) { // Immediate correction for active playback
-            maybeCorrectDrift(audio, expectedSynced);
-            driftCountRef.current = 0;
-          }
-        } else {
-          driftCountRef.current = 0;
-        }
-      });
-    }, 400); // Very frequent checks during active playback
-
-    return () => clearInterval(interval);
-  }, [socket, isController, isPlaying, getServerTime, audioLatency, clientId]);
 
   // Enhanced: On mount, immediately request sync state on join, with improved error handling, logging, and edge case resilience
   useEffect(() => {
@@ -798,22 +759,6 @@ export default function AudioPlayer({
       }
       try {
         socket.emit('play', payload);
-        
-        // Enhanced: Add immediate sync state broadcast for better timing
-        setTimeout(() => {
-          if (socket && socket.emit) {
-            const audio = audioRef.current;
-            const now = getNow(getServerTime);
-            socket.emit('sync_state_broadcast', {
-              sessionId: socket.sessionId,
-              isPlaying: true,
-              timestamp: audio ? audio.currentTime : 0,
-              lastUpdated: now,
-              controllerId: socket.id,
-              serverTime: now
-            });
-          }
-        }, 50); // Small delay to ensure play event is processed first
       } catch (err) {
         if (process.env.NODE_ENV === 'development') {
           // eslint-disable-next-line no-console
@@ -838,22 +783,6 @@ export default function AudioPlayer({
       }
       try {
         socket.emit('pause', payload);
-        
-        // Enhanced: Add immediate sync state broadcast for better timing
-        setTimeout(() => {
-          if (socket && socket.emit) {
-            const audio = audioRef.current;
-            const now = getNow(getServerTime);
-            socket.emit('sync_state_broadcast', {
-              sessionId: socket.sessionId,
-              isPlaying: false,
-              timestamp: audio ? audio.currentTime : 0,
-              lastUpdated: now,
-              controllerId: socket.id,
-              serverTime: now
-            });
-          }
-        }, 50); // Small delay to ensure pause event is processed first
       } catch (err) {
         if (process.env.NODE_ENV === 'development') {
           // eslint-disable-next-line no-console
@@ -1162,10 +1091,7 @@ export default function AudioPlayer({
         const onPlaying = () => {
           const end = performance.now();
           const measuredLatency = (end - start) / 1000; // in seconds
-          // Use a weighted average for more stable latency measurement
-          const currentLatency = audioLatency;
-          const newLatency = currentLatency * 0.7 + measuredLatency * 0.3; // 70% old, 30% new
-          setAudioLatency(newLatency);
+          setAudioLatency(measuredLatency);
 
           // Clean up
           audio.removeEventListener('playing', onPlaying);
@@ -1182,7 +1108,7 @@ export default function AudioPlayer({
 
           if (process.env.NODE_ENV === 'development') {
             // eslint-disable-next-line no-console
-            console.log('[AudioPlayer][LatencyCalibration] Measured latency:', measuredLatency.toFixed(3), 's, averaged to:', newLatency.toFixed(3), 's');
+            console.log('[AudioPlayer][LatencyCalibration] Measured latency:', measuredLatency, 'seconds');
           }
         };
 
@@ -1284,10 +1210,10 @@ export default function AudioPlayer({
     if (!audio.paused) {
       const before = audio.currentTime;
       const drift = expected - before;
-      // Enhanced drift correction with multiple strategies
+      // Ultra-micro-correction for very small drifts
       if (Math.abs(drift) < MICRO_DRIFT_THRESHOLD) {
-        // Ultra-micro-correction for very small drifts using playbackRate
-        const rate = 1 + Math.max(-MICRO_RATE_CAP, Math.min(MICRO_RATE_CAP, drift * 0.8));
+        // Calculate a very gentle playbackRate adjustment (ultra-micro)
+        const rate = 1 + Math.max(-MICRO_RATE_CAP, Math.min(MICRO_RATE_CAP, drift * 0.7));
         audio.playbackRate = rate;
         if (process.env.NODE_ENV === 'development') {
           // eslint-disable-next-line no-console
@@ -1296,21 +1222,8 @@ export default function AudioPlayer({
         setTimeout(() => {
           audio.playbackRate = 1;
           correctionInProgressRef.current = false;
-        }, MICRO_CORRECTION_WINDOW);
+        }, MICRO_CORRECTION_WINDOW); // ultra-micro correction window
         return { corrected: true, micro: true, before, after: expected, drift, rate };
-      } else if (Math.abs(drift) < DRIFT_THRESHOLD * 0.6) {
-        // Medium drift: use gradual playbackRate adjustment
-        const rate = 1 + Math.max(-MICRO_RATE_CAP * 1.5, Math.min(MICRO_RATE_CAP * 1.5, drift * 0.6));
-        audio.playbackRate = rate;
-        if (process.env.NODE_ENV === 'development') {
-          // eslint-disable-next-line no-console
-          console.log('[DriftCorrection] Medium drift correction with playbackRate', rate, 'for drift', drift);
-        }
-        setTimeout(() => {
-          audio.playbackRate = 1;
-          correctionInProgressRef.current = false;
-        }, MICRO_CORRECTION_WINDOW * 1.5);
-        return { corrected: true, medium: true, before, after: expected, drift, rate };
       } else {
         setCurrentTimeSafely(audio, expected, setCurrentTime);
         lastCorrectionRef.current = now;
