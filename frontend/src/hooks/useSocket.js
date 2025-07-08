@@ -32,7 +32,7 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
   const clientId = getClientId();
 
   // --- NTP-like multi-round time sync before joining session ---
-  async function ntpBatchSync(socket, rounds = 8) {
+  async function ntpBatchSync(socket, rounds = 16) {
     const samples = [];
     for (let i = 0; i < rounds; i++) {
       const now = Date.now();
@@ -48,41 +48,22 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
               typeof data.clientSent === 'number'
             ) {
               const clientReceived = Date.now();
-              // Use midpoint between serverReceived and serverProcessed for more accurate offset
               const serverMid = (data.serverReceived + data.serverProcessed) / 2;
               const roundTrip = clientReceived - data.clientSent;
-              if (roundTrip > MAX_RTT) return resolve(); // Ignore high RTT
+              if (roundTrip > MAX_RTT) return resolve();
               const offset = serverMid - clientReceived;
               samples.push({ offset, rtt: roundTrip });
-            } else if (
-              data &&
-              typeof data.serverTime === 'number' &&
-              typeof data.clientSent === 'number'
-            ) {
-              // Fallback to old method if serverReceived/Processed missing
-              const clientReceived = Date.now();
-              const roundTrip = clientReceived - data.clientSent;
-              if (roundTrip > MAX_RTT) return resolve();
-              const estimatedServerTime = data.serverTime + roundTrip / 2;
-              const offset = estimatedServerTime - clientReceived;
-              samples.push({ offset, rtt: roundTrip });
             }
-            setTimeout(resolve, 20); // Small delay between rounds
+            setTimeout(resolve, 20);
           }
         );
       });
     }
-    if (samples.length < 4) return; // Not enough samples
+    if (samples.length < 8) return; // Not enough samples
     samples.sort((a, b) => a.rtt - b.rtt);
-    const trimmed = samples.slice(2, -2); // Remove top/bottom 2 RTTs
-    // Weighted offset calculation: 50% lowest, 30% second, 20% third
-    let avgOffset;
-    if (trimmed.length >= 3) {
-      const [best, second, third] = trimmed;
-      avgOffset = (best.offset * 0.5 + second.offset * 0.3 + third.offset * 0.2) / 1.0;
-    } else {
-      avgOffset = trimmed.reduce((sum, s) => sum + s.offset, 0) / trimmed.length;
-    }
+    const trim = Math.floor(samples.length * 0.25);
+    const trimmed = samples.slice(trim, samples.length - trim);
+    const avgOffset = trimmed.reduce((sum, s) => sum + s.offset, 0) / trimmed.length;
     const avgRtt = trimmed.reduce((sum, s) => sum + s.rtt, 0) / trimmed.length;
     setTimeOffset(avgOffset);
     setRtt(avgRtt);
@@ -321,11 +302,9 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
   // --- Continuous Adaptive Sync: periodic NTP batch in background ---
   useEffect(() => {
     if (!socketRef.current || !connected || !sessionId) return;
-    let interval;
-    // Periodic NTP batch sync every 20 seconds
-    interval = setInterval(() => {
+    let interval = setInterval(() => {
       ntpBatchSync(socketRef.current);
-    }, 20000);
+    }, 25000); // every 25 seconds
     // Trigger NTP batch sync on tab focus or network reconnect
     function handleVisibilityChange() {
       if (document.visibilityState === 'visible') {

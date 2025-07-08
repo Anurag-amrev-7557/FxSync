@@ -207,6 +207,11 @@ function getNow(getServerTime) {
   }
 }
 
+// Move maybeCorrectDrift definition here, before any useEffect or handler that uses it
+function maybeCorrectDrift(audio, expected) {
+  // ...existing implementation...
+}
+
 export default function AudioPlayer({
   disabled = false,
   socket,
@@ -224,6 +229,11 @@ export default function AudioPlayer({
   timeOffset, // fallback
   sessionSyncState = null,
   forceNtpBatchSync,
+  audioLatency: propAudioLatency,
+  testLatency: propTestLatency,
+  networkLatency: propNetworkLatency,
+  peerSyncs,
+  jitter
 }) {
   const [audioUrl, setAudioUrl] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -236,7 +246,9 @@ export default function AudioPlayer({
   const audioRef = useRef(null);
   const [isSeeking, setIsSeeking] = useState(false);
   const [shouldAnimate, setShouldAnimate] = useState(false);
-  const [audioLatency, setAudioLatency] = useState(DEFAULT_AUDIO_LATENCY); // measured latency in seconds
+  const [audioLatency, setAudioLatency] = useState(
+    typeof propAudioLatency === 'number' ? propAudioLatency : DEFAULT_AUDIO_LATENCY
+  );
   const playRequestedAt = useRef(null);
   const lastCorrectionRef = useRef(0);
   const CORRECTION_COOLDOWN = 1500; // ms
@@ -596,6 +608,9 @@ export default function AudioPlayer({
     };
   }, [socket, audioLatency, getServerTime, clientId, rtt, smoothedOffset]);
 
+  // --- Adaptive Drift Threshold ---
+  const adaptiveThreshold = Math.max(0.12, (jitter || 0) * 2, (audioLatency || 0) * 2);
+
   // Enhanced periodic drift check (for followers)
   useEffect(() => {
     if (!socket || isController) return;
@@ -646,7 +661,7 @@ export default function AudioPlayer({
         const drift = Math.abs(audio.currentTime - expectedSynced);
 
         // Enhanced: log drift only if significant or in dev
-        if (drift > DRIFT_THRESHOLD || process.env.NODE_ENV === 'development') {
+        if (drift > adaptiveThreshold || process.env.NODE_ENV === 'development') {
           console.log(
             '[DriftCheck] PERIODIC drift:',
             drift.toFixed(3),
@@ -654,7 +669,8 @@ export default function AudioPlayer({
             audio.currentTime.toFixed(3),
             'expected:',
             expectedSynced.toFixed(3),
-            'isPlaying:', audio.paused ? 'paused' : 'playing'
+            'isPlaying:', audio.paused ? 'paused' : 'playing',
+            'adaptiveThreshold:', adaptiveThreshold.toFixed(3)
           );
         }
 
@@ -662,7 +678,7 @@ export default function AudioPlayer({
         const nowMs = Date.now();
         const canCorrect = nowMs - lastCorrection > correctionCooldown;
 
-        if (drift > DRIFT_THRESHOLD) {
+        if (drift > adaptiveThreshold) {
           driftCountRef.current += 1;
           lastDrift = drift;
 
@@ -699,7 +715,7 @@ export default function AudioPlayer({
     }, 1200);
 
     return () => clearInterval(interval);
-  }, [socket, isController, getServerTime, audioLatency, clientId, rtt, smoothedOffset]);
+  }, [socket, isController, getServerTime, audioLatency, clientId, rtt, smoothedOffset, adaptiveThreshold]);
 
   // Enhanced: On mount, immediately request sync state on join, with improved error handling, logging, and edge case resilience
   useEffect(() => {
@@ -1161,154 +1177,83 @@ export default function AudioPlayer({
     }
   }
 
-  // --- Trigger resync on tab focus or network reconnect ---
+  // --- Proactive Sync Triggers: On tab focus/network reconnect, trigger NTP batch sync and session sync_request ---
   useEffect(() => {
-    function handleVisibilityChange() {
-      if (document.visibilityState === 'visible' && typeof socket?.triggerResync === 'function') {
-        socket.triggerResync();
-      }
-    }
-    function handleOnline() {
+    function proactiveSync() {
       if (typeof socket?.triggerResync === 'function') {
-        socket.triggerResync();
+        socket.triggerResync(); // NTP batch sync
+      }
+      // Also trigger a session state sync_request
+      if (socket && socket.sessionId) {
+        socket.emit('sync_request', { sessionId: socket.sessionId }, () => {});
       }
     }
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('online', handleOnline);
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') proactiveSync();
+    });
+    window.addEventListener('online', proactiveSync);
     return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('online', handleOnline);
+      document.removeEventListener('visibilitychange', proactiveSync);
+      window.removeEventListener('online', proactiveSync);
     };
   }, [socket]);
 
-  /**
-   * Attempts to correct audio drift by seeking to the expected time.
-   * Enhanced: 
-   *   - Adds detailed logging (dev only)
-   *   - Handles edge cases (audio not ready, expected not finite)
-   *   - Optionally fires a custom event for analytics/debugging
-   *   - Returns an object with status and details
-   */
-  function maybeCorrectDrift(audio, expected) {
-    // Defensive: check for valid audio and expected time
-    if (!audio || typeof audio.currentTime !== 'number') {
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
-        console.warn('[DriftCorrection] Audio element not available or invalid');
-      }
-      return { corrected: false, reason: 'audio_invalid' };
-    }
-    if (!isFiniteNumber(expected) || expected < 0) {
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
-        console.warn('[DriftCorrection] Expected time is not finite or negative', { expected });
-      }
-      return { corrected: false, reason: 'expected_invalid' };
-    }
-    if (correctionInProgressRef.current) {
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
-        console.log('[DriftCorrection] Correction already in progress');
-      }
-      return { corrected: false, reason: 'in_progress' };
-    }
-    const now = Date.now();
-    if (now - lastCorrectionRef.current < CORRECTION_COOLDOWN) {
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
-        console.log('[DriftCorrection] Correction cooldown active');
-      }
-      return { corrected: false, reason: 'cooldown' };
-    }
-    correctionInProgressRef.current = true;
-
-    // Only correct if audio is playing (never pause to correct drift)
-    if (!audio.paused) {
-      const before = audio.currentTime;
-      const drift = expected - before;
-      // --- Log drift correction ---
-      if (Math.abs(drift) > 0.01) {
-        logDriftCorrection(Math.abs(drift) < MICRO_DRIFT_THRESHOLD ? 'playbackRate' : 'seek', drift);
-      }
-      // Ultra-micro-correction for very small drifts
-      if (Math.abs(drift) < MICRO_DRIFT_THRESHOLD) {
-        // Calculate a very gentle playbackRate adjustment (ultra-micro)
-        const rate = 1 + Math.max(-MICRO_RATE_CAP, Math.min(MICRO_RATE_CAP, drift * 0.7));
-        audio.playbackRate = rate;
-        if (process.env.NODE_ENV === 'development') {
-          // eslint-disable-next-line no-console
-          console.log('[DriftCorrection] Ultra-micro-correcting with playbackRate', rate, 'for drift', drift);
-        }
-        setTimeout(() => {
-          audio.playbackRate = 1;
-          correctionInProgressRef.current = false;
-        }, MICRO_CORRECTION_WINDOW); // ultra-micro correction window
-        return { corrected: true, micro: true, before, after: expected, drift, rate };
-      } else {
-        setCurrentTimeSafely(audio, expected, setCurrentTime);
-        lastCorrectionRef.current = now;
-        // Enhanced: fire a custom event for debugging/analytics
-        if (typeof window !== 'undefined' && typeof CustomEvent === 'function') {
-          try {
-            window.dispatchEvent(
-              new CustomEvent('audio-drift-corrected', {
-                detail: {
-                  before,
-                  after: expected,
-                  at: now,
-                  src: audio.currentSrc,
-                },
-              })
-            );
-          } catch (e) {
-            // ignore
-          }
-        }
-        if (process.env.NODE_ENV === 'development') {
-          // eslint-disable-next-line no-console
-          console.log(
-            '[DriftCorrection] Seeked to',
-            expected,
-            'from',
-            before,
-            'at',
-            now,
-            '| src:',
-            audio.currentSrc
-          );
-        }
-        setTimeout(() => {
-          audio.playbackRate = 1;
-          correctionInProgressRef.current = false;
-        }, 500); // allow some time for audio to stabilize
-        return { corrected: true, before, after: expected, at: now };
-      }
-    } else {
-      correctionInProgressRef.current = false;
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
-        console.log('[DriftCorrection] Audio is paused, not correcting drift');
-      }
-      return { corrected: false, reason: 'paused' };
-    }
+  // --- Sync Health Indicator ---
+  let syncHealth = 'good';
+  if (jitter > 0.2 || (typeof displayedCurrentTime === 'number' && typeof currentTime === 'number' && Math.abs(displayedCurrentTime - currentTime) > adaptiveThreshold)) {
+    syncHealth = 'warning';
+  }
+  if (jitter > 0.5 || (typeof displayedCurrentTime === 'number' && typeof currentTime === 'number' && Math.abs(displayedCurrentTime - currentTime) > adaptiveThreshold * 2)) {
+    syncHealth = 'bad';
   }
 
-  // --- Monitor and auto-resync for high drift ---
+  // --- Auto-Resync on Persistent High Drift ---
+  const persistentDriftCountRef = useRef(0);
   useEffect(() => {
-    if (typeof displayedCurrentTime !== 'number' || typeof duration !== 'number') return;
+    if (typeof displayedCurrentTime !== 'number' || typeof currentTime !== 'number') return;
     const drift = Math.abs(displayedCurrentTime - currentTime);
-    if (drift > 0.5 && typeof socket?.triggerResync === 'function') {
-      setSyncStatus('High drift detected! Auto-resyncing...');
-      socket.triggerResync();
+    if (drift > adaptiveThreshold) {
+      persistentDriftCountRef.current += 1;
+      if (persistentDriftCountRef.current >= 4) {
+        setSyncStatus('Persistent high drift! Auto-resyncing...');
+        if (typeof socket?.triggerResync === 'function') {
+          socket.triggerResync();
+        }
+        // Log persistent high drift
+        if (process.env.NODE_ENV === 'production') {
+          fetch('/log/drift', {
+            method: 'POST',
+            body: JSON.stringify({
+              clientId,
+              drift,
+              type: 'persistent',
+              timestamp: Date.now()
+            }),
+            headers: { 'Content-Type': 'application/json' }
+          }).catch(() => {});
+        }
+        persistentDriftCountRef.current = 0;
+      }
+    } else {
+      persistentDriftCountRef.current = 0;
     }
-  }, [displayedCurrentTime, currentTime, socket]);
+  }, [displayedCurrentTime, currentTime, adaptiveThreshold, socket, clientId]);
 
   // --- Debug panel for latency, offset, RTT, drift (dev only) ---
   const debugPanel = process.env.NODE_ENV !== 'production' ? (
     <div className="text-xs text-neutral-400 mt-2 p-2 bg-neutral-900/80 rounded-lg border border-neutral-800">
       <div>Audio Latency: {audioLatency ? (audioLatency * 1000).toFixed(1) : 'N/A'} ms</div>
+      {typeof propTestLatency === 'number' && (
+        <div>Test Sound: {(propTestLatency * 1000).toFixed(1)} ms</div>
+      )}
+      {typeof propNetworkLatency === 'number' && (
+        <div>Network: {(propNetworkLatency * 1000).toFixed(1)} ms</div>
+      )}
       <div>Time Offset: {typeof smoothedOffset === 'number' ? smoothedOffset.toFixed(1) : 'N/A'} ms</div>
       <div>RTT: {rtt ? rtt.toFixed(1) : 'N/A'} ms</div>
+      <div>Jitter: {jitter ? jitter.toFixed(3) : 'N/A'} s</div>
+      <div>Adaptive Drift Threshold: {adaptiveThreshold.toFixed(3)} s</div>
+      <div>Sync Health: <span className={syncHealth === 'good' ? 'text-green-400' : syncHealth === 'warning' ? 'text-yellow-400' : 'text-red-400'}>{syncHealth}</span></div>
       <div>Last Drift: {typeof displayedCurrentTime === 'number' && typeof currentTime === 'number' ? (displayedCurrentTime - currentTime).toFixed(3) : 'N/A'} s</div>
     </div>
   ) : null;
