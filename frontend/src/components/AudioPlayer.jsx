@@ -909,6 +909,8 @@ export default function AudioPlayer({
         console.log('[AudioPlayer][handlePlay] Play triggered successfully');
       }
     } catch (err) {
+      // Suppress AbortError (play() interrupted by pause())
+      if (err && err.name === 'AbortError') return;
       setIsPlaying(false);
       if (process.env.NODE_ENV === 'development') {
         // eslint-disable-next-line no-console
@@ -1143,6 +1145,42 @@ export default function AudioPlayer({
     return () => cancelAnimationFrame(raf);
   }, [audioUrl]);
 
+  // --- Production logging for drift corrections ---
+  function logDriftCorrection(type, drift) {
+    if (process.env.NODE_ENV === 'production') {
+      fetch('/log/drift', {
+        method: 'POST',
+        body: JSON.stringify({
+          clientId,
+          drift,
+          correctionType: type,
+          timestamp: Date.now()
+        }),
+        headers: { 'Content-Type': 'application/json' }
+      }).catch(() => {});
+    }
+  }
+
+  // --- Trigger resync on tab focus or network reconnect ---
+  useEffect(() => {
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'visible' && typeof socket?.triggerResync === 'function') {
+        socket.triggerResync();
+      }
+    }
+    function handleOnline() {
+      if (typeof socket?.triggerResync === 'function') {
+        socket.triggerResync();
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('online', handleOnline);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('online', handleOnline);
+    };
+  }, [socket]);
+
   /**
    * Attempts to correct audio drift by seeking to the expected time.
    * Enhanced: 
@@ -1188,6 +1226,10 @@ export default function AudioPlayer({
     if (!audio.paused) {
       const before = audio.currentTime;
       const drift = expected - before;
+      // --- Log drift correction ---
+      if (Math.abs(drift) > 0.01) {
+        logDriftCorrection(Math.abs(drift) < MICRO_DRIFT_THRESHOLD ? 'playbackRate' : 'seek', drift);
+      }
       // Ultra-micro-correction for very small drifts
       if (Math.abs(drift) < MICRO_DRIFT_THRESHOLD) {
         // Calculate a very gentle playbackRate adjustment (ultra-micro)
@@ -1251,48 +1293,25 @@ export default function AudioPlayer({
     }
   }
 
-  // --- Micro-Drift Correction ---
+  // --- Monitor and auto-resync for high drift ---
   useEffect(() => {
-    if (!audioRef.current) return;
-    const audio = audioRef.current;
-    let interval;
-    function correctMicroDrift() {
-      if (!audio || isController) return;
-      // Estimate expected time using current sync logic
-      const now = getNow(getServerTime);
-      const rttComp = rtt ? rtt / 2000 : 0;
-      const expected = (sessionSyncState && typeof sessionSyncState.timestamp === 'number' && typeof sessionSyncState.lastUpdated === 'number')
-        ? sessionSyncState.timestamp + (now - sessionSyncState.lastUpdated) / 1000 - audioLatency + rttComp + smoothedOffset
-        : null;
-      if (!isFiniteNumber(expected)) return;
-      const drift = audio.currentTime - expected;
-      // Only apply micro-correction for small drifts
-      if (Math.abs(drift) > MICRO_DRIFT_MIN && Math.abs(drift) < MICRO_DRIFT_MAX) {
-        // Calculate playbackRate adjustment
-        let rateAdj = 1 - Math.max(-MICRO_RATE_CAP_MICRO, Math.min(MICRO_RATE_CAP_MICRO, drift / MICRO_DRIFT_MAX * MICRO_RATE_CAP_MICRO));
-        // Clamp to [1-MICRO_RATE_CAP_MICRO, 1+MICRO_RATE_CAP_MICRO]
-        rateAdj = Math.max(1 - MICRO_RATE_CAP_MICRO, Math.min(1 + MICRO_RATE_CAP_MICRO, rateAdj));
-        if (Math.abs(audio.playbackRate - rateAdj) > 0.0005) {
-          audio.playbackRate = rateAdj;
-          if (process.env.NODE_ENV === 'development') {
-            // eslint-disable-next-line no-console
-            console.log('[MicroDrift] Adjusting playbackRate to', rateAdj.toFixed(5), 'for drift', drift.toFixed(4));
-          }
-        }
-      } else {
-        // Restore playbackRate to normal if in sync or drift is too large
-        if (audio.playbackRate !== 1) {
-          audio.playbackRate = 1;
-          if (process.env.NODE_ENV === 'development') {
-            // eslint-disable-next-line no-console
-            console.log('[MicroDrift] Restoring playbackRate to 1.0');
-          }
-        }
-      }
+    if (typeof displayedCurrentTime !== 'number' || typeof duration !== 'number') return;
+    const drift = Math.abs(displayedCurrentTime - currentTime);
+    if (drift > 0.5 && typeof socket?.triggerResync === 'function') {
+      setSyncStatus('High drift detected! Auto-resyncing...');
+      socket.triggerResync();
     }
-    interval = setInterval(correctMicroDrift, MICRO_CORRECTION_WINDOW);
-    return () => clearInterval(interval);
-  }, [isController, sessionSyncState, audioLatency, rtt, smoothedOffset, getServerTime]);
+  }, [displayedCurrentTime, currentTime, socket]);
+
+  // --- Debug panel for latency, offset, RTT, drift (dev only) ---
+  const debugPanel = process.env.NODE_ENV !== 'production' ? (
+    <div className="text-xs text-neutral-400 mt-2 p-2 bg-neutral-900/80 rounded-lg border border-neutral-800">
+      <div>Audio Latency: {audioLatency ? (audioLatency * 1000).toFixed(1) : 'N/A'} ms</div>
+      <div>Time Offset: {typeof smoothedOffset === 'number' ? smoothedOffset.toFixed(1) : 'N/A'} ms</div>
+      <div>RTT: {rtt ? rtt.toFixed(1) : 'N/A'} ms</div>
+      <div>Last Drift: {typeof displayedCurrentTime === 'number' && typeof currentTime === 'number' ? (displayedCurrentTime - currentTime).toFixed(3) : 'N/A'} s</div>
+    </div>
+  ) : null;
 
   // --- MOBILE REDESIGN ---
   if (mobile) {
@@ -1425,6 +1444,7 @@ export default function AudioPlayer({
               </span>
             </button>
           </div>
+          {debugPanel}
         </div>
         </div>
       </div>
@@ -1596,6 +1616,7 @@ export default function AudioPlayer({
             )}
           </div>
         </div>
+        {debugPanel}
       </div>
     </div>
   );

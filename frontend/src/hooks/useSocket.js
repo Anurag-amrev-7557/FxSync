@@ -86,6 +86,19 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
     const avgRtt = trimmed.reduce((sum, s) => sum + s.rtt, 0) / trimmed.length;
     setTimeOffset(avgOffset);
     setRtt(avgRtt);
+    // --- Production logging for diagnostics ---
+    if (process.env.NODE_ENV === 'production') {
+      fetch('/log/sync-diagnostics', {
+        method: 'POST',
+        body: JSON.stringify({
+          clientId,
+          timeOffset: avgOffset,
+          rtt: avgRtt,
+          timestamp: Date.now()
+        }),
+        headers: { 'Content-Type': 'application/json' }
+      }).catch(() => {});
+    }
   }
 
   // Further enhanced time sync logic with drift smoothing, error handling, diagnostics, and visibility/reactivity improvements
@@ -331,6 +344,33 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
     };
   }, [connected, sessionId]);
 
+  // --- Heartbeat/Ping Mechanism ---
+  useEffect(() => {
+    if (!socketRef.current) return;
+    let lastPong = Date.now();
+    let interval = setInterval(() => {
+      socketRef.current.emit('ping', { clientId, timestamp: Date.now() }, (pong) => {
+        if (pong && pong.serverTime) {
+          lastPong = Date.now();
+        } else {
+          // If no pong or pong is late, trigger resync
+          if (Date.now() - lastPong > 3000) {
+            if (typeof window !== 'undefined' && window.__forceTimeSync) {
+              window.__forceTimeSync();
+            }
+          }
+        }
+      });
+      // If pong is late, trigger resync
+      if (Date.now() - lastPong > 3000) {
+        if (typeof window !== 'undefined' && window.__forceTimeSync) {
+          window.__forceTimeSync();
+        }
+      }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [clientId]);
+
   useEffect(() => {
     if (!sessionId) {
       console.warn('[useSocket] No sessionId provided, skipping socket connection.');
@@ -534,6 +574,11 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
     return serverTimestamp;
   }
 
+  // --- Expose a function for AudioPlayer to trigger resync ---
+  function triggerResync() {
+    forceNtpBatchSync();
+  }
+
   // Enhanced return object with more diagnostics, utility methods, and controller status
   return {
     socket: socketRef.current,
@@ -598,5 +643,6 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
       }
     },
     forceNtpBatchSync,
+    triggerResync,
   };
 } 
