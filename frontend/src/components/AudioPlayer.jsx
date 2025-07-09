@@ -15,13 +15,13 @@ if (typeof window !== 'undefined' && !window._audioPlayerErrorHandlerAdded) {
   window._audioPlayerErrorHandlerAdded = true;
 }
 
-const DRIFT_THRESHOLD = 0.12; // seconds (was 0.3)
+const DRIFT_THRESHOLD = 0.25; // seconds (increased from 0.12)
 const PLAY_OFFSET = 0.35; // seconds (350ms future offset for play events)
 const DEFAULT_AUDIO_LATENCY = 0.08; // 80ms fallback if not measured
 const MICRO_DRIFT_THRESHOLD = 0.04; // seconds (was 0.08)
 const MICRO_RATE_CAP = 0.03; // max playbackRate delta (was 0.07)
 const MICRO_CORRECTION_WINDOW = 250; // ms (was 420)
-const DRIFT_JITTER_BUFFER = 2; // consecutive drift detections before correction
+const DRIFT_JITTER_BUFFER = 4; // consecutive drift detections before correction (increased from 2)
 const RESYNC_COOLDOWN_MS = 2000; // minimum time between manual resyncs
 const RESYNC_HISTORY_SIZE = 5; // number of recent resyncs to track
 const SMART_RESYNC_THRESHOLD = 0.5; // drift threshold for smart resync suggestion
@@ -201,34 +201,81 @@ function getNow(getServerTime) {
 }
 
 // Move maybeCorrectDrift definition here, before any useEffect or handler that uses it
-function microCorrectDrift(audio, drift) {
+function microCorrectDrift(audio, drift, context = {}, updateDebug) {
   if (!audio) return;
   if (Math.abs(drift) > MICRO_DRIFT_MIN && Math.abs(drift) < MICRO_DRIFT_MAX) {
-    // Calculate rate: e.g., 1.01 for small positive drift, 0.99 for negative
     let rate = 1 + Math.max(-MICRO_RATE_CAP, Math.min(MICRO_RATE_CAP, drift * 0.5));
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[DriftCorrection] microCorrectDrift', {
+        drift,
+        playbackRate: rate,
+        jitter: context.jitter,
+        audioLatency: context.audioLatency,
+        rtt: context.rtt,
+        correction: 'micro',
+        ...context
+      });
+    }
+    if (typeof updateDebug === 'function') updateDebug('micro', drift, context);
     audio.playbackRate = rate;
     setTimeout(() => {
-      audio.playbackRate = 1.0; // Reset after a short period
+      audio.playbackRate = 1.0;
     }, 500);
   } else {
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[DriftCorrection] microCorrectDrift skipped', {
+        drift,
+        jitter: context.jitter,
+        audioLatency: context.audioLatency,
+        rtt: context.rtt,
+        correction: 'micro-skip',
+        ...context
+      });
+    }
+    if (typeof updateDebug === 'function') updateDebug('micro-skip', drift, context);
     audio.playbackRate = 1.0;
   }
 }
 
-function maybeCorrectDrift(audio, expected) {
+function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
   if (!audio) return;
   const drift = audio.currentTime - expected;
-  // Micro-correction for small drifts
   if (Math.abs(drift) > MICRO_DRIFT_MIN && Math.abs(drift) < MICRO_DRIFT_MAX) {
-    microCorrectDrift(audio, drift);
+    microCorrectDrift(audio, drift, context, updateDebug);
     return;
   }
-  // Seek for larger drifts
   if (Math.abs(drift) >= MICRO_DRIFT_MAX) {
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[DriftCorrection] Hard seek', {
+        drift,
+        expected,
+        current: audio.currentTime,
+        jitter: context.jitter,
+        audioLatency: context.audioLatency,
+        rtt: context.rtt,
+        correction: 'seek',
+        ...context
+      });
+    }
+    if (typeof updateDebug === 'function') updateDebug('seek', drift, context);
     setCurrentTimeSafely(audio, expected, (val) => {
       audio.currentTime = val;
     });
     audio.playbackRate = 1.0;
+  } else {
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[DriftCorrection] No correction needed', {
+        drift,
+        expected,
+        current: audio.currentTime,
+        jitter: context.jitter,
+        audioLatency: context.audioLatency,
+        rtt: context.rtt,
+        correction: 'none',
+        ...context
+      });
+    }
+    if (typeof updateDebug === 'function') updateDebug('none', drift, context);
   }
 }
 
@@ -280,6 +327,11 @@ export default function AudioPlayer({
   const [displayedCurrentTime, setDisplayedCurrentTime] = useState(0);
   const lastSyncSeq = useRef(-1);
   const [syncReady, setSyncReady] = useState(false);
+
+  // Drift correction debug state (move here to ensure defined)
+  const [driftCorrectionHistory, setDriftCorrectionHistory] = useState([]);
+  const [driftCorrectionCount, setDriftCorrectionCount] = useState(0);
+  const [lastCorrectionType, setLastCorrectionType] = useState('none');
 
   // Add at the top of the component
   const eventDebounceRef = useRef({});
@@ -589,7 +641,16 @@ export default function AudioPlayer({
         driftCountRef.current += 1;
         if (driftCountRef.current >= DRIFT_JITTER_BUFFER) {
           showSyncStatus('Drifted', 1000);
-          maybeCorrectDrift(audio, expected);
+          maybeCorrectDrift(
+            audio,
+            expected,
+            { jitter, audioLatency, rtt, drift },
+            (type, driftVal, ctx) => {
+              setDriftCorrectionCount(c => c + 1);
+              setLastCorrectionType(type);
+              setDriftCorrectionHistory(h => [{ type, drift: driftVal, ctx, ts: Date.now() }, ...h.slice(0, 9)]);
+            }
+          );
           setSyncStatus('Re-syncing...');
           if (resyncTimeout) clearTimeout(resyncTimeout);
           resyncTimeout = setTimeout(() => setSyncStatus('In Sync'), 800);
@@ -691,7 +752,16 @@ export default function AudioPlayer({
 
           if (driftCountRef.current >= DRIFT_JITTER_BUFFER && canCorrect) {
             setSyncStatus('Drifted');
-            maybeCorrectDrift(audio, expectedSynced);
+            maybeCorrectDrift(
+              audio,
+              expectedSynced,
+              { jitter, audioLatency, rtt, drift },
+              (type, driftVal, ctx) => {
+                setDriftCorrectionCount(c => c + 1);
+                setLastCorrectionType(type);
+                setDriftCorrectionHistory(h => [{ type, drift: driftVal, ctx, ts: Date.now() }, ...h.slice(0, 9)]);
+              }
+            );
             setSyncStatus('Re-syncing...');
             setTimeout(() => setSyncStatus('In Sync'), 800);
 
@@ -1321,6 +1391,16 @@ export default function AudioPlayer({
       <div>Adaptive Drift Threshold: {adaptiveThreshold.toFixed(3)} s</div>
       <div>Sync Health: <span className={syncHealth === 'good' ? 'text-green-400' : syncHealth === 'warning' ? 'text-yellow-400' : 'text-red-400'}>{syncHealth}</span></div>
       <div>Last Drift: {typeof displayedCurrentTime === 'number' && typeof currentTime === 'number' ? (displayedCurrentTime - currentTime).toFixed(3) : 'N/A'} s</div>
+      <div>Drift Corrections: {driftCorrectionCount}</div>
+      <div>Last Correction Type: {lastCorrectionType}</div>
+      <div>Correction History:</div>
+      <ul className="max-h-24 overflow-y-auto text-xs">
+        {driftCorrectionHistory.map((item, idx) => (
+          <li key={item.ts + '-' + idx}>
+            [{new Date(item.ts).toLocaleTimeString()}] {item.type} | drift: {item.drift?.toFixed(3)} | jitter: {item.ctx?.jitter?.toFixed(3)} | rtt: {item.ctx?.rtt?.toFixed(1)}
+          </li>
+        ))}
+      </ul>
     </div>
   ) : null;
 

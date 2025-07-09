@@ -78,9 +78,15 @@ router.post('/upload', upload.single('music'), async (req, res) => {
   res.json({ url: fileUrl, filename: req.file.filename, albumArtUrl });
 });
 
-// Serve uploaded files and covers
-router.use('/uploads', express.static(uploadsDir));
-router.use('/covers', express.static(coversDir));
+// Serve uploaded files and covers with cache headers
+router.use('/uploads', (req, res, next) => {
+  res.set('Cache-Control', 'public, max-age=86400, immutable'); // 1 day cache
+  next();
+}, express.static(uploadsDir));
+router.use('/covers', (req, res, next) => {
+  res.set('Cache-Control', 'public, max-age=86400, immutable');
+  next();
+}, express.static(coversDir));
 
 // List all tracks (user uploads + samples)
 router.get('/all-tracks', (req, res) => {

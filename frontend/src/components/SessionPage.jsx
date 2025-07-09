@@ -702,14 +702,15 @@ function SessionPage({
                         clients={clients}
                         getServerTime={getServerTime}
                         currentTrack={currentTrack}
-                        rtt={rtt}
+                        rtt={liveRtt}
+                        timeOffset={liveTimeOffset}
+                        jitter={liveJitter}
+                        peerSyncs={peerSyncs}
                         sessionSyncState={sessionSyncState}
                         forceNtpBatchSync={forceNtpBatchSync}
                         audioLatency={audioLatency}
                         testLatency={testLatency}
                         networkLatency={networkLatency}
-                        peerSyncs={peerSyncs}
-                        jitter={liveJitter}
                         queue={queue}
                         selectedTrackIdx={selectedTrackIdx}
                         onPrevTrack={handlePrevTrack}
@@ -845,14 +846,15 @@ function SessionPage({
                         mobile={true}
                         isAudioTabActive={mobileTab === 0}
                         currentTrack={currentTrack}
-                        rtt={rtt}
+                        rtt={liveRtt}
+                        timeOffset={liveTimeOffset}
+                        jitter={liveJitter}
+                        peerSyncs={peerSyncs}
                         sessionSyncState={sessionSyncState}
                         forceNtpBatchSync={forceNtpBatchSync}
                         audioLatency={audioLatency}
                         testLatency={testLatency}
                         networkLatency={networkLatency}
-                        peerSyncs={peerSyncs}
-                        jitter={liveJitter}
                         queue={queue}
                         selectedTrackIdx={selectedTrackIdx}
                         onPrevTrack={handlePrevTrack}
@@ -887,14 +889,15 @@ function SessionPage({
                         mobile={true}
                         isAudioTabActive={mobileTab === 1}
                         currentTrack={currentTrack}
-                        rtt={rtt}
+                        rtt={liveRtt}
+                        timeOffset={liveTimeOffset}
+                        jitter={liveJitter}
+                        peerSyncs={peerSyncs}
                         sessionSyncState={sessionSyncState}
                         forceNtpBatchSync={forceNtpBatchSync}
                         audioLatency={audioLatency}
                         testLatency={testLatency}
                         networkLatency={networkLatency}
-                        peerSyncs={peerSyncs}
-                        jitter={liveJitter}
                         queue={queue}
                         selectedTrackIdx={selectedTrackIdx}
                         onPrevTrack={handlePrevTrack}
