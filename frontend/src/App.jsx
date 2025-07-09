@@ -68,9 +68,34 @@ function App() {
     window.history.pushState({}, '', window.location.origin)
   }
 
+  // Global device change recalibration prompt
+  const [showRecalibratePrompt, setShowRecalibratePrompt] = useState(false);
+  useEffect(() => {
+    function handleDeviceChange() {
+      setShowRecalibratePrompt(true);
+    }
+    if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+      navigator.mediaDevices.addEventListener('devicechange', handleDeviceChange);
+      return () => navigator.mediaDevices.removeEventListener('devicechange', handleDeviceChange);
+    }
+  }, []);
+  function handleRecalibrate() {
+    setShowRecalibratePrompt(false);
+    // Dispatch a global event for calibration (to be handled elsewhere)
+    window.dispatchEvent(new Event('startCalibration'));
+  }
+
   return (
     <Router>
       <div className="app-container">
+        {showRecalibratePrompt && (
+          <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-yellow-600 text-white px-4 py-2 rounded shadow z-50 flex items-center gap-2">
+            <span>Audio output device changed.</span>
+            <button onClick={handleRecalibrate} className="underline font-semibold">Recalibrate</button>
+            <span>for best sync.</span>
+            <button onClick={() => setShowRecalibratePrompt(false)} className="ml-2 text-white/70 hover:text-white">&times;</button>
+          </div>
+        )}
         <Routes>
           <Route
             path="/"

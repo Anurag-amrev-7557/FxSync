@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import SyncStatus from './SyncStatus';
 import useSmoothAppearance from '../hooks/useSmoothAppearance';
 import LoadingSpinner from './LoadingSpinner';
@@ -25,6 +25,7 @@ const DRIFT_JITTER_BUFFER = 2; // consecutive drift detections before correction
 const RESYNC_COOLDOWN_MS = 2000; // minimum time between manual resyncs
 const RESYNC_HISTORY_SIZE = 5; // number of recent resyncs to track
 const SMART_RESYNC_THRESHOLD = 0.5; // drift threshold for smart resync suggestion
+// Micro drift correction constants
 const MICRO_DRIFT_MIN = 0.01; // 10ms
 const MICRO_DRIFT_MAX = 0.1;  // 100ms
 const MICRO_RATE_CAP_MICRO = 0.003; // max playbackRate delta for micro-correction
@@ -75,10 +76,6 @@ function setCurrentTimeSafely(audio, value, setCurrentTime) {
         setCurrentTime(value);
         // Optionally, fire a custom event for debugging
         // audio.dispatchEvent(new CustomEvent('currentTimeSetSafely', { detail: { value, eventType } }));
-        // Enhanced: log only in dev
-        if (process.env.NODE_ENV === 'development') {
-          console.log(`[setCurrentTimeSafely] Set currentTime (${eventType})`, { ...context, actual: audio.currentTime });
-        }
       }
     } catch (e) {
       console.warn(`[setCurrentTimeSafely] Failed to set currentTime (${eventType}):`, context, e);
@@ -100,10 +97,6 @@ function setCurrentTimeSafely(audio, value, setCurrentTime) {
     if (value === 0 && audio.src && !audio.src.includes('forceReload')) {
       // Append a dummy query param to force reload
       audio.src = audio.src + (audio.src.includes('?') ? '&' : '?') + 'forceReload=' + Date.now();
-      // Optionally, log
-      if (process.env.NODE_ENV === 'development') {
-        console.log('[setCurrentTimeSafely] Forcing reload due to NaN duration', logContext);
-      }
     }
   }
 
@@ -208,8 +201,35 @@ function getNow(getServerTime) {
 }
 
 // Move maybeCorrectDrift definition here, before any useEffect or handler that uses it
+function microCorrectDrift(audio, drift) {
+  if (!audio) return;
+  if (Math.abs(drift) > MICRO_DRIFT_MIN && Math.abs(drift) < MICRO_DRIFT_MAX) {
+    // Calculate rate: e.g., 1.01 for small positive drift, 0.99 for negative
+    let rate = 1 + Math.max(-MICRO_RATE_CAP, Math.min(MICRO_RATE_CAP, drift * 0.5));
+    audio.playbackRate = rate;
+    setTimeout(() => {
+      audio.playbackRate = 1.0; // Reset after a short period
+    }, 500);
+  } else {
+    audio.playbackRate = 1.0;
+  }
+}
+
 function maybeCorrectDrift(audio, expected) {
-  // ...existing implementation...
+  if (!audio) return;
+  const drift = audio.currentTime - expected;
+  // Micro-correction for small drifts
+  if (Math.abs(drift) > MICRO_DRIFT_MIN && Math.abs(drift) < MICRO_DRIFT_MAX) {
+    microCorrectDrift(audio, drift);
+    return;
+  }
+  // Seek for larger drifts
+  if (Math.abs(drift) >= MICRO_DRIFT_MAX) {
+    setCurrentTimeSafely(audio, expected, (val) => {
+      audio.currentTime = val;
+    });
+    audio.playbackRate = 1.0;
+  }
 }
 
 export default function AudioPlayer({
@@ -254,6 +274,15 @@ export default function AudioPlayer({
   const CORRECTION_COOLDOWN = 1500; // ms
   const correctionInProgressRef = useRef(false);
   const [displayedCurrentTime, setDisplayedCurrentTime] = useState(0);
+  const lastSyncSeq = useRef(-1);
+  const [syncReady, setSyncReady] = useState(false);
+
+  // Add at the top of the component
+  const eventDebounceRef = useRef({});
+  function debounceEvent(type, fn, delay = 200) {
+    if (eventDebounceRef.current[type]) clearTimeout(eventDebounceRef.current[type]);
+    eventDebounceRef.current[type] = setTimeout(fn, delay);
+  }
 
   // Use controllerClientId/clientId for sticky controller logic
   const isController = controllerClientId && clientId && controllerClientId === clientId;
@@ -364,7 +393,6 @@ export default function AudioPlayer({
         // Remove trailing slash if present
         url = backendUrl.replace(/\/$/, '') + url;
       }
-      console.log('AudioPlayer: Setting audioUrl to', url);
       setAudioUrl(url);
       setLoading(false);
       setAudioError(null);
@@ -455,7 +483,6 @@ export default function AudioPlayer({
     
     // If we're not the controller and audio is playing but shouldn't be, pause it
     if (!isController && !isPlaying && !audio.paused) {
-      console.log('Pausing audio: listener detected audio playing when it should be paused');
       audio.pause();
     }
   }, [isController, isPlaying]);
@@ -466,14 +493,6 @@ export default function AudioPlayer({
 
     let syncTimeout = null;
     let resyncTimeout = null;
-
-    // Helper: log with context and level
-    const log = (level, ...args) => {
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
-        console[level]?.('[AudioPlayer][sync_state]', ...args);
-      }
-    };
 
     // Helper: show sync status for a limited time, then revert to "In Sync"
     const showSyncStatus = (status, duration = 1200) => {
@@ -506,7 +525,14 @@ export default function AudioPlayer({
       trackId,
       meta,
       serverTime,
+      syncSeq // Add syncSeq
     }) => {
+      // Only apply if syncSeq is newer
+      if (typeof syncSeq === 'number' && syncSeq <= lastSyncSeq.current) {
+        log('warn', 'SYNC_STATE: Ignoring stale sync_state', { syncSeq, lastSyncSeq: lastSyncSeq.current });
+        return;
+      }
+      if (typeof syncSeq === 'number') lastSyncSeq.current = syncSeq;
       // Defensive: check for valid timestamp and lastUpdated
       if (
         typeof timestamp !== 'number' ||
@@ -554,16 +580,6 @@ export default function AudioPlayer({
       });
       if (window._audioDriftHistory.length > 10) window._audioDriftHistory.shift();
 
-      // Log drift for debugging (dev only)
-      log('log', '[DriftCheck] SYNC_STATE drift:', drift, {
-        current: audio.currentTime,
-        expected,
-        isPlaying,
-        ctrlId,
-        trackId,
-        meta,
-      });
-
       // Enhanced: show drift in UI if large
       if (drift > DRIFT_THRESHOLD) {
         driftCountRef.current += 1;
@@ -597,6 +613,7 @@ export default function AudioPlayer({
         // Do not seek to correct drift if paused
       }
       setLastSync(Date.now());
+      setSyncReady(true);
     };
 
     socket.on('sync_state', handleSyncState);
@@ -660,20 +677,6 @@ export default function AudioPlayer({
         const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000 + rttComp + smoothedOffset;
         const drift = Math.abs(audio.currentTime - expectedSynced);
 
-        // Enhanced: log drift only if significant or in dev
-        if (drift > adaptiveThreshold || process.env.NODE_ENV === 'development') {
-          console.log(
-            '[DriftCheck] PERIODIC drift:',
-            drift.toFixed(3),
-            'current:',
-            audio.currentTime.toFixed(3),
-            'expected:',
-            expectedSynced.toFixed(3),
-            'isPlaying:', audio.paused ? 'paused' : 'playing',
-            'adaptiveThreshold:', adaptiveThreshold.toFixed(3)
-          );
-        }
-
         // Only correct if not in cooldown
         const nowMs = Date.now();
         const canCorrect = nowMs - lastCorrection > correctionCooldown;
@@ -705,9 +708,6 @@ export default function AudioPlayer({
             lastCorrection = nowMs;
           }
         } else {
-          if (driftCountRef.current > 0 && process.env.NODE_ENV === 'development') {
-            console.log('[DriftCheck] Drift back in threshold, resetting counter');
-          }
           driftCountRef.current = 0;
           setSyncStatus('In Sync');
         }
@@ -721,22 +721,6 @@ export default function AudioPlayer({
   useEffect(() => {
     if (!socket) return;
     if (!socket.sessionId) return;
-
-    // Helper for logging (dev only)
-    const log = (...args) => {
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
-        console.log('[AudioPlayer][sync_request]', ...args);
-      }
-    };
-
-    // Helper for warning (dev only)
-    const warn = (...args) => {
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
-        console.warn('[AudioPlayer][sync_request]', ...args);
-      }
-    };
 
     // Defensive: wrap in try/catch for callback
     socket.emit('sync_request', { sessionId: socket.sessionId }, (state) => {
@@ -821,84 +805,77 @@ export default function AudioPlayer({
         }
         setLastSync(Date.now());
       } catch (err) {
-        warn('Exception in sync_request callback', err);
       }
     });
   }, [socket, getServerTime, audioLatency, rtt, smoothedOffset]);
 
   // Enhanced: Emit play/pause/seek events (controller only) with improved logging, error handling, and latency compensation
   const emitPlay = () => {
-    if (isController && socket && getServerTime) {
-      const now = getNow(getServerTime);
-      const audio = audioRef.current;
-      const playAt = (audio ? audio.currentTime : 0) + PLAY_OFFSET;
-      const payload = {
-        sessionId: socket.sessionId,
-        timestamp: playAt,
-        clientId,
-        emittedAt: now,
-        latency: audioLatency,
-      };
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
-        console.log('[AudioPlayer][emitPlay]', payload);
-      }
-      try {
-        socket.emit('play', payload);
-      } catch (err) {
-        if (process.env.NODE_ENV === 'development') {
-          // eslint-disable-next-line no-console
-          console.error('[AudioPlayer][emitPlay] Failed to emit play event', err, payload);
+    debounceEvent('play', () => {
+      if (isController && socket && getServerTime) {
+        const now = getNow(getServerTime);
+        const audio = audioRef.current;
+        const playAt = (audio ? audio.currentTime : 0) + PLAY_OFFSET;
+        const payload = {
+          sessionId: socket.sessionId,
+          timestamp: playAt,
+          clientId,
+          emittedAt: now,
+          latency: audioLatency,
+        };
+        try {
+          socket.emit('play', payload);
+        } catch (err) {
+          if (process.env.NODE_ENV === 'development') {
+            // eslint-disable-next-line no-console
+            console.error('[AudioPlayer][emitPlay] Failed to emit play event', err, payload);
+          }
         }
       }
-    }
+    });
   };
 
   const emitPause = () => {
-    if (isController && socket) {
-      const audio = audioRef.current;
-      const payload = {
-        sessionId: socket.sessionId,
-        timestamp: audio ? audio.currentTime : 0,
-        clientId,
-        emittedAt: getNow(getServerTime),
-      };
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
-        console.log('[AudioPlayer][emitPause]', payload);
-      }
-      try {
-        socket.emit('pause', payload);
-      } catch (err) {
-        if (process.env.NODE_ENV === 'development') {
-          // eslint-disable-next-line no-console
-          console.error('[AudioPlayer][emitPause] Failed to emit pause event', err, payload);
+    debounceEvent('pause', () => {
+      if (isController && socket) {
+        const audio = audioRef.current;
+        const payload = {
+          sessionId: socket.sessionId,
+          timestamp: audio ? audio.currentTime : 0,
+          clientId,
+          emittedAt: getNow(getServerTime),
+        };
+        try {
+          socket.emit('pause', payload);
+        } catch (err) {
+          if (process.env.NODE_ENV === 'development') {
+            // eslint-disable-next-line no-console
+            console.error('[AudioPlayer][emitPause] Failed to emit pause event', err, payload);
+          }
         }
       }
-    }
+    });
   };
 
   const emitSeek = (time) => {
-    if (isController && socket) {
-      const payload = {
-        sessionId: socket.sessionId,
-        timestamp: time,
-        clientId,
-        emittedAt: getNow(getServerTime),
-      };
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
-        console.log('[AudioPlayer][emitSeek]', payload);
-      }
-      try {
-        socket.emit('seek', payload);
-      } catch (err) {
-        if (process.env.NODE_ENV === 'development') {
-          // eslint-disable-next-line no-console
-          console.error('[AudioPlayer][emitSeek] Failed to emit seek event', err, payload);
+    debounceEvent('seek', () => {
+      if (isController && socket) {
+        const payload = {
+          sessionId: socket.sessionId,
+          timestamp: time,
+          clientId,
+          emittedAt: getNow(getServerTime),
+        };
+        try {
+          socket.emit('seek', payload);
+        } catch (err) {
+          if (process.env.NODE_ENV === 'development') {
+            // eslint-disable-next-line no-console
+            console.error('[AudioPlayer][emitSeek] Failed to emit seek event', err, payload);
+          }
         }
       }
-    }
+    });
   };
 
   // Enhanced Play/Pause/Seek handlers with improved error handling, logging, and edge case resilience
@@ -920,10 +897,6 @@ export default function AudioPlayer({
       }
       setIsPlaying(true);
       emitPlay();
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
-        console.log('[AudioPlayer][handlePlay] Play triggered successfully');
-      }
     } catch (err) {
       // Suppress AbortError (play() interrupted by pause())
       if (err && err.name === 'AbortError') return;
@@ -948,10 +921,6 @@ export default function AudioPlayer({
       audio.pause();
       setIsPlaying(false);
       emitPause();
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
-        console.log('[AudioPlayer][handlePause] Pause triggered successfully');
-      }
     } catch (err) {
       if (process.env.NODE_ENV === 'development') {
         // eslint-disable-next-line no-console
@@ -960,6 +929,16 @@ export default function AudioPlayer({
     }
   };
 
+  // --- Add: Debounced Seek State ---
+  const seekTimeoutRef = useRef(null);
+  const debouncedSetCurrentTime = useCallback((time) => {
+    if (seekTimeoutRef.current) clearTimeout(seekTimeoutRef.current);
+    seekTimeoutRef.current = setTimeout(() => {
+      setCurrentTime(time);
+    }, 80); // 80ms debounce for rapid seeks
+  }, []);
+
+  // --- Update handleSeek to use debouncedSetCurrentTime ---
   const handleSeek = (e) => {
     let time;
     if (typeof e === 'number') {
@@ -973,7 +952,6 @@ export default function AudioPlayer({
       }
       return;
     }
-
     if (!isFiniteNumber(time) || time < 0) {
       if (process.env.NODE_ENV === 'development') {
         // eslint-disable-next-line no-console
@@ -981,7 +959,6 @@ export default function AudioPlayer({
       }
       return;
     }
-
     setIsSeeking(true);
     const audio = audioRef.current;
     if (!audio) {
@@ -992,21 +969,19 @@ export default function AudioPlayer({
       setIsSeeking(false);
       return;
     }
-
-    setCurrentTimeSafely(audio, time, setCurrentTime);
+    setCurrentTimeSafely(audio, time, debouncedSetCurrentTime);
     emitSeek(time);
-
     // If the user seeks while paused, update UI immediately
     if (audio.paused) {
-      setCurrentTime(time);
+      debouncedSetCurrentTime(time);
     }
-
+    // --- Add: End-of-Track Handling ---
+    if (duration && Math.abs(time - duration) < 0.1) {
+      // If seeking to end, auto-pause
+      audio.pause();
+      setIsPlaying(false);
+    }
     setTimeout(() => setIsSeeking(false), 200);
-
-    if (process.env.NODE_ENV === 'development') {
-      // eslint-disable-next-line no-console
-      console.log('[AudioPlayer][handleSeek] Seeked to', time);
-    }
   };
 
   // Enhanced Manual re-sync with improved logging, error handling, user feedback, and analytics
@@ -1112,19 +1087,31 @@ export default function AudioPlayer({
    * - Handles negative, NaN, and very large values gracefully.
    * - Supports hours for long durations (e.g., 1:23:45).
    * - Pads minutes and seconds as needed.
+   * - Handles values > 24h with days.
    * @param {number} t - Time in seconds.
    * @returns {string} - Formatted time string.
    */
   const formatTime = (t) => {
     if (typeof t !== 'number' || isNaN(t) || t < 0) return '0:00';
-    const totalSeconds = Math.floor(t);
-    const hours = Math.floor(totalSeconds / 3600);
+    let totalSeconds = Math.floor(t);
+
+    // Handle days for very long durations
+    const days = Math.floor(totalSeconds / 86400);
+    const hours = Math.floor((totalSeconds % 86400) / 3600);
     const minutes = Math.floor((totalSeconds % 3600) / 60);
-    const seconds = (totalSeconds % 60).toString().padStart(2, '0');
-    if (hours > 0) {
-      return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds}`;
+    const seconds = totalSeconds % 60;
+
+    if (days > 0) {
+      return `${days}:${hours.toString().padStart(2, '0')}:${minutes
+        .toString()
+        .padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
     }
-    return `${minutes}:${seconds}`;
+    if (hours > 0) {
+      return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds
+        .toString()
+        .padStart(2, '0')}`;
+    }
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   };
 
   // --- Automatic device latency estimation using AudioContext.baseLatency ---
@@ -1144,6 +1131,7 @@ export default function AudioPlayer({
 
   // Smoothly animate displayedCurrentTime toward audio.currentTime
   useEffect(() => {
+    setDisplayedCurrentTime(0); // Immediately reset timer visually on track change
     let raf;
     const animate = () => {
       const audio = audioRef.current;
@@ -1159,7 +1147,19 @@ export default function AudioPlayer({
     };
     raf = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(raf);
-  }, [audioUrl]);
+  }, [audioUrl, currentTrack?.url]);
+
+  // Reset playback position to start when track changes
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (audio && currentTrack && currentTrack.url) {
+      setCurrentTimeSafely(audio, 0, setCurrentTime);
+      setDisplayedCurrentTime(0);
+    } else {
+      setCurrentTime(0);
+      setDisplayedCurrentTime(0);
+    }
+  }, [currentTrack?.url]);
 
   // --- Production logging for drift corrections ---
   function logDriftCorrection(type, drift) {
@@ -1177,24 +1177,55 @@ export default function AudioPlayer({
     }
   }
 
-  // --- Proactive Sync Triggers: On tab focus/network reconnect, trigger NTP batch sync and session sync_request ---
+  // --- Enhanced Proactive Sync Triggers: On tab focus, network reconnect, or window refocus, trigger NTP batch sync and session sync_request ---
   useEffect(() => {
-    function proactiveSync() {
+    let lastSyncTime = 0;
+    const SYNC_DEBOUNCE_MS = 1200; // Prevent rapid double syncs
+
+    function proactiveSync(reason = 'unknown') {
+      const now = Date.now();
+      if (now - lastSyncTime < SYNC_DEBOUNCE_MS) return;
+      lastSyncTime = now;
+
       if (typeof socket?.triggerResync === 'function') {
         socket.triggerResync(); // NTP batch sync
       }
       // Also trigger a session state sync_request
       if (socket && socket.sessionId) {
-        socket.emit('sync_request', { sessionId: socket.sessionId }, () => {});
+        socket.emit('sync_request', { sessionId: socket.sessionId, reason }, () => {});
       }
     }
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') proactiveSync();
-    });
-    window.addEventListener('online', proactiveSync);
+
+    // Handler for visibility change (tab focus)
+    function handleVisibilityChange() {
+      if (document.visibilityState === 'visible') {
+        proactiveSync('tab_visible');
+      }
+    }
+
+    // Handler for window focus (user switches back to window)
+    function handleWindowFocus() {
+      proactiveSync('window_focus');
+    }
+
+    // Handler for network reconnect
+    function handleOnline() {
+      proactiveSync('network_online');
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleWindowFocus);
+    window.addEventListener('online', handleOnline);
+
+    // Optionally, trigger a sync on mount if the tab is already visible and online
+    if (document.visibilityState === 'visible' && navigator.onLine) {
+      setTimeout(() => proactiveSync('mount'), 200);
+    }
+
     return () => {
-      document.removeEventListener('visibilitychange', proactiveSync);
-      window.removeEventListener('online', proactiveSync);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleWindowFocus);
+      window.removeEventListener('online', handleOnline);
     };
   }, [socket]);
 
@@ -1207,27 +1238,56 @@ export default function AudioPlayer({
     syncHealth = 'bad';
   }
 
-  // --- Auto-Resync on Persistent High Drift ---
+  // --- Enhanced Auto-Resync on Persistent High Drift ---
   const persistentDriftCountRef = useRef(0);
+  const [autoResyncTriggered, setAutoResyncTriggered] = useState(false);
+  const [lastAutoResyncTime, setLastAutoResyncTime] = useState(0);
+  const AUTO_RESYNC_COOLDOWN = 8000; // ms, minimum time between auto-resyncs
+  const PERSISTENT_DRIFT_LIMIT = 4; // consecutive drift checks before auto-resync
+  const PERSISTENT_DRIFT_WINDOW = 7; // window of checks to consider for persistent drift
+  const [driftHistory, setDriftHistory] = useState([]);
+
   useEffect(() => {
     if (typeof displayedCurrentTime !== 'number' || typeof currentTime !== 'number') return;
     const drift = Math.abs(displayedCurrentTime - currentTime);
+
+    // Maintain a short history of recent drift checks
+    setDriftHistory(prev => {
+      const newHistory = [...prev, drift].slice(-PERSISTENT_DRIFT_WINDOW);
+      return newHistory;
+    });
+
+    // Only consider persistent drift if not in cooldown
+    const now = Date.now();
     if (drift > adaptiveThreshold) {
       persistentDriftCountRef.current += 1;
-      if (persistentDriftCountRef.current >= 4) {
-        setSyncStatus('Persistent high drift! Auto-resyncing...');
+      // If drift is consistently high in the recent window, trigger auto-resync
+      if (
+        persistentDriftCountRef.current >= PERSISTENT_DRIFT_LIMIT &&
+        !autoResyncTriggered &&
+        now - lastAutoResyncTime > AUTO_RESYNC_COOLDOWN &&
+        driftHistory.filter(d => d > adaptiveThreshold).length >= Math.floor(PERSISTENT_DRIFT_WINDOW * 0.7)
+      ) {
+        setSyncStatus('Auto-resyncing...');
+        setAutoResyncTriggered(true);
+        setLastAutoResyncTime(now);
+
         if (typeof socket?.triggerResync === 'function') {
           socket.triggerResync();
         }
-        // Log persistent high drift
+
+        // Log persistent high drift with more context
         if (process.env.NODE_ENV === 'production') {
           fetch('/log/drift', {
             method: 'POST',
             body: JSON.stringify({
               clientId,
               drift,
+              driftHistory: driftHistory.slice(),
               type: 'persistent',
-              timestamp: Date.now()
+              timestamp: now,
+              threshold: adaptiveThreshold,
+              autoResync: true
             }),
             headers: { 'Content-Type': 'application/json' }
           }).catch(() => {});
@@ -1236,7 +1296,9 @@ export default function AudioPlayer({
       }
     } else {
       persistentDriftCountRef.current = 0;
+      setAutoResyncTriggered(false);
     }
+  // eslint-disable-next-line
   }, [displayedCurrentTime, currentTime, adaptiveThreshold, socket, clientId]);
 
   // --- Debug panel for latency, offset, RTT, drift (dev only) ---
@@ -1251,12 +1313,27 @@ export default function AudioPlayer({
       )}
       <div>Time Offset: {typeof smoothedOffset === 'number' ? smoothedOffset.toFixed(1) : 'N/A'} ms</div>
       <div>RTT: {rtt ? rtt.toFixed(1) : 'N/A'} ms</div>
-      <div>Jitter: {jitter ? jitter.toFixed(3) : 'N/A'} s</div>
+      <div>Jitter: {typeof jitter === 'number' ? jitter.toFixed(3) : 'N/A'} s</div>
       <div>Adaptive Drift Threshold: {adaptiveThreshold.toFixed(3)} s</div>
       <div>Sync Health: <span className={syncHealth === 'good' ? 'text-green-400' : syncHealth === 'warning' ? 'text-yellow-400' : 'text-red-400'}>{syncHealth}</span></div>
       <div>Last Drift: {typeof displayedCurrentTime === 'number' && typeof currentTime === 'number' ? (displayedCurrentTime - currentTime).toFixed(3) : 'N/A'} s</div>
     </div>
   ) : null;
+
+  // --- Add: Socket Disconnected Banner State ---
+  const [socketDisconnected, setSocketDisconnected] = useState(false);
+  useEffect(() => {
+    if (!socket) return;
+    const handleConnect = () => setSocketDisconnected(false);
+    const handleDisconnect = () => setSocketDisconnected(true);
+    socket.on('connect', handleConnect);
+    socket.on('disconnect', handleDisconnect);
+    if (!isSocketConnected) setSocketDisconnected(true);
+    return () => {
+      socket.off('connect', handleConnect);
+      socket.off('disconnect', handleDisconnect);
+    };
+  }, [socket, isSocketConnected]);
 
   // --- MOBILE REDESIGN ---
   if (mobile) {
@@ -1284,6 +1361,11 @@ export default function AudioPlayer({
     }
     return (
       <div className="fixed bottom-20 left-1/2 w-[95vw] max-w-sm z-40 pointer-events-auto -translate-x-1/2">
+        {socketDisconnected && (
+          <div className="fixed top-0 left-0 w-full z-50 bg-red-700 text-white text-center py-2 font-bold animate-fade-in">
+            Disconnected from server. Controls are disabled.
+          </div>
+        )}
         <div className={`${shouldAnimate ? 'animate-slide-up-from-bottom' : 'opacity-0 translate-y-full'}`}>
           <div className="bg-neutral-900/90 backdrop-blur-lg rounded-2xl shadow-2xl p-3 flex flex-col gap-2 border border-neutral-800">
           {/* Audio element (hidden) */}
@@ -1302,17 +1384,42 @@ export default function AudioPlayer({
               }}
             />
           )}
-          {/* Top: Track info and sync status */}
-          <div className="flex items-center justify-between mb-1">
-            <div className="text-xs text-white font-semibold truncate max-w-[60%]">
-              Now Playing
-            </div>
-            <div className="flex items-center gap-1">
+          {/* Top: Track info and sync status - Enhanced for Mobile */}
+          <div className="flex items-center justify-between mb-1 px-1">
+            {/* Left: SyncStatus and status text */}
+            <div className="flex items-center gap-2 min-w-0 w-full" style={{ minHeight: 28 }}>
               <SyncStatus status={syncStatus} />
-              {isController && (
-                <span className="ml-1 px-2 py-0.5 bg-primary/20 text-primary text-[10px] rounded font-bold">Controller</span>
-              )}
             </div>
+            <span
+              className={`text-[11px] font-mono rounded px-1.5 py-0.5 flex items-center justify-center`}
+              style={{ minHeight: 24, minWidth: 68, display: 'inline-flex' }}
+            >
+              <span
+                className={
+                  syncStatus === 'synced'
+                    ? 'bg-green-900/60 text-green-300'
+                    : syncStatus === 'drifting'
+                    ? 'bg-yellow-900/60 text-yellow-300'
+                    : 'bg-neutral-800/60 text-neutral-300'
+                }
+                style={{
+                  borderRadius: 6,
+                  padding: '0 8px',
+                  width: '100%',
+                  height: '100%',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  minHeight: 20,
+                }}
+              >
+                {syncStatus === 'synced'
+                  ? 'Synced'
+                  : syncStatus === 'drifting'
+                  ? 'Drifting'
+                  : 'Syncing...'}
+              </span>
+            </span>
           </div>
           {/* Track Title */}
           <div className="mb-2 text-center min-h-[1.5em] relative flex items-center justify-center" style={{height: '1.5em'}}>
@@ -1333,17 +1440,24 @@ export default function AudioPlayer({
           {/* Progress bar */}
           <div className="flex items-center gap-2 w-full">
             <span className="text-[11px] text-neutral-400 w-8 text-left font-mono">{formatTime(displayedCurrentTime)}</span>
-            <input
-              type="range"
-              min={0}
-              max={isFinite(duration) ? duration : 0}
-              step={0.01}
-              value={isFinite(displayedCurrentTime) ? displayedCurrentTime : 0}
-              onChange={handleSeek}
-              className="flex-1 h-3 bg-neutral-800 rounded-full appearance-none cursor-pointer accent-primary"
-              style={{ WebkitAppearance: 'none', appearance: 'none' }}
-              disabled={disabled || !isController || !audioUrl}
-            />
+            {(loading || !syncReady) && (
+              <div className="flex-1 flex items-center justify-center h-3">
+                <LoadingSpinner size="xs" text="Loading..." />
+              </div>
+            )}
+            {!loading && syncReady && (
+              <input
+                type="range"
+                min={0}
+                max={isFinite(duration) ? duration : 0}
+                step={0.01}
+                value={isFinite(displayedCurrentTime) ? displayedCurrentTime : 0}
+                onChange={handleSeek}
+                className="flex-1 h-3 bg-neutral-800 rounded-full appearance-none cursor-pointer accent-primary"
+                style={{ WebkitAppearance: 'none', appearance: 'none' }}
+                disabled={disabled || !audioUrl || !syncReady || socketDisconnected || !isController}
+              />
+            )}
             <span className="text-[11px] text-neutral-400 w-8 text-right font-mono">{formatTime(duration)}</span>
           </div>
           {/* Controls row */}
@@ -1351,7 +1465,7 @@ export default function AudioPlayer({
             <button
               className="w-12 h-12 rounded-full flex items-center justify-center bg-primary shadow-lg text-white text-2xl active:scale-95 transition-all duration-200"
               onClick={isPlaying ? handlePause : handlePlay}
-              disabled={disabled || !isController || !audioUrl}
+              disabled={disabled || !isController || !audioUrl || !syncReady || socketDisconnected}
               aria-label={isPlaying ? 'Pause' : 'Play'}
             >
               {isPlaying ? (
@@ -1361,35 +1475,53 @@ export default function AudioPlayer({
               )}
             </button>
             <button
-              className={`ml-2 px-3 py-2 rounded-lg text-xs font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 shadow ${
-                resyncInProgress 
-                  ? 'bg-blue-600 text-white' 
-                  : smartResyncSuggestion 
-                    ? 'bg-orange-600 hover:bg-orange-700 text-white' 
-                    : 'bg-neutral-800 hover:bg-neutral-700 text-white'
+              className={`ml-2 px-3 py-2 rounded-lg text-xs font-semibold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 shadow-lg border ${
+                resyncInProgress
+                  ? 'bg-white-600 text-white border-blue-700 animate-pulse'
+                  : smartResyncSuggestion
+                    ? 'bg-orange-600 hover:bg-orange-700 text-white border-orange-700 animate-bounce'
+                    : 'bg-neutral-800 hover:bg-neutral-700 text-white border-neutral-700'
               }`}
               onClick={handleResync}
-              disabled={disabled || !audioUrl || resyncInProgress}
+              disabled={disabled || !audioUrl || resyncInProgress || socketDisconnected}
               aria-label="Re-sync"
+              title={
+                resyncInProgress
+                  ? 'Syncing with server...'
+                  : smartResyncSuggestion
+                    ? 'High drift detected! Recommended to sync now.'
+                    : 'Re-sync audio with server'
+              }
             >
               {resyncInProgress ? (
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
-                  <path d="M21 12a9 9 0 11-6.219-8.56"></path>
-                </svg>
+                <>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
+                    <path d="M21 12a9 9 0 11-6.219-8.56"></path>
+                  </svg>
+                  <span className="ml-1 animate-pulse">Syncing...</span>
+                </>
               ) : (
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
-                  <path d="M21 3v5h-5"></path>
-                  <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
-                  <path d="M3 21v-5h5"></path>
-                </svg>
+                <>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
+                    <path d="M21 3v5h-5"></path>
+                    <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
+                    <path d="M3 21v-5h5"></path>
+                  </svg>
+                  <span className="hidden sm:inline">
+                    {smartResyncSuggestion ? (
+                      <>
+                        <span className="font-bold text-orange-200 animate-pulse">Sync*</span>
+                        <span className="ml-1 text-orange-300" title="High drift detected!">!</span>
+                      </>
+                    ) : (
+                      'Sync'
+                    )}
+                  </span>
+                </>
               )}
-              <span className="hidden sm:inline">
-                {resyncInProgress ? 'Syncing...' : smartResyncSuggestion ? 'Sync*' : 'Sync'}
-              </span>
             </button>
           </div>
-          {debugPanel}
         </div>
         </div>
       </div>
@@ -1420,24 +1552,48 @@ export default function AudioPlayer({
     );
   }
 
+  // Enhanced album art handling: supports absolute, relative, fallback, and SVG placeholder
+  let albumArt = currentTrack?.albumArtUrl;
+
+  // Helper: check if URL is absolute (http/https/data)
+  const isAbsoluteUrl = (url) => /^https?:\/\//i.test(url) || url?.startsWith('data:');
+
+  // Fallback: use a default image or SVG if missing
+  const defaultAlbumArtSvg = encodeURIComponent(`
+    <svg width="128" height="128" xmlns="http://www.w3.org/2000/svg">
+      <rect width="100%" height="100%" rx="24" fill="#27272a"/>
+      <g>
+        <circle cx="64" cy="64" r="40" fill="#52525b"/>
+        <circle cx="64" cy="64" r="24" fill="#a3a3a3"/>
+        <rect x="54" y="44" width="20" height="40" rx="6" fill="#27272a"/>
+      </g>
+    </svg>
+  `);
+  const defaultAlbumArt = `data:image/svg+xml,${defaultAlbumArtSvg}`;
+
+  if (albumArt) {
+    if (albumArt.startsWith('/audio/')) {
+      // Local backend-served album art
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
+      albumArt = backendUrl.replace(/\/$/, '') + albumArt;
+    } else if (!isAbsoluteUrl(albumArt)) {
+      // Relative path (not /audio/), treat as backend static
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
+      albumArt = backendUrl.replace(/\/$/, '') + '/' + albumArt.replace(/^\//, '');
+    }
+    // else: already absolute or data: URL, use as-is
+  } else {
+    albumArt = defaultAlbumArt;
+  }
   return (
     <div className={`audio-player transition-all duration-500 ${audioLoaded.animationClass}`}>
-      {/* Track Title */}
-      <div className="mb-2 text-center min-h-[1.5em] relative flex items-center justify-center" style={{height: '1.5em'}}>
-        <span
-          className={`inline-block text-lg font-semibold text-white transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]
-            ${animating && direction === 'up' ? 'opacity-0 translate-x-6 scale-95' : ''}
-            ${animating && direction === 'down' ? 'opacity-0 -translate-x-6 scale-95' : ''}
-            ${!animating ? 'opacity-100 translate-x-0 scale-100' : ''}
-          `}
-          style={{
-            willChange: 'opacity, transform',
-            transitionProperty: 'opacity, transform',
-          }}
-        >
-          {displayedTitle || 'Unknown Track'}
-        </span>
-      </div>
+      {(loading || !syncReady) && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 z-20">
+          <span className="text-white text-base font-semibold mt-2 animate-pulse">
+            {loading ? 'Loading track metadata...' : 'Waiting for sync...'}
+          </span>
+        </div>
+      )}
       {/* Audio Element */}
       {audioUrl ? (
         <audio 
@@ -1458,15 +1614,24 @@ export default function AudioPlayer({
       {/* Now Playing Section */}
       <div className="bg-neutral-900/50 rounded-lg border border-neutral-800 p-4">
         <div className="flex items-center gap-3 mb-4">
-          <div className="w-12 h-12 bg-primary/20 rounded-lg flex items-center justify-center">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
+          <div className="w-12 h-12 bg-primary/20 rounded-lg flex items-center justify-center overflow-hidden">
+            {albumArt ? (
+              <img
+                src={albumArt}
+                alt="Album Art"
+                className="w-full h-full object-cover rounded-lg"
+                draggable={false}
+              />
+            ) : (
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M9 18V5l12-2v13"></path>
               <circle cx="6" cy="18" r="3"></circle>
               <circle cx="18" cy="16" r="3"></circle>
             </svg>
+            )}
           </div>
           <div className="flex-1">
-            <h3 className="text-white font-medium">Now Playing</h3>
+            <h3 className="text-white font-medium">{displayedTitle || 'Unknown Track'}</h3>
             <p className="text-neutral-400 text-sm">Synchronized audio stream</p>
           </div>
           <div className="text-right">
@@ -1479,20 +1644,26 @@ export default function AudioPlayer({
 
         {/* Progress Bar */}
         <div className="mb-4">
-          <input
-            type="range"
-            min={0}
-            max={isFinite(duration) ? duration : 0}
-            step={0.01}
-            value={isFinite(displayedCurrentTime) ? displayedCurrentTime : 0}
-            onChange={handleSeek}
-            className="w-full h-2 bg-neutral-800 rounded-lg appearance-none cursor-pointer"
-            style={{
-              WebkitAppearance: 'none',
-              appearance: 'none',
-            }}
-            disabled={disabled || !isController || !audioUrl}
-          />
+          {(loading || !syncReady) ? (
+            <div className="flex-1 flex items-center justify-center h-3">
+            </div>
+          ) : (
+            <input
+              type="range"
+              min={0}
+              max={isFinite(duration) ? duration : 0}
+              step={0.01}
+              value={isFinite(displayedCurrentTime) ? displayedCurrentTime : 0}
+              onChange={handleSeek}
+              className="w-full h-2 bg-neutral-800 rounded-lg appearance-none cursor-pointer"
+              style={{
+                WebkitAppearance: 'none',
+                appearance: 'none',
+                '--progress': `${(isFinite(displayedCurrentTime) && isFinite(duration) && duration > 0) ? (displayedCurrentTime / duration) * 100 : 0}%`
+              }}
+              disabled={disabled || !isController || !audioUrl || !syncReady || socketDisconnected}
+            />
+          )}
         </div>
 
         {/* Controls */}
@@ -1505,7 +1676,7 @@ export default function AudioPlayer({
                   : 'bg-primary hover:bg-primary/90 text-white'
               } disabled:opacity-50 disabled:cursor-not-allowed`}
               onClick={isPlaying ? handlePause : handlePlay}
-              disabled={disabled || !isController || !audioUrl}
+              disabled={disabled || !isController || !audioUrl || !syncReady || socketDisconnected}
             >
               {isPlaying ? (
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1522,13 +1693,13 @@ export default function AudioPlayer({
             <button
               className={`px-3 py-2 rounded-lg text-sm transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 ${
                 resyncInProgress 
-                  ? 'bg-blue-600 text-white' 
+                  ? 'bg-white-600 text-white' 
                   : smartResyncSuggestion 
                     ? 'bg-orange-600 hover:bg-orange-700 text-white' 
                     : 'bg-neutral-800 hover:bg-neutral-700 text-white'
               }`}
               onClick={handleResync}
-              disabled={disabled || !audioUrl || resyncInProgress}
+              disabled={disabled || !audioUrl || resyncInProgress || socketDisconnected}
             >
               {resyncInProgress ? (
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
@@ -1546,22 +1717,48 @@ export default function AudioPlayer({
             </button>
           </div>
 
-          <div className="text-right">
+          <div className="text-right flex flex-col items-end gap-1">
             <SyncStatus 
               status={syncStatus} 
               showSmartSuggestion={smartResyncSuggestion}
             />
-            <div className="text-neutral-400 text-xs mt-1">
-              {isController ? 'You are the controller' : 'You are a listener'}
+            <div className="flex items-center gap-2 mt-1">
+              {resyncStats.totalResyncs > 0 && (
+                <span className="text-neutral-500 text-xs ml-2">
+                  <svg className="inline-block mr-1" width="12" height="12" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="2"/><path d="M10 6v4l2 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                  Sync: <span className="font-semibold text-green-400">{resyncStats.successfulResyncs}</span>/
+                  <span className="font-semibold">{resyncStats.totalResyncs}</span> successful
+                </span>
+              )}
             </div>
             {resyncStats.totalResyncs > 0 && (
-              <div className="text-neutral-500 text-xs mt-1">
-                Sync: {resyncStats.successfulResyncs}/{resyncStats.totalResyncs} successful
+              <div className="flex items-center gap-2 mt-1">
+                <span className="text-xs text-neutral-400" title="Average drift after resync">
+                  Avg drift: <span className={Math.abs(resyncStats.averageDrift) < 0.05 ? "text-green-400" : Math.abs(resyncStats.averageDrift) < 0.15 ? "text-yellow-400" : "text-red-400"}>
+                    {resyncStats.averageDrift.toFixed(3)}s
+                  </span>
+                </span>
+                <span className="text-xs text-neutral-400" title="Last measured drift">
+                  Last: <span className={Math.abs(resyncStats.lastDrift) < 0.05 ? "text-green-400" : Math.abs(resyncStats.lastDrift) < 0.15 ? "text-yellow-400" : "text-red-400"}>
+                    {resyncStats.lastDrift.toFixed(3)}s
+                  </span>
+                </span>
+              </div>
+            )}
+            {resyncStats.failedResyncs > 0 && (
+              <div className="text-xs text-red-400 mt-1">
+                <svg className="inline-block mr-1" width="12" height="12" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="2"/><path d="M10 7v4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><circle cx="10" cy="14" r="1" fill="currentColor"/></svg>
+                {resyncStats.failedResyncs} failed sync{resyncStats.failedResyncs > 1 ? 's' : ''}
+              </div>
+            )}
+            {smartResyncSuggestion && (
+              <div className="text-xs text-orange-400 mt-1 animate-pulse" title="High drift detected, re-sync recommended">
+                <svg className="inline-block mr-1" width="12" height="12" viewBox="0 0 20 20" fill="none"><path d="M10 2v4M10 14v4M4.93 4.93l2.83 2.83M12.24 12.24l2.83 2.83M2 10h4M14 10h4M4.93 15.07l2.83-2.83M12.24 7.76l2.83-2.83" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                High drift detected! Tap "Re-sync*"
               </div>
             )}
           </div>
         </div>
-        {debugPanel}
       </div>
     </div>
   );

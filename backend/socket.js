@@ -97,7 +97,8 @@ export function setupSocket(io) {
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
         controllerId: socket.id,
-        serverTime: Date.now()
+        serverTime: Date.now(),
+        syncSeq: session.syncSeq
       });
     });
 
@@ -115,7 +116,8 @@ export function setupSocket(io) {
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
         controllerId: socket.id,
-        serverTime: Date.now()
+        serverTime: Date.now(),
+        syncSeq: session.syncSeq
       });
     });
 
@@ -133,7 +135,8 @@ export function setupSocket(io) {
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
         controllerId: socket.id,
-        serverTime: Date.now()
+        serverTime: Date.now(),
+        syncSeq: session.syncSeq
       });
     });
 
@@ -241,7 +244,8 @@ export function setupSocket(io) {
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
         controllerId: getSocketIdByClientId(sessionId, requesterClientId),
-        serverTime: Date.now()
+        serverTime: Date.now(),
+        syncSeq: session.syncSeq
       });
       
       typeof callback === "function" && callback({ success: true });
@@ -389,7 +393,8 @@ export function setupSocket(io) {
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
         controllerId: getSocketIdByClientId(sessionId, accepterClientId),
-        serverTime: Date.now()
+        serverTime: Date.now(),
+        syncSeq: session.syncSeq
       });
       
       typeof callback === "function" && callback({ success: true });
@@ -660,6 +665,12 @@ export function setupSocket(io) {
       } else {
         session.selectedTrackIdx = 0;
       }
+
+      // --- Set playback state for new track to autoplay ---
+      session.timestamp = 0;
+      session.isPlaying = true;
+      session.lastUpdated = Date.now();
+      session.syncSeq = (session.syncSeq || 0) + 1;
 
       // Optionally support autoAdvance (e.g., for next/prev track)
       let autoAdvanceInfo = {};

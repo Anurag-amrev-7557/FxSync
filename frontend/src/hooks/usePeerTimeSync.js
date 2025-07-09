@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from 'react';
  * @param {string} peerId - The peer's unique ID to connect to
  * @returns {object} { peerOffset, peerRtt, connectionState, jitter }
  */
-export default function usePeerTimeSync(socket, localId, peerId) {
+export default function usePeerTimeSync(socket, localId, peerId, onUpdate) {
   // --- Tuning constants for better sync ---
   const SYNC_INTERVAL = 900; // ms, adaptive in future
   const SYNC_BATCH = 6; // Number of samples per round
@@ -25,12 +25,18 @@ export default function usePeerTimeSync(socket, localId, peerId) {
   const syncSamplesRef = useRef([]);
   const lastRttRef = useRef(null);
 
+  // Wrap setState to also call onUpdate
+  const setPeerOffsetWithUpdate = (v) => { setPeerOffset(v); if (onUpdate) onUpdate(); };
+  const setPeerRttWithUpdate = (v) => { setPeerRtt(v); if (onUpdate) onUpdate(); };
+  const setConnectionStateWithUpdate = (v) => { setConnectionState(v); if (onUpdate) onUpdate(); };
+  const setJitterWithUpdate = (v) => { setJitter(v); if (onUpdate) onUpdate(); };
+
   useEffect(() => {
     if (!socket || !localId || !peerId || localId === peerId) return;
 
     let isInitiator = localId < peerId; // Simple deterministic initiator
     let pc, dc;
-    setConnectionState('connecting');
+    setConnectionStateWithUpdate('connecting');
 
     // --- 1. Create PeerConnection ---
     pc = new RTCPeerConnection();
@@ -89,7 +95,7 @@ export default function usePeerTimeSync(socket, localId, peerId) {
     function setupDataChannel(dataChannel) {
       dcRef.current = dataChannel;
       dataChannel.onopen = () => {
-        setConnectionState('connected');
+        setConnectionStateWithUpdate('connected');
         // Start periodic batch sync
         intervalRef.current = setInterval(() => {
           performBatchSync(dataChannel);
@@ -98,11 +104,11 @@ export default function usePeerTimeSync(socket, localId, peerId) {
         performBatchSync(dataChannel);
       };
       dataChannel.onclose = () => {
-        setConnectionState('disconnected');
+        setConnectionStateWithUpdate('disconnected');
         if (intervalRef.current) clearInterval(intervalRef.current);
       };
       dataChannel.onerror = () => {
-        setConnectionState('error');
+        setConnectionStateWithUpdate('error');
         if (intervalRef.current) clearInterval(intervalRef.current);
       };
       dataChannel.onmessage = (event) => {
@@ -151,9 +157,9 @@ export default function usePeerTimeSync(socket, localId, peerId) {
         // Calculate jitter (mean deviation from avg RTT)
         const jitterVal = trimmed.reduce((sum, s) => sum + Math.abs(s.rtt - avgRtt), 0) / trimmed.length;
 
-        setPeerOffset(avgOffset);
-        setPeerRtt(avgRtt);
-        setJitter(jitterVal);
+        setPeerOffsetWithUpdate(avgOffset);
+        setPeerRttWithUpdate(avgRtt);
+        setJitterWithUpdate(jitterVal);
         lastRttRef.current = avgRtt;
       }, 120 + SYNC_BATCH * 10);
     }
