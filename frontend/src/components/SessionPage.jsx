@@ -577,6 +577,12 @@ function SessionPage({
     }
   }, [allTracks, queue]);
 
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      console.log('[SessionPage] UI received new stats:', { liveRtt, liveTimeOffset, liveJitter });
+    }
+  }, [liveRtt, liveTimeOffset, liveJitter]);
+
   return (
     <div className="min-h-screen bg-neutral-950 text-white">
       {!currentSessionId ? (

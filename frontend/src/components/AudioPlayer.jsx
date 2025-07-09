@@ -19,24 +19,16 @@ const DRIFT_THRESHOLD = 0.25; // seconds (increased from 0.12)
 const PLAY_OFFSET = 0.35; // seconds (350ms future offset for play events)
 const DEFAULT_AUDIO_LATENCY = 0.08; // 80ms fallback if not measured
 const MICRO_DRIFT_THRESHOLD = 0.04; // seconds (was 0.08)
-const MICRO_CORRECTION_WINDOW = 250; // ms (was 420)
-const DRIFT_JITTER_BUFFER = 4; // consecutive drift detections before correction (increased from 2)
+const MICRO_RATE_CAP = 0.015; // max playbackRate delta (was 0.03, reduced for gentler correction)
+const MICRO_CORRECTION_WINDOW = 300; // ms (was 500, shortened for quicker reset)
+const DRIFT_JITTER_BUFFER = 6; // consecutive drift detections before correction (increased from 4)
 const RESYNC_COOLDOWN_MS = 2000; // minimum time between manual resyncs
 const RESYNC_HISTORY_SIZE = 5; // number of recent resyncs to track
 const SMART_RESYNC_THRESHOLD = 0.5; // drift threshold for smart resync suggestion
 // Micro drift correction constants
-const MICRO_DRIFT_MIN = 0.005; // 5ms (was 0.01)
-const MICRO_DRIFT_MAX = 0.05;  // 50ms (was 0.1)
-const MICRO_RATE_CAP = 0.01; // max playbackRate delta (was 0.03)
-const MICRO_RATE_CAP_MICRO = 0.001; // max playbackRate delta for micro-correction (was 0.003)
-
-// Add at the top of the file, after imports
-const log = (...args) => {
-  if (process.env.NODE_ENV !== 'production') {
-    console.log(...args);
-  }
-};
-const MIN_BUFFER_AHEAD = 1.5; // seconds required ahead to allow drift correction
+const MICRO_DRIFT_MIN = 0.01; // 10ms
+const MICRO_DRIFT_MAX = 0.15;  // 150ms (was 0.1, increased to make seeking rarer)
+const MICRO_RATE_CAP_MICRO = 0.003; // max playbackRate delta for micro-correction
 
 function isFiniteNumber(n) {
   return typeof n === 'number' && isFinite(n);
@@ -208,14 +200,11 @@ function getNow(getServerTime) {
   }
 }
 
-// Move microCorrectDrift and maybeCorrectDrift here so they can access refs
+// Move maybeCorrectDrift definition here, before any useEffect or handler that uses it
 function microCorrectDrift(audio, drift, context = {}, updateDebug) {
   if (!audio) return;
-  // Use MICRO_DRIFT_THRESHOLD as the lower bound for micro-correction
-  if (Math.abs(drift) > MICRO_DRIFT_THRESHOLD && Math.abs(drift) < MICRO_DRIFT_MAX) {
-    // Use a smaller rate cap for very small drifts
-    let rateCap = Math.abs(drift) < 0.02 ? MICRO_RATE_CAP_MICRO : MICRO_RATE_CAP;
-    let rate = 1 + Math.max(-rateCap, Math.min(rateCap, drift * 0.3));
+  if (Math.abs(drift) > MICRO_DRIFT_MIN && Math.abs(drift) < MICRO_DRIFT_MAX) {
+    let rate = 1 + Math.max(-MICRO_RATE_CAP, Math.min(MICRO_RATE_CAP, drift * 0.5));
     if (process.env.NODE_ENV !== 'production') {
       console.log('[DriftCorrection] microCorrectDrift', {
         drift,
@@ -231,7 +220,7 @@ function microCorrectDrift(audio, drift, context = {}, updateDebug) {
     audio.playbackRate = rate;
     setTimeout(() => {
       audio.playbackRate = 1.0;
-    }, MICRO_CORRECTION_WINDOW); // use the constant for correction window
+    }, MICRO_CORRECTION_WINDOW); // use new constant
   } else {
     if (process.env.NODE_ENV !== 'production') {
       console.log('[DriftCorrection] microCorrectDrift skipped', {
@@ -367,8 +356,6 @@ export default function AudioPlayer({
   const [displayedCurrentTime, setDisplayedCurrentTime] = useState(0);
   const lastSyncSeq = useRef(-1);
   const [syncReady, setSyncReady] = useState(false);
-  const [isBuffering, setIsBuffering] = useState(false);
-  const [bufferedAhead, setBufferedAhead] = useState(0);
 
   // Drift correction debug state (move here to ensure defined)
   const [driftCorrectionHistory, setDriftCorrectionHistory] = useState([]);

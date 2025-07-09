@@ -26,10 +26,10 @@ export default function usePeerTimeSync(socket, localId, peerId, onUpdate) {
   const lastRttRef = useRef(null);
 
   // Wrap setState to also call onUpdate
-  const setPeerOffsetWithUpdate = (v) => { setPeerOffset(v); if (onUpdate) { if (process.env.NODE_ENV !== 'production') { console.debug('[PeerTimeSync] onUpdate: peerOffset', v); } onUpdate(); } };
-  const setPeerRttWithUpdate = (v) => { setPeerRtt(v); if (onUpdate) { if (process.env.NODE_ENV !== 'production') { console.debug('[PeerTimeSync] onUpdate: peerRtt', v); } onUpdate(); } };
-  const setConnectionStateWithUpdate = (v) => { setConnectionState(v); if (onUpdate) { if (process.env.NODE_ENV !== 'production') { console.debug('[PeerTimeSync] onUpdate: connectionState', v); } onUpdate(); } };
-  const setJitterWithUpdate = (v) => { setJitter(v); if (onUpdate) { if (process.env.NODE_ENV !== 'production') { console.debug('[PeerTimeSync] onUpdate: jitter', v); } onUpdate(); } };
+  const setPeerOffsetWithUpdate = (v) => { setPeerOffset(v); if (onUpdate) onUpdate(); };
+  const setPeerRttWithUpdate = (v) => { setPeerRtt(v); if (onUpdate) onUpdate(); };
+  const setConnectionStateWithUpdate = (v) => { setConnectionState(v); if (onUpdate) onUpdate(); };
+  const setJitterWithUpdate = (v) => { setJitter(v); if (onUpdate) onUpdate(); };
 
   useEffect(() => {
     if (!socket || !localId || !peerId || localId === peerId) return;

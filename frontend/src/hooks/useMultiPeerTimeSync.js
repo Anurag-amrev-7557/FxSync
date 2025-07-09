@@ -18,14 +18,7 @@ export default function useMultiPeerTimeSync(socket, clientId, peerIds) {
 
   // Add forceUpdate state to trigger re-renders
   const [, setForceUpdate] = useState(0);
-  const forceUpdate = useCallback(() => {
-    setForceUpdate(f => {
-      if (process.env.NODE_ENV !== 'production') {
-        console.debug('[MultiPeerSync] forceUpdate triggered');
-      }
-      return f + 1;
-    });
-  }, []);
+  const forceUpdate = useCallback(() => setForceUpdate(f => f + 1), []);
 
   // Call usePeerTimeSync for each peer, passing forceUpdate as onUpdate
   const peerSyncs = paddedPeerIds.map(peerId =>
@@ -66,13 +59,18 @@ export default function useMultiPeerTimeSync(socket, clientId, peerIds) {
 
     const medianJitter = median(validJitters);
 
-    return {
+    const aggregateStats = {
       globalOffset,
       medianRtt: median(validRtts),
       medianJitter,
       connectionStates,
       peerCount: validOffsets.length,
     };
+    // Add logging for diagnosis
+    if (typeof window !== 'undefined') {
+      console.log('[useMultiPeerTimeSync] Aggregate stats updated:', aggregateStats);
+    }
+    return aggregateStats;
   }, [
     ...peerSyncs.map(sync => sync?.peerOffset),
     ...peerSyncs.map(sync => sync?.peerRtt),
