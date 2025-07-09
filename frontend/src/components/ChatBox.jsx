@@ -121,8 +121,17 @@ export default function ChatBox({ socket, sessionId, clientId, messages = [], on
             </div>
           ) : (
             messages.map((msg, i) => (
-              <div key={`${msg.sender}-${msg.timestamp}-${i}`} className={`flex transition-all duration-300 ${msg.sender === clientId ? 'justify-end' : 'justify-start'} ${messageAnimations[i]?.animationClass || ''}`}>
-                <div className={`max-w-xs lg:max-w-md ${msg.sender === clientId ? 'order-2' : 'order-1'}`}>
+              <div
+                key={`${msg.sender}-${msg.timestamp}-${i}`}
+                className={`flex ${msg.sender === clientId ? 'justify-end' : 'justify-start'}`}
+              >
+                <div
+                  className={`max-w-xs lg:max-w-md ${msg.sender === clientId ? 'order-2' : 'order-1'} animate-bubble-in`}
+                  style={{
+                    animationDelay: `${i * 60}ms`,
+                    animationFillMode: 'backwards',
+                  }}
+                >
                   {msg.reaction ? (
                     <div className={`flex items-center gap-2 ${msg.sender === clientId ? 'justify-end' : 'justify-start'}`}>
                       <span className="text-xs text-neutral-500">
@@ -133,16 +142,25 @@ export default function ChatBox({ socket, sessionId, clientId, messages = [], on
                       </div>
                     </div>
                   ) : (
-                    <div className={`${msg.sender === clientId ? 'bg-primary text-white' : 'bg-neutral-800 text-white'} rounded-lg px-3 py-2`}>
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-xs font-medium opacity-80">
-                          {getDisplayName(msg.sender)}
-                        </span>
-                        <span className="text-xs opacity-60">
-                          {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'now'}
-                        </span>
+                    <div className="flex flex-col items-${msg.sender === clientId ? 'end' : 'start'}">
+                      <div className="mb-1 flex gap-2 items-center">
+                        <span className="text-xs font-semibold text-neutral-400">{getDisplayName(msg.sender)}</span>
+                        <span className="text-xs text-neutral-500">{msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }) : 'now'}</span>
                       </div>
-                      <p className="text-sm">{msg.message}</p>
+                      <div className={`relative max-w-full md:max-w-md px-4 py-2 rounded-2xl shadow-md ${msg.sender === clientId ? 'bg-white text-black self-end' : 'bg-neutral-900 text-white self-start'}`}
+                        style={{wordBreak: 'break-word'}}>
+                        <span className="text-sm leading-relaxed">{msg.message}</span>
+                        {/* SVG tail for chat bubble */}
+                        {msg.sender === clientId ? (
+                          <svg width="14" height="10" viewBox="0 0 14 10" className="absolute -right-2 bottom-0" style={{zIndex:0}}>
+                            <path d="M0,10 Q7,2 14,10 Q10,7 7,10 Q4,7 0,10" fill="#fff" />
+                          </svg>
+                        ) : (
+                          <svg width="14" height="10" viewBox="0 0 14 10" className="absolute -left-2 bottom-0" style={{zIndex:0}}>
+                            <path d="M14,10 Q7,2 0,10 Q4,7 7,10 Q10,7 14,10" fill="#18181b" />
+                          </svg>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -160,7 +178,7 @@ export default function ChatBox({ socket, sessionId, clientId, messages = [], on
                 {/* Message Input */}
                 <div className="flex gap-2">
                   <input
-                    className="flex-1 bg-neutral-800 border border-neutral-700 rounded-full px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-white/50 focus:border-white/50 transition-all duration-200"
+                    className="flex-1 bg-neutral-800 border border-neutral-700 rounded-full px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none transition-all duration-200"
                     type="text"
                     value={input}
                     onChange={e => setInput(e.target.value)}
@@ -240,16 +258,25 @@ export default function ChatBox({ socket, sessionId, clientId, messages = [], on
                     </div>
                   </div>
                 ) : (
-                  <div className={`${msg.sender === clientId ? 'bg-primary text-white' : 'bg-neutral-800 text-white'} rounded-lg px-3 py-2`}>
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs font-medium opacity-80">
-                        {getDisplayName(msg.sender)}
-                      </span>
-                      <span className="text-xs opacity-60">
-                        {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'now'}
-                      </span>
+                  <div className="flex flex-col items-${msg.sender === clientId ? 'end' : 'start'}">
+                    <div className="mb-1 flex gap-2 items-center">
+                      <span className="text-xs font-semibold text-neutral-400">{getDisplayName(msg.sender)}</span>
+                      <span className="text-xs text-neutral-500">{msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }) : 'now'}</span>
                     </div>
-                    <p className="text-sm">{msg.message}</p>
+                    <div className={`relative max-w-full md:max-w-md px-4 py-2 rounded-2xl shadow-md ${msg.sender === clientId ? 'bg-white text-black self-end' : 'bg-neutral-900 text-white self-start'}`}
+                      style={{wordBreak: 'break-word'}}>
+                      <span className="text-sm leading-relaxed">{msg.message}</span>
+                      {/* SVG tail for chat bubble */}
+                      {msg.sender === clientId ? (
+                        <svg width="14" height="10" viewBox="0 0 14 10" className="absolute -right-2 bottom-0" style={{zIndex:0}}>
+                          <path d="M0,10 Q7,2 14,10 Q10,7 7,10 Q4,7 0,10" fill="#fff" />
+                        </svg>
+                      ) : (
+                        <svg width="14" height="10" viewBox="0 0 14 10" className="absolute -left-2 bottom-0" style={{zIndex:0}}>
+                          <path d="M14,10 Q7,2 0,10 Q4,7 7,10 Q10,7 14,10" fill="#18181b" />
+                        </svg>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -265,7 +292,7 @@ export default function ChatBox({ socket, sessionId, clientId, messages = [], on
           {/* Message Input */}
           <div className="flex gap-2">
             <input
-              className="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-white focus:border-white transition-all duration-200"
+              className="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none transition-all duration-200"
               type="text"
               value={input}
               onChange={e => setInput(e.target.value)}
@@ -274,7 +301,7 @@ export default function ChatBox({ socket, sessionId, clientId, messages = [], on
             />
             <button
               type="submit"
-              className="px-4 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg text-sm font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              className="px-4 py-2 bg-white hover:bg-neutral-200 text-black rounded-lg text-sm font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               disabled={sending || !input.trim() || !socket}
             >
               {sending ? (
@@ -295,6 +322,27 @@ export default function ChatBox({ socket, sessionId, clientId, messages = [], on
           </div>
         </form>
       </div>
+      {/* Improved chat bubble tails using SVG */}
+      {/* Chat bubble animation */}
+      <style>{`
+        @keyframes bubbleIn {
+          0% {
+            opacity: 0;
+            transform: translateY(24px) scale(0.96);
+          }
+          60% {
+            opacity: 1;
+            transform: translateY(-4px) scale(1.03);
+          }
+          100% {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+          }
+        }
+        .animate-bubble-in {
+          animation: bubbleIn 0.44s cubic-bezier(0.22,1,0.36,1);
+        }
+      `}</style>
     </div>
   );
 }

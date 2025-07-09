@@ -185,45 +185,50 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
   return (
     <div className="h-full flex flex-col">
 
-      {/* Add Track Form & Upload */}
+      {/* Add Track Form & Upload - Mobile Optimized, Modern, Black & White Theme, Custom Background */}
       {isController && (
-        <div className="p-4 border-b border-neutral-800">
+        <div
+          className="p-4 border-b border-neutral-800"
+          style={{ background: "#0A0A0A" }}
+        >
           <form onSubmit={handleAdd} className="space-y-3">
             <div>
-              <label className="block text-xs font-medium text-neutral-400 mb-2">
+              <label className="block text-xs font-semibold text-white mb-2 tracking-wide">
                 Add Audio URL or Upload MP3
               </label>
-              <div className="flex flex-row items-center gap-2 w-full">
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full">
                 <input
-                  className="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50 transition-all duration-200"
+                  className="flex-1 bg-black border border-neutral-700 rounded-xl px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none transition-all duration-200 shadow-sm"
                   type="text"
                   value={input}
                   onChange={e => setInput(e.target.value)}
-                  placeholder="https://example.com/audio.mp3"
+                  placeholder="Paste audio URL here"
                   disabled={loading}
+                  autoComplete="off"
+                  inputMode="url"
                 />
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg text-sm font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                  disabled={loading || !input.trim()}
-                >
-                  {loading ? (
-                    <>
-                      <InlineLoadingSpinner size="sm" />
-                      Adding...
-                    </>
-                  ) : (
-                    <>
-                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <line x1="12" y1="5" x2="12" y2="19"></line>
-                        <line x1="5" y1="12" x2="19" y2="12"></line>
-                      </svg>
-                      Add
-                    </>
-                  )}
-                </button>
-                {/* Enhanced Upload UI */}
-                <div className="flex items-center gap-2">
+                <div className="flex flex-row gap-2 w-full sm:w-auto">
+                  <button
+                    type="submit"
+                    className="flex-1 sm:flex-none px-4 py-2 bg-white hover:bg-neutral-200 text-black rounded-xl text-sm font-semibold shadow transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    disabled={loading || !input.trim()}
+                  >
+                    {loading ? (
+                      <>
+                        <InlineLoadingSpinner size="sm" />
+                        <span className="ml-1">Adding...</span>
+                      </>
+                    ) : (
+                      <>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-black">
+                          <line x1="12" y1="5" x2="12" y2="19"></line>
+                          <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                        <span>Add</span>
+                      </>
+                    )}
+                  </button>
+                  {/* Upload Button */}
                   <input
                     type="file"
                     accept="audio/mp3"
@@ -236,16 +241,31 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
                     type="button"
                     onClick={handleUploadClick}
                     disabled={uploading}
-                    className="flex items-center justify-center gap-2 px-4 py-2 bg-neutral-800 hover:bg-primary/80 text-white rounded-lg text-sm font-medium border border-neutral-700 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-white hover:bg-neutral-200 text-black rounded-xl text-sm font-semibold border border-neutral-700 shadow transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
                     title="Upload MP3"
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-black">
                       <path d="M12 5v14M5 12h14" />
                     </svg>
-                    {uploading ? 'Uploading...' : 'Upload'}
+                    <span>{uploading ? 'Uploading...' : 'Upload'}</span>
                   </button>
                 </div>
               </div>
+              {/* Enhanced Progress bar for upload - always below the controls, responsive and visually distinct */}
+              {uploading && (
+                <div className="w-full mt-4">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-xs text-neutral-400 font-medium">Uploading...</span>
+                    <span className="text-xs text-white font-semibold tabular-nums">{uploadProgress}%</span>
+                  </div>
+                  <div className="relative w-full h-3 bg-neutral-800 rounded-full overflow-hidden shadow-inner">
+                    <div
+                      className="absolute left-0 top-0 h-3 bg-gradient-to-r from-white via-neutral-300 to-neutral-500 transition-all duration-300 rounded-full"
+                      style={{ width: `${uploadProgress}%` }}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           </form>
         </div>
@@ -284,10 +304,11 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
                 title={isController ? `Play ${track.title}` : 'Only the controller can add or preview tracks'}
               >
                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${track.type === 'sample' ? 'bg-blue-800' : 'bg-neutral-800'}`}> 
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white">
-                    <path d="M9 18V5l12-2v13"></path>
-                    <circle cx="6" cy="18" r="3"></circle>
-                    <circle cx="18" cy="16" r="3"></circle>
+                  {/* Advanced Play icon */}
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" className="text-white">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" fill="transparent" />
+                    <polygon points="9 8 17 12 9 16 9 8" fill="currentColor" />
+                    <circle cx="12" cy="12" r="2.5" fill="#fff" opacity="0.7" />
                   </svg>
                 </div>
                 <div className="flex-1 min-w-0">
@@ -304,7 +325,7 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
       <div className="flex-1 overflow-y-auto">
         {queue.length === 0 ? (
           <div className="p-8 text-center">
-            <div className="w-20 h-20 bg-neutral-800 rounded-lg flex items-center justify-center mx-auto mb-4 relative overflow-hidden">
+            <div className="w-20 h-20 bg-neutral-800 rounded-2xl flex items-center justify-center mx-auto mb-4 relative overflow-hidden">
               {/* Animated spinning vinyl */}
               <div className="absolute inset-0 flex items-center justify-center">
                 <svg className="animate-spin-slow" width="64" height="64" viewBox="0 0 64 64" fill="none">
@@ -384,10 +405,11 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
                         <span className="bg-white w-[3px] h-2 animate-eqbar4 rounded-sm" />
                       </span>
                     ) : (
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="">
-                        <path d="M9 18V5l12-2v13"></path>
-                        <circle cx="6" cy="18" r="3"></circle>
-                        <circle cx="18" cy="16" r="3"></circle>
+                      // Advanced Play icon with transparent background
+                      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" className="text-white">
+                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" fill="transparent" />
+                        <polygon points="9 8 17 12 9 16 9 8" fill="currentColor" />
+                        <circle cx="12" cy="12" r="2.5" fill="#fff" opacity="0.7" />
                       </svg>
                     )}
                   </div>

@@ -4,6 +4,7 @@ import SessionPage from './components/SessionPage'
 import CreateRoomPage from './components/CreateRoomPage'
 import useSocket from './hooks/useSocket'
 import './App.css'
+import DeviceCalibration from './components/DeviceCalibration';
 
 // Enhanced App component with better state management and routing
 function App() {
@@ -85,6 +86,23 @@ function App() {
     window.dispatchEvent(new Event('startCalibration'));
   }
 
+  // Calibration state
+  const [calibrationResults, setCalibrationResults] = useState(null);
+  const [lastCalibratedSessionId, setLastCalibratedSessionId] = useState(null);
+
+  // Handler for calibration completion
+  const handleCalibrationComplete = (results) => {
+    setCalibrationResults(results);
+    setLastCalibratedSessionId(currentSessionId);
+  };
+
+  // Only reset calibration if sessionId changes to a new one
+  useEffect(() => {
+    if (currentSessionId && currentSessionId !== lastCalibratedSessionId) {
+      setCalibrationResults(null);
+    }
+  }, [currentSessionId, lastCalibratedSessionId]);
+
   return (
     <Router>
       <div className="app-container">
@@ -128,23 +146,28 @@ function App() {
             }
           />
           <Route
-            path="/:sessionId"
+            path="/session/:sessionId"
             element={
-              <SessionPage
-                currentSessionId={currentSessionId}
-                setCurrentSessionId={handleSessionJoin}
-                displayName={displayName}
-                setDisplayName={setDisplayName}
-                onLeaveSession={handleSessionLeave}
-                {...socketStuff}
-                sessionSyncState={sessionSyncState}
-                setSessionSyncState={setSessionSyncState}
-                rtt={rtt}
-                timeOffset={timeOffset}
-                jitter={jitter}
-                drift={drift}
-                forceNtpBatchSync={forceNtpBatchSync}
-              />
+              lastCalibratedSessionId !== currentSessionId ? (
+                <DeviceCalibration onComplete={handleCalibrationComplete} />
+              ) : (
+                <SessionPage
+                  currentSessionId={currentSessionId}
+                  setCurrentSessionId={handleSessionJoin}
+                  displayName={displayName}
+                  setDisplayName={setDisplayName}
+                  onLeaveSession={handleSessionLeave}
+                  {...socketStuff}
+                  sessionSyncState={sessionSyncState}
+                  setSessionSyncState={setSessionSyncState}
+                  rtt={rtt}
+                  timeOffset={timeOffset}
+                  jitter={jitter}
+                  drift={drift}
+                  forceNtpBatchSync={forceNtpBatchSync}
+                  calibrationResults={calibrationResults}
+                />
+              )
             }
           />
         </Routes>

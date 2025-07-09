@@ -464,6 +464,8 @@ function SessionPage({
     
     // Close modal
     setShowExitModal(false)
+    // Navigate to home
+    navigate('/');
   }
 
   // Enhanced handler for Playlist selection with improved robustness, logging, and user experience

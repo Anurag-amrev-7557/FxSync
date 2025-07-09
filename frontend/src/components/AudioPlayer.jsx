@@ -29,6 +29,7 @@ const SMART_RESYNC_THRESHOLD = 0.5; // drift threshold for smart resync suggesti
 const MICRO_DRIFT_MIN = 0.01; // 10ms
 const MICRO_DRIFT_MAX = 0.15;  // 150ms (was 0.1, increased to make seeking rarer)
 const MICRO_RATE_CAP_MICRO = 0.003; // max playbackRate delta for micro-correction
+const MIN_BUFFER_AHEAD = 0.5; // seconds, minimum buffer ahead to allow drift correction
 
 function isFiniteNumber(n) {
   return typeof n === 'number' && isFinite(n);
@@ -200,7 +201,80 @@ function getNow(getServerTime) {
   }
 }
 
-// Move maybeCorrectDrift definition here, before any useEffect or handler that uses it
+// --- Median and MAD helpers for outlier filtering ---
+function median(arr) {
+  if (!arr.length) return 0;
+  const sorted = [...arr].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 !== 0
+    ? sorted[mid]
+    : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+function mad(arr, med) {
+  // Median Absolute Deviation
+  const deviations = arr.map(x => Math.abs(x - med));
+  return median(deviations);
+}
+
+export default function AudioPlayer({
+  disabled = false,
+  socket,
+  isSocketConnected,
+  controllerId,
+  controllerClientId,
+  clientId,
+  clients = [],
+  getServerTime,
+  mobile = false,
+  isAudioTabActive = false,
+  currentTrack = null,
+  rtt = null,
+  ultraPreciseOffset,
+  timeOffset, // fallback
+  sessionSyncState = null,
+  forceNtpBatchSync,
+  audioLatency: propAudioLatency,
+  testLatency: propTestLatency,
+  networkLatency: propNetworkLatency,
+  peerSyncs,
+  jitter,
+  queue = [],
+  selectedTrackIdx = 0,
+  onPrevTrack,
+  onNextTrack
+}) {
+  const [audioUrl, setAudioUrl] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [audioError, setAudioError] = useState(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [syncStatus, setSyncStatus] = useState('In Sync');
+  const [lastSync, setLastSync] = useState(Date.now());
+  const audioRef = useRef(null);
+  const [isSeeking, setIsSeeking] = useState(false);
+  const [shouldAnimate, setShouldAnimate] = useState(false);
+  const [audioLatency, setAudioLatency] = useState(
+    typeof propAudioLatency === 'number' ? propAudioLatency : DEFAULT_AUDIO_LATENCY
+  );
+  const testLatency = typeof propTestLatency === 'number' ? propTestLatency : undefined;
+  const networkLatency = typeof propNetworkLatency === 'number' ? propNetworkLatency : undefined;
+  const playRequestedAt = useRef(null);
+  const lastCorrectionRef = useRef(0);
+  const CORRECTION_COOLDOWN = 1500; // ms
+  const correctionInProgressRef = useRef(false);
+  const [displayedCurrentTime, setDisplayedCurrentTime] = useState(0);
+  const lastSyncSeq = useRef(-1);
+  const [syncReady, setSyncReady] = useState(false);
+  const [isBuffering, setIsBuffering] = useState(false);
+
+  // Drift correction debug state (move here to ensure defined)
+  const [driftCorrectionHistory, setDriftCorrectionHistory] = useState([]);
+  const [driftCorrectionCount, setDriftCorrectionCount] = useState(0);
+  const [lastCorrectionType, setLastCorrectionType] = useState('none');
+  const [bufferedAhead, setBufferedAhead] = useState(0);
+
+// --- Drift correction helpers moved inside the component ---
 function microCorrectDrift(audio, drift, context = {}, updateDebug) {
   if (!audio) return;
   if (Math.abs(drift) > MICRO_DRIFT_MIN && Math.abs(drift) < MICRO_DRIFT_MAX) {
@@ -260,7 +334,7 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
   }
   // Add cooldown after correction
   const now = Date.now();
-  if (lastCorrectionRef.current && now - lastCorrectionRef.current < DRIFT_CORRECTION_COOLDOWN) {
+  if (lastCorrectionRef.current && now - lastCorrectionRef.current < CORRECTION_COOLDOWN) {
     if (process.env.NODE_ENV !== 'production') {
       console.log('[DriftCorrection] Skipped: cooldown active', { lastCorrection: lastCorrectionRef.current, now });
     }
@@ -307,61 +381,6 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
     if (typeof updateDebug === 'function') updateDebug('none', drift, { ...context, bufferAhead });
   }
 }
-
-export default function AudioPlayer({
-  disabled = false,
-  socket,
-  isSocketConnected,
-  controllerId,
-  controllerClientId,
-  clientId,
-  clients = [],
-  getServerTime,
-  mobile = false,
-  isAudioTabActive = false,
-  currentTrack = null,
-  rtt = null,
-  ultraPreciseOffset,
-  timeOffset, // fallback
-  sessionSyncState = null,
-  forceNtpBatchSync,
-  audioLatency: propAudioLatency,
-  testLatency: propTestLatency,
-  networkLatency: propNetworkLatency,
-  peerSyncs,
-  jitter,
-  queue = [],
-  selectedTrackIdx = 0,
-  onPrevTrack,
-  onNextTrack
-}) {
-  const [audioUrl, setAudioUrl] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [audioError, setAudioError] = useState(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const [syncStatus, setSyncStatus] = useState('In Sync');
-  const [lastSync, setLastSync] = useState(Date.now());
-  const audioRef = useRef(null);
-  const [isSeeking, setIsSeeking] = useState(false);
-  const [shouldAnimate, setShouldAnimate] = useState(false);
-  const [audioLatency, setAudioLatency] = useState(
-    typeof propAudioLatency === 'number' ? propAudioLatency : DEFAULT_AUDIO_LATENCY
-  );
-  const playRequestedAt = useRef(null);
-  const lastCorrectionRef = useRef(0);
-  const CORRECTION_COOLDOWN = 1500; // ms
-  const correctionInProgressRef = useRef(false);
-  const [displayedCurrentTime, setDisplayedCurrentTime] = useState(0);
-  const lastSyncSeq = useRef(-1);
-  const [syncReady, setSyncReady] = useState(false);
-
-  // Drift correction debug state (move here to ensure defined)
-  const [driftCorrectionHistory, setDriftCorrectionHistory] = useState([]);
-  const [driftCorrectionCount, setDriftCorrectionCount] = useState(0);
-  const [lastCorrectionType, setLastCorrectionType] = useState('none');
-
   // Add at the top of the component
   const eventDebounceRef = useRef({});
   function debounceEvent(type, fn, delay = 200) {
@@ -653,7 +672,7 @@ export default function AudioPlayer({
     }) => {
       // Only apply if syncSeq is newer
       if (typeof syncSeq === 'number' && syncSeq <= lastSyncSeq.current) {
-        log('warn', 'SYNC_STATE: Ignoring stale sync_state', { syncSeq, lastSyncSeq: lastSyncSeq.current });
+        console.warn('SYNC_STATE: Ignoring stale sync_state', { syncSeq, lastSyncSeq: lastSyncSeq.current });
         return;
       }
       if (typeof syncSeq === 'number') lastSyncSeq.current = syncSeq;
@@ -664,13 +683,13 @@ export default function AudioPlayer({
         !isFinite(timestamp) ||
         !isFinite(lastUpdated)
       ) {
-        log('warn', 'SYNC_STATE: invalid state received', { isPlaying, timestamp, lastUpdated, ctrlId, trackId, meta });
+        console.warn('SYNC_STATE: invalid state received', { isPlaying, timestamp, lastUpdated, ctrlId, trackId, meta });
         showSyncStatus('Sync failed');
         return;
       }
       const audio = audioRef.current;
       if (!audio) {
-        log('warn', 'SYNC_STATE: audio element not available');
+        console.warn('SYNC_STATE: audio element not available');
         return;
       }
       // Use serverTime if present, else fallback
@@ -679,13 +698,23 @@ export default function AudioPlayer({
         now = serverTime;
       } else {
         now = getNow(getServerTime);
-        log('warn', 'SYNC_STATE: serverTime missing, using getNow(getServerTime)', { now });
+        console.warn('SYNC_STATE: serverTime missing, using getNow(getServerTime)', { now });
       }
-      // Compensate for measured audio latency and RTT (one-way delay)
+      // Compensate for measured audio latency, test latency, and network latency
+      const outputLatency = Math.min(
+        audioLatency || Infinity,
+        testLatency || Infinity
+      );
+      const networkComp = networkLatency ? networkLatency / 2 : 0;
       const rttComp = rtt ? rtt / 2000 : 0; // ms to s, one-way
-      const expected = timestamp + (now - lastUpdated) / 1000 - audioLatency + rttComp + smoothedOffset;
+      const expected = timestamp
+        + (now - lastUpdated) / 1000
+        - (isFinite(outputLatency) ? outputLatency : 0)
+        - networkComp
+        + rttComp
+        + smoothedOffset;
       if (!isFiniteNumber(expected)) {
-        log('warn', 'SYNC_STATE: expected is not finite', { expected, timestamp, lastUpdated, now });
+        console.warn('SYNC_STATE: expected is not finite', { expected, timestamp, lastUpdated, now });
         showSyncStatus('Sync failed');
         return;
       }
@@ -739,7 +768,7 @@ export default function AudioPlayer({
       // Only play/pause if state differs
       if (isPlaying && audio.paused) {
         audio.play().catch(e => {
-          log('warn', 'SYNC_STATE: failed to play audio', e);
+          console.warn('SYNC_STATE: failed to play audio', e);
         });
       } else if (!isPlaying && !audio.paused) {
         audio.pause();
@@ -756,7 +785,7 @@ export default function AudioPlayer({
       if (syncTimeout) clearTimeout(syncTimeout);
       if (resyncTimeout) clearTimeout(resyncTimeout);
     };
-  }, [socket, audioLatency, getServerTime, clientId, rtt, smoothedOffset]);
+  }, [socket, audioLatency, getServerTime, clientId, rtt, smoothedOffset, testLatency, networkLatency]);
 
   // --- Adaptive Drift Threshold ---
   const adaptiveThreshold = Math.max(0.12, (jitter || 0) * 2, (audioLatency || 0) * 2);
@@ -861,7 +890,7 @@ export default function AudioPlayer({
 
   // Enhanced: On mount, immediately request sync state on join, with improved error handling, logging, and edge case resilience
   useEffect(() => {
-    if (!socket) return;
+    if (!socket || !audioRef.current || !audioUrl) return;
     if (!socket.sessionId) return;
 
     // Defensive: wrap in try/catch for callback
@@ -869,7 +898,7 @@ export default function AudioPlayer({
       try {
         const audio = audioRef.current;
         if (!audio) {
-          warn('Audio element not available on sync_request');
+          console.warn('Audio element not available on sync_request');
           return;
         }
 
@@ -881,7 +910,7 @@ export default function AudioPlayer({
           !isFinite(state.timestamp) ||
           !isFinite(state.lastUpdated)
         ) {
-          warn('No valid sync state received, pausing audio and resetting to beginning', { state });
+          console.warn('No valid sync state received, pausing audio and resetting to beginning', { state });
           audio.pause();
           setCurrentTimeSafely(audio, 0, setCurrentTime);
           setIsPlaying(false);
@@ -891,7 +920,7 @@ export default function AudioPlayer({
 
         // Defensive: check for negative/NaN/absurd timestamps
         if (state.timestamp < 0 || state.lastUpdated < 0) {
-          warn('Sync state has negative timestamp(s)', { state });
+          console.warn('Sync state has negative timestamp(s)', { state });
           audio.pause();
           setCurrentTimeSafely(audio, 0, setCurrentTime);
           setIsPlaying(false);
@@ -900,11 +929,16 @@ export default function AudioPlayer({
         }
 
         const now = getNow(getServerTime);
-        // Compensate for measured audio latency and RTT (one-way delay)
+        // Compensate for measured audio latency, test latency, and network latency
+        const outputLatency = Math.min(
+          audioLatency || Infinity,
+          testLatency || Infinity
+        );
+        const networkComp = networkLatency ? networkLatency / 2 : 0;
         const rttComp = rtt ? rtt / 2000 : 0; // ms to s, one-way
-        const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency + rttComp + smoothedOffset;
+        const expected = state.timestamp + (now - state.lastUpdated) / 1000 - (isFinite(outputLatency) ? outputLatency : 0) - networkComp + rttComp + smoothedOffset;
         if (!isFiniteNumber(expected) || expected < 0) {
-          warn('Invalid expected time, pausing audio', { expected, state });
+          console.warn('Invalid expected time, pausing audio', { expected, state });
           audio.pause();
           setIsPlaying(false);
           setLastSync(Date.now());
@@ -923,7 +957,7 @@ export default function AudioPlayer({
           safeExpected = Math.max(0, expectedSynced);
         }
 
-        log('Syncing audio to', {
+        console.log('Syncing audio to', {
           expectedSynced,
           safeExpected,
           isPlaying: state.isPlaying,
@@ -938,7 +972,7 @@ export default function AudioPlayer({
           playRequestedAt.current = Date.now();
           // Defensive: try/catch for play() (may throw in some browsers)
           audio.play().catch((err) => {
-            warn('audio.play() failed on sync_request', err);
+            console.warn('audio.play() failed on sync_request', err);
           });
         } else {
           // Ensure audio is definitely paused and reset to the expected time
@@ -949,7 +983,7 @@ export default function AudioPlayer({
       } catch (err) {
       }
     });
-  }, [socket, getServerTime, audioLatency, rtt, smoothedOffset]);
+  }, [socket, getServerTime, audioLatency, rtt, smoothedOffset, testLatency, networkLatency, audioUrl]);
 
   // Enhanced: Emit play/pause/seek events (controller only) with improved logging, error handling, and latency compensation
   const emitPlay = () => {
@@ -1111,12 +1145,12 @@ export default function AudioPlayer({
       setIsSeeking(false);
       return;
     }
-    setCurrentTimeSafely(audio, time, debouncedSetCurrentTime);
+    // Instantly update audio and UI state for perfect sync
+    audio.currentTime = time;
+    setCurrentTime(time);
+    setDisplayedCurrentTime(time);
+    setCurrentTimeSafely(audio, time, (val) => {}); // still use safe setter for edge cases
     emitSeek(time);
-    // If the user seeks while paused, update UI immediately
-    if (audio.paused) {
-      debouncedSetCurrentTime(time);
-    }
     // --- Add: End-of-Track Handling ---
     if (duration && Math.abs(time - duration) < 0.1) {
       // If seeking to end, auto-pause
@@ -1144,36 +1178,136 @@ export default function AudioPlayer({
       console.warn('[AudioPlayer][handleResync] No socket available');
       setSyncStatus('Sync failed: No socket');
       setTimeout(() => setSyncStatus('In Sync'), 1200);
-      updateResyncHistory('failed', 0, 'No socket available');
+      updateResyncHistory('failed', 0, 'No socket available', 0);
       return;
     }
     setResyncInProgress(true);
     setLastResyncTime(now);
+    setSyncStatus('Syncing...');
+    let ntpStart = Date.now();
+    let ntpEnd = ntpStart;
+    let ntpSuccess = false;
     // --- Use NTP batch sync for manual resync if available ---
     if (typeof forceNtpBatchSync === 'function') {
-      setSyncStatus('Syncing...');
       try {
         const result = forceNtpBatchSync();
         if (result && typeof result.then === 'function') {
           await result;
         }
-        setSyncStatus('Re-syncing...');
+        ntpEnd = Date.now();
+        ntpSuccess = true;
+        setSyncStatus('NTP synced. Fetching state...');
       } catch (e) {
-        setSyncStatus('sync failed.');
+        setSyncStatus('NTP sync failed.');
         setTimeout(() => setSyncStatus('In Sync'), 1500);
         setResyncInProgress(false);
-        updateResyncHistory('failed', 0, 'NTP batch sync failed');
+        updateResyncHistory('failed', 0, 'NTP batch sync failed', Date.now() - ntpStart);
         return;
       }
     } else {
       setSyncStatus('NTP batch syncing unavailable. Proceeding with basic sync');
     }
-    // ... existing resync logic ...
-    // Always reset resyncInProgress and syncStatus after a timeout
-    setTimeout(() => {
+    // --- Immediately fetch latest sync state from server ---
+    const audio = audioRef.current;
+    if (!audio || !audioUrl) {
+      setSyncStatus('Audio not ready');
+      setTimeout(() => setSyncStatus('In Sync'), 1200);
       setResyncInProgress(false);
-      setSyncStatus('In Sync');
-    }, 2000);
+      updateResyncHistory('failed', 0, 'Audio not ready', Date.now() - ntpStart);
+      return;
+    }
+    let syncStateStart = Date.now();
+    socket.emit('sync_request', { sessionId: socket.sessionId, reason: 'manual_resync' }, (state) => {
+      let syncStateEnd = Date.now();
+      try {
+        if (
+          !state ||
+          typeof state.timestamp !== 'number' ||
+          typeof state.lastUpdated !== 'number' ||
+          !isFinite(state.timestamp) ||
+          !isFinite(state.lastUpdated)
+        ) {
+          setSyncStatus('Sync failed: Invalid state');
+          setTimeout(() => setSyncStatus('In Sync'), 1500);
+          setResyncInProgress(false);
+          updateResyncHistory('failed', 0, 'Invalid sync state', syncStateEnd - syncStateStart);
+          return;
+        }
+        // Defensive: check for negative/NaN/absurd timestamps
+        if (state.timestamp < 0 || state.lastUpdated < 0) {
+          setSyncStatus('Sync failed: Bad timestamp');
+          setTimeout(() => setSyncStatus('In Sync'), 1500);
+          setResyncInProgress(false);
+          updateResyncHistory('failed', 0, 'Negative timestamp', syncStateEnd - syncStateStart);
+          return;
+        }
+        // Calculate the most accurate expected playback position
+        const now = getNow(getServerTime);
+        const outputLatency = Math.min(
+          audioLatency || Infinity,
+          testLatency || Infinity
+        );
+        const networkComp = networkLatency ? networkLatency / 2 : 0;
+        const rttComp = rtt ? rtt / 2000 : 0; // ms to s, one-way
+        const expected = state.timestamp + (now - state.lastUpdated) / 1000 - (isFinite(outputLatency) ? outputLatency : 0) - networkComp + rttComp + smoothedOffset;
+        if (!isFiniteNumber(expected) || expected < 0) {
+          setSyncStatus('Sync failed: Bad expected time');
+          setTimeout(() => setSyncStatus('In Sync'), 1500);
+          setResyncInProgress(false);
+          updateResyncHistory('failed', 0, 'Invalid expected time', syncStateEnd - syncStateStart);
+          return;
+        }
+        // Clamp expected to [0, duration] if possible
+        let safeExpected = expected;
+        if (audio.duration && isFinite(audio.duration)) {
+          safeExpected = Math.max(0, Math.min(expected, audio.duration));
+        } else {
+          safeExpected = Math.max(0, expected);
+        }
+        // Log drift before correction
+        const driftBefore = Math.abs(audio.currentTime - safeExpected);
+        // Seek audio element
+        setCurrentTimeSafely(audio, safeExpected, setCurrentTime);
+        // Update play/pause state
+        setIsPlaying(state.isPlaying);
+        if (state.isPlaying) {
+          playRequestedAt.current = Date.now();
+          audio.play().catch(() => {});
+        } else {
+          audio.pause();
+        }
+        setLastSync(Date.now());
+        // Log drift after correction
+        setTimeout(() => {
+          const driftAfter = Math.abs(audio.currentTime - safeExpected);
+          setSyncStatus('Re-synced!');
+          setTimeout(() => setSyncStatus('In Sync'), 1200);
+          setResyncInProgress(false);
+          updateResyncHistory('success', driftAfter, 'Manual resync complete', Date.now() - now);
+          // Analytics: log drift before/after
+          if (process.env.NODE_ENV === 'production') {
+            fetch('/log/drift', {
+              method: 'POST',
+              body: JSON.stringify({
+                clientId,
+                driftBefore,
+                driftAfter,
+                correctionType: 'manual_resync',
+                timestamp: Date.now(),
+                ntpDuration: ntpEnd - ntpStart,
+                syncStateDuration: syncStateEnd - syncStateStart
+              }),
+              headers: { 'Content-Type': 'application/json' }
+            }).catch(() => {});
+          }
+        }, 350);
+      } catch (err) {
+        setSyncStatus('Sync failed.');
+        setTimeout(() => setSyncStatus('In Sync'), 1500);
+        setResyncInProgress(false);
+        updateResyncHistory('failed', 0, 'Exception in resync', Date.now() - syncStateStart);
+      }
+    });
   };
 
   // Helper function to update resync history and stats
@@ -1263,6 +1397,18 @@ export default function AudioPlayer({
       ctx = new (window.AudioContext || window.webkitAudioContext)();
       if (ctx.baseLatency && ctx.baseLatency > 0 && ctx.baseLatency < 1) {
         setAudioLatency(ctx.baseLatency);
+        // Log for analytics in production
+        if (process.env.NODE_ENV === 'production') {
+          fetch('/log/latency', {
+            method: 'POST',
+            body: JSON.stringify({
+              clientId,
+              baseLatency: ctx.baseLatency,
+              timestamp: Date.now()
+            }),
+            headers: { 'Content-Type': 'application/json' }
+          }).catch(() => {});
+        }
       }
     } catch (e) {
       // Ignore, fallback to default
@@ -1280,10 +1426,10 @@ export default function AudioPlayer({
       if (!audio) return;
       const actual = audio.currentTime;
       setDisplayedCurrentTime(prev => {
-        // If the difference is tiny, snap to actual
-        if (Math.abs(prev - actual) < 0.015) return actual;
-        // Otherwise, ease toward actual (lerp)
-        return prev + (actual - prev) * 0.22;
+        // If the difference is extremely tiny, snap to actual
+        if (Math.abs(prev - actual) < 0.005) return actual;
+        // Ultra-smooth lerp (smaller factor)
+        return prev + (actual - prev) * 0.10;
       });
       raf = requestAnimationFrame(animate);
     };
@@ -1303,8 +1449,8 @@ export default function AudioPlayer({
     }
   }, [currentTrack?.url]);
 
-  // --- Production logging for drift corrections ---
-  function logDriftCorrection(type, drift) {
+  // --- Enhanced Logging for All Drift Corrections ---
+  function logDriftCorrection(type, drift, context = {}) {
     if (process.env.NODE_ENV === 'production') {
       fetch('/log/drift', {
         method: 'POST',
@@ -1312,6 +1458,7 @@ export default function AudioPlayer({
           clientId,
           drift,
           correctionType: type,
+          context,
           timestamp: Date.now()
         }),
         headers: { 'Content-Type': 'application/json' }
@@ -1319,57 +1466,56 @@ export default function AudioPlayer({
     }
   }
 
-  // --- Enhanced Proactive Sync Triggers: On tab focus, network reconnect, or window refocus, trigger NTP batch sync and session sync_request ---
+  // --- Enhanced Proactive Sync Triggers (debounced, robust) ---
   useEffect(() => {
     let lastSyncTime = 0;
-    const SYNC_DEBOUNCE_MS = 1200; // Prevent rapid double syncs
-
+    const SYNC_DEBOUNCE_MS = 1200;
     function proactiveSync(reason = 'unknown') {
       const now = Date.now();
       if (now - lastSyncTime < SYNC_DEBOUNCE_MS) return;
       lastSyncTime = now;
-
       if (typeof socket?.triggerResync === 'function') {
-        socket.triggerResync(); // NTP batch sync
+        socket.triggerResync();
       }
-      // Also trigger a session state sync_request
       if (socket && socket.sessionId) {
         socket.emit('sync_request', { sessionId: socket.sessionId, reason }, () => {});
       }
+      // Enhanced logging
+      if (process.env.NODE_ENV === 'production') {
+        fetch('/log/sync-trigger', {
+          method: 'POST',
+          body: JSON.stringify({
+            clientId,
+            reason,
+            timestamp: now
+          }),
+          headers: { 'Content-Type': 'application/json' }
+        }).catch(() => {});
+      }
     }
-
-    // Handler for visibility change (tab focus)
     function handleVisibilityChange() {
       if (document.visibilityState === 'visible') {
         proactiveSync('tab_visible');
       }
     }
-
-    // Handler for window focus (user switches back to window)
     function handleWindowFocus() {
       proactiveSync('window_focus');
     }
-
-    // Handler for network reconnect
     function handleOnline() {
       proactiveSync('network_online');
     }
-
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('focus', handleWindowFocus);
     window.addEventListener('online', handleOnline);
-
-    // Optionally, trigger a sync on mount if the tab is already visible and online
     if (document.visibilityState === 'visible' && navigator.onLine) {
       setTimeout(() => proactiveSync('mount'), 200);
     }
-
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', handleWindowFocus);
       window.removeEventListener('online', handleOnline);
     };
-  }, [socket]);
+  }, [socket, clientId]);
 
   // --- Sync Health Indicator ---
   let syncHealth = 'good';
@@ -1380,52 +1526,49 @@ export default function AudioPlayer({
     syncHealth = 'bad';
   }
 
-  // --- Enhanced Auto-Resync on Persistent High Drift ---
-  const persistentDriftCountRef = useRef(0);
+  // --- Enhanced Drift Correction History with Outlier Filtering ---
+  const [driftHistory, setDriftHistory] = useState([]);
+  const PERSISTENT_DRIFT_WINDOW = 10; // window of checks to consider for persistent drift (increased)
+  const PERSISTENT_DRIFT_LIMIT = 5; // consecutive drift checks before auto-resync (increased)
+  const AUTO_RESYNC_COOLDOWN = 6000; // ms, minimum time between auto-resyncs (reduced)
   const [autoResyncTriggered, setAutoResyncTriggered] = useState(false);
   const [lastAutoResyncTime, setLastAutoResyncTime] = useState(0);
-  const AUTO_RESYNC_COOLDOWN = 8000; // ms, minimum time between auto-resyncs
-  const PERSISTENT_DRIFT_LIMIT = 4; // consecutive drift checks before auto-resync
-  const PERSISTENT_DRIFT_WINDOW = 7; // window of checks to consider for persistent drift
-  const [driftHistory, setDriftHistory] = useState([]);
+  const persistentDriftCountRef = useRef(0);
 
   useEffect(() => {
     if (typeof displayedCurrentTime !== 'number' || typeof currentTime !== 'number') return;
     const drift = Math.abs(displayedCurrentTime - currentTime);
-
-    // Maintain a short history of recent drift checks
     setDriftHistory(prev => {
       const newHistory = [...prev, drift].slice(-PERSISTENT_DRIFT_WINDOW);
       return newHistory;
     });
-
-    // Only consider persistent drift if not in cooldown
+    // Outlier filtering for persistent drift
+    const med = median(driftHistory);
+    const deviation = mad(driftHistory, med);
+    const filteredDrifts = driftHistory.filter(d => Math.abs(d - med) <= 2 * deviation);
     const now = Date.now();
     if (drift > adaptiveThreshold) {
       persistentDriftCountRef.current += 1;
-      // If drift is consistently high in the recent window, trigger auto-resync
       if (
         persistentDriftCountRef.current >= PERSISTENT_DRIFT_LIMIT &&
         !autoResyncTriggered &&
         now - lastAutoResyncTime > AUTO_RESYNC_COOLDOWN &&
-        driftHistory.filter(d => d > adaptiveThreshold).length >= Math.floor(PERSISTENT_DRIFT_WINDOW * 0.7)
+        filteredDrifts.filter(d => d > adaptiveThreshold).length >= Math.floor(PERSISTENT_DRIFT_WINDOW * 0.7)
       ) {
         setSyncStatus('Auto-resyncing...');
         setAutoResyncTriggered(true);
         setLastAutoResyncTime(now);
-
         if (typeof socket?.triggerResync === 'function') {
           socket.triggerResync();
         }
-
-        // Log persistent high drift with more context
+        // Enhanced logging for persistent drift
         if (process.env.NODE_ENV === 'production') {
           fetch('/log/drift', {
             method: 'POST',
             body: JSON.stringify({
               clientId,
               drift,
-              driftHistory: driftHistory.slice(),
+              driftHistory: filteredDrifts.slice(),
               type: 'persistent',
               timestamp: now,
               threshold: adaptiveThreshold,
@@ -1440,7 +1583,6 @@ export default function AudioPlayer({
       persistentDriftCountRef.current = 0;
       setAutoResyncTriggered(false);
     }
-  // eslint-disable-next-line
   }, [displayedCurrentTime, currentTime, adaptiveThreshold, socket, clientId]);
 
   // --- Debug panel for latency, offset, RTT, drift (dev only) ---
@@ -1614,9 +1756,9 @@ export default function AudioPlayer({
                 step={0.01}
                 value={isFinite(displayedCurrentTime) ? displayedCurrentTime : 0}
                 onChange={handleSeek}
-                className="flex-1 h-3 bg-neutral-800 rounded-full appearance-none cursor-pointer accent-primary"
+                className="flex-1 w-full h-3 bg-neutral-800 rounded-full appearance-none cursor-pointer audio-progress-bar"
                 style={{ WebkitAppearance: 'none', appearance: 'none' }}
-                disabled={disabled || !audioUrl || !syncReady || socketDisconnected || !isController}
+                disabled={disabled || !audioUrl || !syncReady || socketDisconnected}
               />
             )}
             <span className="text-[11px] text-neutral-400 w-8 text-right font-mono">{formatTime(duration)}</span>
@@ -1624,15 +1766,7 @@ export default function AudioPlayer({
           {/* Controls row */}
           <div className="flex items-center justify-center mt-1 gap-8">
             <button
-              className={`
-                w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300
-                focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 shadow-lg
-                bg-neutral-800 text-white
-                hover:bg-white hover:text-black
-                focus:bg-white focus:text-black
-                active:bg-white active:text-black
-                disabled:opacity-50 disabled:cursor-not-allowed
-              `}
+              className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 focus:outline-none shadow-lg bg-neutral-800 text-white hover:bg-white hover:text-black focus:bg-white focus:text-black active:bg-white active:text-black disabled:opacity-50 disabled:cursor-not-allowed`}
               onClick={onPrevTrack}
               disabled={disabled || !isController || !audioUrl || !syncReady || socketDisconnected || selectedTrackIdx === 0}
               aria-label="Previous Track"
@@ -1673,7 +1807,7 @@ export default function AudioPlayer({
               <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5"/></svg>
             </button>
             <button
-              className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 shadow-lg
+              className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-300 focus:outline-none shadow-lg
                 ${isPlaying 
                   ? 'bg-white hover:bg-neutral-100 text-black scale-105' 
                   : 'bg-primary hover:bg-primary/90 text-white scale-100'
@@ -1760,15 +1894,7 @@ export default function AudioPlayer({
               </span>
             </button>
             <button
-              className={`
-                w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300
-                focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 shadow-lg
-                bg-neutral-800 text-white
-                hover:bg-white hover:text-black
-                focus:bg-white focus:text-black
-                active:bg-white active:text-black
-                disabled:opacity-50 disabled:cursor-not-allowed
-              `}
+              className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 focus:outline-none shadow-lg bg-neutral-800 text-white hover:bg-white hover:text-black focus:bg-white focus:text-black active:bg-white active:text-black disabled:opacity-50 disabled:cursor-not-allowed`}
               onClick={onNextTrack}
               disabled={disabled || !isController || !audioUrl || !syncReady || socketDisconnected || selectedTrackIdx === queue.length - 1}
               aria-label="Next Track"
@@ -1994,7 +2120,7 @@ export default function AudioPlayer({
                 step={0.01}
                 value={isFinite(displayedCurrentTime) ? displayedCurrentTime : 0}
                 onChange={handleSeek}
-                className="w-full h-2 bg-neutral-800 rounded-lg appearance-none cursor-pointer"
+                className="w-full h-2 bg-black/80 rounded-lg appearance-none cursor-pointer audio-progress-bar"
                 style={{
                   WebkitAppearance: 'none',
                   appearance: 'none',
@@ -2007,16 +2133,48 @@ export default function AudioPlayer({
           {/* Controls row: center controls horizontally */}
           <div className="flex items-center justify-center gap-8 mt-2">
             <button
-              className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 shadow-lg bg-neutral-800 hover:bg-neutral-700 text-white disabled:opacity-50 disabled:cursor-not-allowed`}
+              className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 focus:outline-none shadow-lg bg-neutral-800 text-white hover:bg-white hover:text-black focus:bg-white focus:text-black active:bg-white active:text-black disabled:opacity-50 disabled:cursor-not-allowed`}
               onClick={onPrevTrack}
               disabled={disabled || !isController || !audioUrl || !syncReady || socketDisconnected || selectedTrackIdx === 0}
               aria-label="Previous Track"
               title="Previous Track"
+              style={{
+                backgroundColor: undefined, // let Tailwind handle default
+                transition: 'background 0.2s, color 0.2s',
+              }}
+              onMouseDown={e => {
+                e.currentTarget.style.backgroundColor = '#fff';
+                e.currentTarget.style.color = '#000';
+              }}
+              onMouseUp={e => {
+                e.currentTarget.style.backgroundColor = '';
+                e.currentTarget.style.color = '';
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.backgroundColor = '';
+                e.currentTarget.style.color = '';
+              }}
+              onMouseOver={e => {
+                if (!e.currentTarget.disabled) {
+                  e.currentTarget.style.backgroundColor = '#fff';
+                  e.currentTarget.style.color = '#000';
+                }
+              }}
+              onFocus={e => {
+                if (!e.currentTarget.disabled) {
+                  e.currentTarget.style.backgroundColor = '#fff';
+                  e.currentTarget.style.color = '#000';
+                }
+              }}
+              onBlur={e => {
+                e.currentTarget.style.backgroundColor = '';
+                e.currentTarget.style.color = '';
+              }}
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5"/></svg>
             </button>
             <button
-              className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 shadow-lg
+              className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-300 focus:outline-none shadow-lg
                 ${isPlaying 
                   ? 'bg-white hover:bg-neutral-100 text-black scale-105' 
                   : 'bg-primary hover:bg-primary/90 text-white scale-100'
@@ -2103,17 +2261,139 @@ export default function AudioPlayer({
               </span>
             </button>
             <button
-              className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 shadow-lg bg-neutral-800 hover:bg-neutral-700 text-white disabled:opacity-50 disabled:cursor-not-allowed`}
+              className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 focus:outline-none shadow-lg bg-neutral-800 text-white hover:bg-white hover:text-black focus:bg-white focus:text-black active:bg-white active:text-black disabled:opacity-50 disabled:cursor-not-allowed`}
               onClick={onNextTrack}
               disabled={disabled || !isController || !audioUrl || !syncReady || socketDisconnected || selectedTrackIdx === queue.length - 1}
               aria-label="Next Track"
               title="Next Track"
+              style={{
+                backgroundColor: undefined, // let Tailwind handle default
+                transition: 'background 0.2s, color 0.2s',
+              }}
+              onMouseDown={e => {
+                e.currentTarget.style.backgroundColor = '#fff';
+                e.currentTarget.style.color = '#000';
+              }}
+              onMouseUp={e => {
+                e.currentTarget.style.backgroundColor = '';
+                e.currentTarget.style.color = '';
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.backgroundColor = '';
+                e.currentTarget.style.color = '';
+              }}
+              onMouseOver={e => {
+                if (!e.currentTarget.disabled) {
+                  e.currentTarget.style.backgroundColor = '#fff';
+                  e.currentTarget.style.color = '#000';
+                }
+              }}
+              onFocus={e => {
+                if (!e.currentTarget.disabled) {
+                  e.currentTarget.style.backgroundColor = '#fff';
+                  e.currentTarget.style.color = '#000';
+                }
+              }}
+              onBlur={e => {
+                e.currentTarget.style.backgroundColor = '';
+                e.currentTarget.style.color = '';
+              }}
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>
             </button>
           </div>
         </div>
       </div>
+      <style>{`
+        /* Custom audio progress bar for black & white theme */
+        .audio-progress-bar {
+          background: #18181b; /* black/neutral background */
+          border-radius: 0.5rem;
+          height: 0.5rem;
+          box-shadow: 0 1px 4px #0002;
+        }
+        .audio-progress-bar::-webkit-slider-runnable-track {
+          height: 0.5rem;
+          background: linear-gradient(90deg, #fff var(--progress,0%), #222 var(--progress,0%));
+          border-radius: 0.5rem;
+        }
+        .audio-progress-bar::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 0.85rem;
+          height: 0.85rem;
+          border-radius: 50%;
+          background: #fff;
+          border: none;
+          box-shadow: none;
+          cursor: pointer;
+          transition: transform 0.15s cubic-bezier(0.4,0,0.2,1), background 0.2s;
+          margin-top: -0.175rem; /* Center thumb vertically (thumb is 0.85rem, track is 0.5rem, so offset by (0.85-0.5)/2 = 0.175rem) */
+        }
+        .audio-progress-bar:active::-webkit-slider-thumb,
+        .audio-progress-bar:hover::-webkit-slider-thumb {
+          transform: scale(1.18);
+          background: #000;
+        }
+        .audio-progress-bar::-moz-range-track {
+          height: 0.5rem;
+          background: linear-gradient(90deg, #fff var(--progress,0%), #222 var(--progress,0%));
+          border-radius: 0.5rem;
+        }
+        .audio-progress-bar::-moz-range-thumb {
+          width: 0.85rem;
+          height: 0.85rem;
+          border-radius: 50%;
+          background: #fff;
+          border: none;
+          box-shadow: none;
+          cursor: pointer;
+          transition: transform 0.15s cubic-bezier(0.4,0,0.2,1), background 0.2s;
+          margin-top: -0.175rem; /* Center thumb vertically */
+        }
+        .audio-progress-bar:active::-moz-range-thumb,
+        .audio-progress-bar:hover::-moz-range-thumb {
+          transform: scale(1.18);
+          background: #000;
+        }
+        .audio-progress-bar::-ms-fill-lower {
+          background: #fff;
+          border-radius: 0.5rem;
+        }
+        .audio-progress-bar::-ms-fill-upper {
+          background: #222;
+          border-radius: 0.5rem;
+        }
+        .audio-progress-bar::-ms-thumb {
+          width: 0.85rem;
+          height: 0.85rem;
+          border-radius: 50%;
+          background: #fff;
+          border: none;
+          box-shadow: none;
+          cursor: pointer;
+          transition: transform 0.15s cubic-bezier(0.4,0,0.2,1), background 0.2s;
+          margin-top: 0; /* For IE, use top instead */
+          top: -0.175rem;
+        }
+        .audio-progress-bar:active::-ms-thumb,
+        .audio-progress-bar:hover::-ms-thumb {
+          transform: scale(1.18);
+          background: #000;
+        }
+        .audio-progress-bar:focus {
+          outline: none;
+          box-shadow: none;
+        }
+        /* Remove default styles for Firefox */
+        .audio-progress-bar::-moz-focus-outer {
+          border: 0;
+        }
+        /* Hide the outline for IE */
+        .audio-progress-bar::-ms-tooltip {
+          display: none;
+        }
+      `}</style>
     </>
   );
 } 

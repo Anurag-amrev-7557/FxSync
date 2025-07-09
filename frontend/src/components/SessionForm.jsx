@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import CreateRoom from './CreateRoom';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 // Add QR code component
 const QRCode = ({ value, size = 128 }) => {
@@ -27,6 +27,7 @@ const QRCode = ({ value, size = 128 }) => {
 };
 
 export default function SessionForm({ onJoin, currentSessionId }) {
+  const navigate = useNavigate();
   const [sessionId, setSessionId] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [error, setError] = useState('');
@@ -306,7 +307,7 @@ export default function SessionForm({ onJoin, currentSessionId }) {
   };
 
   const handleCreateRoomConfirm = () => {
-    onJoin(createRoomSessionId, displayName);
+    navigate(`/session/${createRoomSessionId}`);
   };
 
   const handleCreateRoomCancel = () => {
@@ -333,7 +334,7 @@ export default function SessionForm({ onJoin, currentSessionId }) {
 
   const joinRecentRoom = (roomId) => {
     setSessionId(roomId);
-    onJoin(roomId, displayName);
+    navigate(`/session/${roomId}`);
     addToRecentRooms(roomId);
   };
 
@@ -383,7 +384,7 @@ export default function SessionForm({ onJoin, currentSessionId }) {
     setError('');
     setLoading(true);
     addToRecentRooms(sessionId.trim());
-    onJoin(sessionId.trim(), displayName);
+    navigate(`/session/${sessionId.trim()}`);
     setLoading(false);
   };
 
