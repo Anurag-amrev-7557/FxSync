@@ -12,12 +12,9 @@ const MAX_PEERS = 5;
  * - Returns both per-peer and aggregate sync stats.
  */
 export default function useMultiPeerTimeSync(socket, clientId, peerIds) {
-  // Pad peerIds to always call hooks in the same order
-  const paddedPeerIds = useMemo(() => {
-    const arr = [...peerIds.slice(0, MAX_PEERS)];
-    while (arr.length < MAX_PEERS) arr.push(null);
-    return arr;
-  }, [peerIds]);
+  // Always call hooks in the same order
+  const paddedPeerIds = [...peerIds.slice(0, MAX_PEERS)];
+  while (paddedPeerIds.length < MAX_PEERS) paddedPeerIds.push(null);
 
   // Call usePeerTimeSync for each peer (null if no peer)
   const peerSyncs = paddedPeerIds.map(peerId =>

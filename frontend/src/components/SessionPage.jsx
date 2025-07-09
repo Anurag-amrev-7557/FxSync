@@ -67,8 +67,14 @@ function SessionPage({
 
   // Peer-to-peer time sync (declare only once)
   const peerIds = (clients || []).filter(c => c.clientId !== clientId).map(c => c.clientId);
-  let peerSyncs = useMultiPeerTimeSync(socket, clientId, peerIds);
-  if (!Array.isArray(peerSyncs)) peerSyncs = [];
+  const multiPeerSync = useMultiPeerTimeSync(socket, clientId, peerIds);
+  const peerSyncs = multiPeerSync.peerSyncs || [];
+  // Prefer peer-to-peer median values if available, else fallback to server props
+  const hasPeerOffsets = (multiPeerSync.peerCount && multiPeerSync.peerCount > 0);
+  const liveTimeOffset = hasPeerOffsets ? multiPeerSync.globalOffset : timeOffset;
+  const liveRtt = multiPeerSync.medianRtt ?? rtt;
+  const liveJitter = multiPeerSync.medianJitter ?? jitter;
+  const liveDrift = drift; // Drift is only from server sync for now
 
   // Clean up old sessions on component mount
   useEffect(() => {
@@ -554,14 +560,14 @@ function SessionPage({
 
   // --- Sync Quality Calculation ---
   const syncQuality = useMemo(() => {
-    // Use RTT, jitter, and drift if available
-    const r = rtt !== null && !isNaN(rtt) ? rtt : 0;
-    const j = jitter !== null && !isNaN(jitter) ? Math.abs(jitter) : 0;
-    const d = drift !== null && !isNaN(drift) ? Math.abs(drift) : 0;
+    // Use live RTT, jitter, and drift if available
+    const r = liveRtt !== null && !isNaN(liveRtt) ? liveRtt : 0;
+    const j = liveJitter !== null && !isNaN(liveJitter) ? Math.abs(liveJitter) : 0;
+    const d = liveDrift !== null && !isNaN(liveDrift) ? Math.abs(liveDrift) : 0;
     if (r < 30 && j < 10 && d < 10) return { label: 'Good', color: 'bg-green-500', tooltip: 'Sync is excellent. Low latency, jitter, and drift.' };
     if (r < 80 && j < 25 && d < 25) return { label: 'Fair', color: 'bg-yellow-500', tooltip: 'Sync is fair. Some latency, jitter, or drift detected.' };
     return { label: 'Poor', color: 'bg-red-500', tooltip: 'Sync is poor. High latency, jitter, or drift.' };
-  }, [rtt, jitter, drift]);
+  }, [liveRtt, liveJitter, liveDrift]);
 
   // --- Peer Discovery ---
   useEffect(() => {
@@ -623,17 +629,17 @@ function SessionPage({
               <div className="flex-1 flex justify-center">
                 <div className="flex items-center gap-3 bg-neutral-800/70 px-1 py-1 rounded-full shadow-sm border border-neutral-700 backdrop-blur-md min-w-[210px] max-w-xs">
                   {/* RTT */}
-                  <span className="flex ml-1 items-center gap-1 text-xs font-medium text-blue-300" title={`RTT (Round Trip Time): Time for a message to go to the server and back. Lower is better.\nCurrent: ${rtt !== null && !isNaN(rtt) ? rtt.toFixed(1) : '--'} ms`}> 
+                  <span className="flex ml-1 items-center gap-1 text-xs font-medium text-blue-300" title={`RTT (Round Trip Time): Time for a message to go to the server and back. Lower is better.\nCurrent: ${liveRtt !== null && !isNaN(liveRtt) ? liveRtt.toFixed(1) : '--'} ms`}> 
                     <svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" className="inline-block"><circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="2"/><path d="M10 6v4l2 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                    <span>{rtt !== null && !isNaN(rtt) ? rtt.toFixed(1) : '--'}</span>
+                    <span>{liveRtt !== null && !isNaN(liveRtt) ? liveRtt.toFixed(1) : '--'}</span>
                     <span className="text-neutral-400 font-normal">ms</span>
                   </span>
                   {/* Divider */}
                   <span className="w-1 h-1 bg-neutral-600 rounded-full mx-1"></span>
                   {/* Offset */}
-                  <span className="flex items-center gap-1 text-xs font-medium text-green-300" title={`Offset: Estimated difference between your clock and the server.\nCurrent: ${timeOffset !== null && !isNaN(timeOffset) ? timeOffset.toFixed(1) : '--'} ms`}> 
+                  <span className="flex items-center gap-1 text-xs font-medium text-green-300" title={`Offset: Estimated difference between your clock and the server.\nCurrent: ${liveTimeOffset !== null && !isNaN(liveTimeOffset) ? liveTimeOffset.toFixed(1) : '--'} ms`}> 
                     <svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" className="inline-block"><rect x="4" y="9" width="12" height="2" rx="1" fill="currentColor"/><rect x="9" y="4" width="2" height="12" rx="1" fill="currentColor"/></svg>
-                    <span>{timeOffset !== null && !isNaN(timeOffset) ? timeOffset.toFixed(1) : '--'}</span>
+                    <span>{liveTimeOffset !== null && !isNaN(liveTimeOffset) ? liveTimeOffset.toFixed(1) : '--'}</span>
                     <span className="text-neutral-400 font-normal">ms</span>
                   </span>
                   {/* Divider */}
