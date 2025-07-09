@@ -495,6 +495,17 @@ function SessionPage({
     }
   };
 
+  const handlePrevTrack = () => {
+    if (selectedTrackIdx > 0) {
+      handleSelectTrack(selectedTrackIdx - 1, queue[selectedTrackIdx - 1]);
+    }
+  };
+  const handleNextTrack = () => {
+    if (queue && selectedTrackIdx < queue.length - 1) {
+      handleSelectTrack(selectedTrackIdx + 1, queue[selectedTrackIdx + 1]);
+    }
+  };
+
   // In render, always derive currentTrack from latest queue and selectedTrackIdx
   const currentTrack = currentTrackOverride || (queue && queue.length > 0 ? queue[selectedTrackIdx] : null);
 
@@ -577,8 +588,8 @@ function SessionPage({
             {/* Header */}
             <header className="flex items-center justify-between p-2 border-b border-neutral-800 bg-neutral-900/50 backdrop-blur-sm">
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <div className="w-8 h-8 rounded-lg flex items-center justify-center">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white transition-all duration-300 group-hover:scale-110 sm:w-5 sm:h-5">
                     <path d="M9 18V5l12-2v13"></path>
                     <circle cx="6" cy="18" r="3"></circle>
                     <circle cx="18" cy="16" r="3"></circle>
@@ -699,6 +710,10 @@ function SessionPage({
                         networkLatency={networkLatency}
                         peerSyncs={peerSyncs}
                         jitter={liveJitter}
+                        queue={queue}
+                        selectedTrackIdx={selectedTrackIdx}
+                        onPrevTrack={handlePrevTrack}
+                        onNextTrack={handleNextTrack}
                       />
                     </div>
                     <div className="p-4">
@@ -838,6 +853,10 @@ function SessionPage({
                         networkLatency={networkLatency}
                         peerSyncs={peerSyncs}
                         jitter={liveJitter}
+                        queue={queue}
+                        selectedTrackIdx={selectedTrackIdx}
+                        onPrevTrack={handlePrevTrack}
+                        onNextTrack={handleNextTrack}
                       />
                     </div>
                   </div>
@@ -876,6 +895,10 @@ function SessionPage({
                         networkLatency={networkLatency}
                         peerSyncs={peerSyncs}
                         jitter={liveJitter}
+                        queue={queue}
+                        selectedTrackIdx={selectedTrackIdx}
+                        onPrevTrack={handlePrevTrack}
+                        onNextTrack={handleNextTrack}
                       />
                     </div>
                   </div>

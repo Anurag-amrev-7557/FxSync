@@ -253,7 +253,11 @@ export default function AudioPlayer({
   testLatency: propTestLatency,
   networkLatency: propNetworkLatency,
   peerSyncs,
-  jitter
+  jitter,
+  queue = [],
+  selectedTrackIdx = 0,
+  onPrevTrack,
+  onNextTrack
 }) {
   const [audioUrl, setAudioUrl] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -1009,15 +1013,15 @@ export default function AudioPlayer({
     setLastResyncTime(now);
     // --- Use NTP batch sync for manual resync if available ---
     if (typeof forceNtpBatchSync === 'function') {
-      setSyncStatus('Running NTP batch sync...');
+      setSyncStatus('Syncing...');
       try {
         const result = forceNtpBatchSync();
         if (result && typeof result.then === 'function') {
           await result;
         }
-        setSyncStatus('NTP batch sync complete. Re-syncing...');
+        setSyncStatus('Re-syncing...');
       } catch (e) {
-        setSyncStatus('NTP batch sync failed.');
+        setSyncStatus('sync failed.');
         setTimeout(() => setSyncStatus('In Sync'), 1500);
         setResyncInProgress(false);
         updateResyncHistory('failed', 0, 'NTP batch sync failed');
@@ -1387,39 +1391,48 @@ export default function AudioPlayer({
           {/* Top: Track info and sync status - Enhanced for Mobile */}
           <div className="flex items-center justify-between mb-1 px-1">
             {/* Left: SyncStatus and status text */}
-            <div className="flex items-center gap-2 min-w-0 w-full" style={{ minHeight: 28 }}>
+            <div className="flex items-center gap-2 w-fit min-w-0" style={{ minHeight: 28, height: 28, maxWidth: '100%' }}>
               <SyncStatus status={syncStatus} />
             </div>
-            <span
-              className={`text-[11px] font-mono rounded px-1.5 py-0.5 flex items-center justify-center`}
-              style={{ minHeight: 24, minWidth: 68, display: 'inline-flex' }}
+            <button
+              className={`text-[11px] font-mono rounded px-1.5 py-0.5 flex items-center justify-center transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed
+                ${resyncInProgress
+                  ? 'bg-white-600 text-white border-blue-700 animate-pulse'
+                  : smartResyncSuggestion
+                    ? 'bg-orange-600 hover:bg-orange-700 text-white border-orange-700 animate-bounce'
+                    : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-300 border border-neutral-700'}
+              `}
+              style={{ minHeight: 24, minWidth: 90, display: 'inline-flex', borderRadius: 6, height: '100%', alignItems: 'center', justifyContent: 'center' }}
+              onClick={handleResync}
+              disabled={disabled || !audioUrl || resyncInProgress || socketDisconnected}
+              aria-label="Re-sync"
+              title={
+                resyncInProgress
+                  ? 'Syncing with server...'
+                  : smartResyncSuggestion
+                    ? 'High drift detected! Recommended to sync now.'
+                    : 'Re-sync audio with server'
+              }
             >
-              <span
-                className={
-                  syncStatus === 'synced'
-                    ? 'bg-green-900/60 text-green-300'
-                    : syncStatus === 'drifting'
-                    ? 'bg-yellow-900/60 text-yellow-300'
-                    : 'bg-neutral-800/60 text-neutral-300'
-                }
-                style={{
-                  borderRadius: 6,
-                  padding: '0 8px',
-                  width: '100%',
-                  height: '100%',
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  minHeight: 20,
-                }}
-              >
-                {syncStatus === 'synced'
-                  ? 'Synced'
-                  : syncStatus === 'drifting'
-                  ? 'Drifting'
-                  : 'Syncing...'}
-              </span>
-            </span>
+              {resyncInProgress ? (
+                <>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin mr-2">
+                    <path d="M21 12a9 9 0 11-6.219-8.56"></path>
+                  </svg>
+                  <span>Syncing...</span>
+                </>
+              ) : (
+                <>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2">
+                    <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
+                    <path d="M21 3v5h-5"></path>
+                    <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
+                    <path d="M3 21v-5h5"></path>
+                  </svg>
+                  <span>{smartResyncSuggestion ? 'Re-sync*' : 'Re-sync'}</span>
+                </>
+              )}
+            </button>
           </div>
           {/* Track Title */}
           <div className="mb-2 text-center min-h-[1.5em] relative flex items-center justify-center" style={{height: '1.5em'}}>
@@ -1461,65 +1474,191 @@ export default function AudioPlayer({
             <span className="text-[11px] text-neutral-400 w-8 text-right font-mono">{formatTime(duration)}</span>
           </div>
           {/* Controls row */}
-          <div className="flex items-center justify-between mt-1">
+          <div className="flex items-center justify-center mt-1 gap-8">
             <button
-              className="w-12 h-12 rounded-full flex items-center justify-center bg-primary shadow-lg text-white text-2xl active:scale-95 transition-all duration-200"
-              onClick={isPlaying ? handlePause : handlePlay}
-              disabled={disabled || !isController || !audioUrl || !syncReady || socketDisconnected}
-              aria-label={isPlaying ? 'Pause' : 'Play'}
+              className={`
+                w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300
+                focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 shadow-lg
+                bg-neutral-800 text-white
+                hover:bg-white hover:text-black
+                focus:bg-white focus:text-black
+                active:bg-white active:text-black
+                disabled:opacity-50 disabled:cursor-not-allowed
+              `}
+              onClick={onPrevTrack}
+              disabled={disabled || !isController || !audioUrl || !syncReady || socketDisconnected || selectedTrackIdx === 0}
+              aria-label="Previous Track"
+              title="Previous Track"
+              style={{
+                backgroundColor: undefined, // let Tailwind handle default
+                transition: 'background 0.2s, color 0.2s',
+              }}
+              onMouseDown={e => {
+                e.currentTarget.style.backgroundColor = '#fff';
+                e.currentTarget.style.color = '#000';
+              }}
+              onMouseUp={e => {
+                e.currentTarget.style.backgroundColor = '';
+                e.currentTarget.style.color = '';
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.backgroundColor = '';
+                e.currentTarget.style.color = '';
+              }}
+              onMouseOver={e => {
+                if (!e.currentTarget.disabled) {
+                  e.currentTarget.style.backgroundColor = '#fff';
+                  e.currentTarget.style.color = '#000';
+                }
+              }}
+              onFocus={e => {
+                if (!e.currentTarget.disabled) {
+                  e.currentTarget.style.backgroundColor = '#fff';
+                  e.currentTarget.style.color = '#000';
+                }
+              }}
+              onBlur={e => {
+                e.currentTarget.style.backgroundColor = '';
+                e.currentTarget.style.color = '';
+              }}
             >
-              {isPlaying ? (
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
-              ) : (
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-              )}
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5"/></svg>
             </button>
             <button
-              className={`ml-2 px-3 py-2 rounded-lg text-xs font-semibold transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 shadow-lg border ${
-                resyncInProgress
-                  ? 'bg-white-600 text-white border-blue-700 animate-pulse'
-                  : smartResyncSuggestion
-                    ? 'bg-orange-600 hover:bg-orange-700 text-white border-orange-700 animate-bounce'
-                    : 'bg-neutral-800 hover:bg-neutral-700 text-white border-neutral-700'
-              }`}
-              onClick={handleResync}
-              disabled={disabled || !audioUrl || resyncInProgress || socketDisconnected}
-              aria-label="Re-sync"
-              title={
-                resyncInProgress
-                  ? 'Syncing with server...'
-                  : smartResyncSuggestion
-                    ? 'High drift detected! Recommended to sync now.'
-                    : 'Re-sync audio with server'
-              }
+              className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 shadow-lg
+                ${isPlaying 
+                  ? 'bg-white hover:bg-neutral-100 text-black scale-105' 
+                  : 'bg-primary hover:bg-primary/90 text-white scale-100'
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
+              onClick={isPlaying ? handlePause : handlePlay}
+              disabled={disabled || !isController || !audioUrl || !syncReady || socketDisconnected}
+              style={{ transition: 'background 0.3s, color 0.3s, transform 0.3s cubic-bezier(0.4,0,0.2,1)' }}
+              aria-label={isPlaying ? 'Pause' : 'Play'}
             >
-              {resyncInProgress ? (
-                <>
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
-                    <path d="M21 12a9 9 0 11-6.219-8.56"></path>
-                  </svg>
-                  <span className="ml-1 animate-pulse">Syncing...</span>
-                </>
-              ) : (
-                <>
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
-                    <path d="M21 3v5h-5"></path>
-                    <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
-                    <path d="M3 21v-5h5"></path>
-                  </svg>
-                  <span className="hidden sm:inline">
-                    {smartResyncSuggestion ? (
-                      <>
-                        <span className="font-bold text-orange-200 animate-pulse">Sync*</span>
-                        <span className="ml-1 text-orange-300" title="High drift detected!">!</span>
-                      </>
-                    ) : (
-                      'Sync'
-                    )}
-                  </span>
-                </>
-              )}
+              <span className="relative w-6 h-6 flex items-center justify-center">
+                {/* Animated icon morph: Play <-> Pause */}
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="22"
+                  height="22"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="absolute left-0 top-0 w-full h-full"
+                  style={{
+                    transition: 'opacity 0.5s, transform 0.5s cubic-bezier(0.4,0,0.2,1)',
+                    opacity: isPlaying ? 1 : 0,
+                    transform: isPlaying ? 'scale(1) rotate(0deg)' : 'scale(0.85) rotate(-15deg)',
+                    zIndex: isPlaying ? 2 : 1,
+                  }}
+                >
+                  {/* Pause icon */}
+                  <rect
+                    x="6"
+                    y="4"
+                    width="4"
+                    height="16"
+                    rx="1"
+                    style={{
+                      transition: 'all 0.5s cubic-bezier(0.4,0,0.2,1)',
+                      transform: isPlaying ? 'scaleY(1)' : 'scaleY(0.7) translateY(4px)',
+                      opacity: isPlaying ? 1 : 0.5,
+                    }}
+                  />
+                  <rect
+                    x="14"
+                    y="4"
+                    width="4"
+                    height="16"
+                    rx="1"
+                    style={{
+                      transition: 'all 0.5s cubic-bezier(0.4,0,0.2,1)',
+                      transform: isPlaying ? 'scaleY(1)' : 'scaleY(0.7) translateY(4px)',
+                      opacity: isPlaying ? 1 : 0.5,
+                    }}
+                  />
+                </svg>
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="22"
+                  height="22"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="absolute left-0 top-0 w-full h-full"
+                  style={{
+                    transition: 'opacity 0.5s, transform 0.5s cubic-bezier(0.4,0,0.2,1)',
+                    opacity: !isPlaying ? 1 : 0,
+                    transform: !isPlaying ? 'scale(1) rotate(0deg)' : 'scale(0.85) rotate(15deg)',
+                    zIndex: !isPlaying ? 2 : 1,
+                  }}
+                >
+                  {/* Play icon */}
+                  <polygon
+                    points="5 3 19 12 5 21 5 3"
+                    style={{
+                      transition: 'all 0.5s cubic-bezier(0.4,0,0.2,1)',
+                      transform: !isPlaying ? 'scale(1)' : 'scale(0.7) translateX(4px)',
+                      opacity: !isPlaying ? 1 : 0.5,
+                    }}
+                  />
+                </svg>
+              </span>
+            </button>
+            <button
+              className={`
+                w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300
+                focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 shadow-lg
+                bg-neutral-800 text-white
+                hover:bg-white hover:text-black
+                focus:bg-white focus:text-black
+                active:bg-white active:text-black
+                disabled:opacity-50 disabled:cursor-not-allowed
+              `}
+              onClick={onNextTrack}
+              disabled={disabled || !isController || !audioUrl || !syncReady || socketDisconnected || selectedTrackIdx === queue.length - 1}
+              aria-label="Next Track"
+              title="Next Track"
+              style={{
+                backgroundColor: undefined, // let Tailwind handle default
+                transition: 'background 0.2s, color 0.2s',
+              }}
+              onMouseDown={e => {
+                e.currentTarget.style.backgroundColor = '#fff';
+                e.currentTarget.style.color = '#000';
+              }}
+              onMouseUp={e => {
+                e.currentTarget.style.backgroundColor = '';
+                e.currentTarget.style.color = '';
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.backgroundColor = '';
+                e.currentTarget.style.color = '';
+              }}
+              onMouseOver={e => {
+                if (!e.currentTarget.disabled) {
+                  e.currentTarget.style.backgroundColor = '#fff';
+                  e.currentTarget.style.color = '#000';
+                }
+              }}
+              onFocus={e => {
+                if (!e.currentTarget.disabled) {
+                  e.currentTarget.style.backgroundColor = '#fff';
+                  e.currentTarget.style.color = '#000';
+                }
+              }}
+              onBlur={e => {
+                e.currentTarget.style.backgroundColor = '';
+                e.currentTarget.style.color = '';
+              }}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>
             </button>
           </div>
         </div>
@@ -1585,113 +1724,17 @@ export default function AudioPlayer({
   } else {
     albumArt = defaultAlbumArt;
   }
+
   return (
-    <div className={`audio-player transition-all duration-500 ${audioLoaded.animationClass}`}>
-      {(loading || !syncReady) && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 z-20">
-          <span className="text-white text-base font-semibold mt-2 animate-pulse">
-            {loading ? 'Loading track metadata...' : 'Waiting for sync...'}
-          </span>
-        </div>
-      )}
-      {/* Audio Element */}
-      {audioUrl ? (
-        <audio 
-          ref={audioRef} 
-          src={audioUrl} 
-          preload="auto"
-          onLoadedMetadata={() => {
-            // Ensure audio is paused when metadata loads (especially for listeners)
-            const audio = audioRef.current;
-            if (audio && !isController && !isPlaying) {
-              audio.pause();
-              setCurrentTime(0);
-            }
-          }}
-        />
-      ) : null}
-
-      {/* Now Playing Section */}
-      <div className="bg-neutral-900/50 rounded-lg border border-neutral-800 p-4">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-12 h-12 bg-primary/20 rounded-lg flex items-center justify-center overflow-hidden">
-            {albumArt ? (
-              <img
-                src={albumArt}
-                alt="Album Art"
-                className="w-full h-full object-cover rounded-lg"
-                draggable={false}
-              />
-            ) : (
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 18V5l12-2v13"></path>
-              <circle cx="6" cy="18" r="3"></circle>
-              <circle cx="18" cy="16" r="3"></circle>
-            </svg>
-            )}
+    <>
+      {!mobile && (
+        <div className="flex items-center justify-between mb-3 px-2">
+          <div className="flex items-center">
+            <SyncStatus status={syncStatus} showSmartSuggestion={smartResyncSuggestion} />
           </div>
-          <div className="flex-1">
-            <h3 className="text-white font-medium">{displayedTitle || 'Unknown Track'}</h3>
-            <p className="text-neutral-400 text-sm">Synchronized audio stream</p>
-          </div>
-          <div className="text-right">
-            <div className="text-white font-mono text-sm">
-              {formatTime(displayedCurrentTime)} / {formatTime(duration)}
-            </div>
-            <div className="text-neutral-400 text-xs">Duration</div>
-          </div>
-        </div>
-
-        {/* Progress Bar */}
-        <div className="mb-4">
-          {(loading || !syncReady) ? (
-            <div className="flex-1 flex items-center justify-center h-3">
-            </div>
-          ) : (
-            <input
-              type="range"
-              min={0}
-              max={isFinite(duration) ? duration : 0}
-              step={0.01}
-              value={isFinite(displayedCurrentTime) ? displayedCurrentTime : 0}
-              onChange={handleSeek}
-              className="w-full h-2 bg-neutral-800 rounded-lg appearance-none cursor-pointer"
-              style={{
-                WebkitAppearance: 'none',
-                appearance: 'none',
-                '--progress': `${(isFinite(displayedCurrentTime) && isFinite(duration) && duration > 0) ? (displayedCurrentTime / duration) * 100 : 0}%`
-              }}
-              disabled={disabled || !isController || !audioUrl || !syncReady || socketDisconnected}
-            />
-          )}
-        </div>
-
-        {/* Controls */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center">
             <button
-              className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 ${
-                isPlaying 
-                  ? 'bg-red-500 hover:bg-red-600 text-white' 
-                  : 'bg-primary hover:bg-primary/90 text-white'
-              } disabled:opacity-50 disabled:cursor-not-allowed`}
-              onClick={isPlaying ? handlePause : handlePlay}
-              disabled={disabled || !isController || !audioUrl || !syncReady || socketDisconnected}
-            >
-              {isPlaying ? (
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="6" y="4" width="4" height="16"></rect>
-                  <rect x="14" y="4" width="4" height="16"></rect>
-                </svg>
-              ) : (
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polygon points="5 3 19 12 5 21 5 3"></polygon>
-                </svg>
-              )}
-            </button>
-            
-            <button
-              className={`px-3 py-2 rounded-lg text-sm transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 ${
+              className={`px-2 py-1 rounded-lg text-xs transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 ${
                 resyncInProgress 
                   ? 'bg-white-600 text-white' 
                   : smartResyncSuggestion 
@@ -1700,6 +1743,14 @@ export default function AudioPlayer({
               }`}
               onClick={handleResync}
               disabled={disabled || !audioUrl || resyncInProgress || socketDisconnected}
+              aria-label="Re-sync"
+              title={
+                resyncInProgress
+                  ? 'Syncing with server...'
+                  : smartResyncSuggestion
+                    ? 'High drift detected! Recommended to sync now.'
+                    : 'Re-sync audio with server'
+              }
             >
               {resyncInProgress ? (
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
@@ -1716,50 +1767,197 @@ export default function AudioPlayer({
               {resyncInProgress ? 'Syncing...' : smartResyncSuggestion ? 'Re-sync*' : 'Re-sync'}
             </button>
           </div>
+        </div>
+      )}
+      <div className={`audio-player transition-all duration-500 ${audioLoaded.animationClass}`}>
+        {(loading || !syncReady) && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 z-20">
+            <span className="text-white text-base font-semibold mt-2 animate-pulse">
+              {loading ? 'Loading track metadata...' : 'Waiting for sync...'}
+            </span>
+          </div>
+        )}
+        {/* Audio Element */}
+        {audioUrl ? (
+          <audio 
+            ref={audioRef} 
+            src={audioUrl} 
+            preload="auto"
+            onLoadedMetadata={() => {
+              // Ensure audio is paused when metadata loads (especially for listeners)
+              const audio = audioRef.current;
+              if (audio && !isController && !isPlaying) {
+                audio.pause();
+                setCurrentTime(0);
+              }
+            }}
+          />
+        ) : null}
 
-          <div className="text-right flex flex-col items-end gap-1">
-            <SyncStatus 
-              status={syncStatus} 
-              showSmartSuggestion={smartResyncSuggestion}
-            />
-            <div className="flex items-center gap-2 mt-1">
-              {resyncStats.totalResyncs > 0 && (
-                <span className="text-neutral-500 text-xs ml-2">
-                  <svg className="inline-block mr-1" width="12" height="12" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="2"/><path d="M10 6v4l2 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                  Sync: <span className="font-semibold text-green-400">{resyncStats.successfulResyncs}</span>/
-                  <span className="font-semibold">{resyncStats.totalResyncs}</span> successful
-                </span>
+        {/* Now Playing Section */}
+        <div className="bg-neutral-900/50 rounded-lg border border-neutral-800 p-4 relative">
+          {/* Now Playing Section (album art, title, etc.) */}
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-12 h-12 bg-primary/20 rounded-lg flex items-center justify-center overflow-hidden">
+              {albumArt ? (
+                <img
+                  src={albumArt}
+                  alt="Album Art"
+                  className="w-full h-full object-cover rounded-lg"
+                  draggable={false}
+                />
+              ) : (
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 18V5l12-2v13"></path>
+                <circle cx="6" cy="18" r="3"></circle>
+                <circle cx="18" cy="16" r="3"></circle>
+              </svg>
               )}
             </div>
-            {resyncStats.totalResyncs > 0 && (
-              <div className="flex items-center gap-2 mt-1">
-                <span className="text-xs text-neutral-400" title="Average drift after resync">
-                  Avg drift: <span className={Math.abs(resyncStats.averageDrift) < 0.05 ? "text-green-400" : Math.abs(resyncStats.averageDrift) < 0.15 ? "text-yellow-400" : "text-red-400"}>
-                    {resyncStats.averageDrift.toFixed(3)}s
-                  </span>
-                </span>
-                <span className="text-xs text-neutral-400" title="Last measured drift">
-                  Last: <span className={Math.abs(resyncStats.lastDrift) < 0.05 ? "text-green-400" : Math.abs(resyncStats.lastDrift) < 0.15 ? "text-yellow-400" : "text-red-400"}>
-                    {resyncStats.lastDrift.toFixed(3)}s
-                  </span>
-                </span>
+            <div className="flex-1">
+              <h3 className="text-white font-medium">{displayedTitle || 'Unknown Track'}</h3>
+              <p className="text-neutral-400 text-sm">Synchronized audio stream</p>
+            </div>
+            <div className="text-right">
+              <div className="text-white font-mono text-sm">
+                {formatTime(displayedCurrentTime)} / {formatTime(duration)}
               </div>
-            )}
-            {resyncStats.failedResyncs > 0 && (
-              <div className="text-xs text-red-400 mt-1">
-                <svg className="inline-block mr-1" width="12" height="12" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="2"/><path d="M10 7v4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><circle cx="10" cy="14" r="1" fill="currentColor"/></svg>
-                {resyncStats.failedResyncs} failed sync{resyncStats.failedResyncs > 1 ? 's' : ''}
+              <div className="text-neutral-400 text-xs">Duration</div>
+            </div>
+          </div>
+          {/* Progress Bar */}
+          <div className="mb-4">
+            {(loading || !syncReady) ? (
+              <div className="flex-1 flex items-center justify-center h-3">
               </div>
+            ) : (
+              <input
+                type="range"
+                min={0}
+                max={isFinite(duration) ? duration : 0}
+                step={0.01}
+                value={isFinite(displayedCurrentTime) ? displayedCurrentTime : 0}
+                onChange={handleSeek}
+                className="w-full h-2 bg-neutral-800 rounded-lg appearance-none cursor-pointer"
+                style={{
+                  WebkitAppearance: 'none',
+                  appearance: 'none',
+                  '--progress': `${(isFinite(displayedCurrentTime) && isFinite(duration) && duration > 0) ? (displayedCurrentTime / duration) * 100 : 0}%`
+                }}
+                disabled={disabled || !isController || !audioUrl || !syncReady || socketDisconnected}
+              />
             )}
-            {smartResyncSuggestion && (
-              <div className="text-xs text-orange-400 mt-1 animate-pulse" title="High drift detected, re-sync recommended">
-                <svg className="inline-block mr-1" width="12" height="12" viewBox="0 0 20 20" fill="none"><path d="M10 2v4M10 14v4M4.93 4.93l2.83 2.83M12.24 12.24l2.83 2.83M2 10h4M14 10h4M4.93 15.07l2.83-2.83M12.24 7.76l2.83-2.83" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
-                High drift detected! Tap "Re-sync*"
-              </div>
-            )}
+          </div>
+          {/* Controls row: center controls horizontally */}
+          <div className="flex items-center justify-center gap-8 mt-2">
+            <button
+              className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 shadow-lg bg-neutral-800 hover:bg-neutral-700 text-white disabled:opacity-50 disabled:cursor-not-allowed`}
+              onClick={onPrevTrack}
+              disabled={disabled || !isController || !audioUrl || !syncReady || socketDisconnected || selectedTrackIdx === 0}
+              aria-label="Previous Track"
+              title="Previous Track"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5"/></svg>
+            </button>
+            <button
+              className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 shadow-lg
+                ${isPlaying 
+                  ? 'bg-white hover:bg-neutral-100 text-black scale-105' 
+                  : 'bg-primary hover:bg-primary/90 text-white scale-100'
+                } disabled:opacity-50 disabled:cursor-not-allowed`}
+              onClick={isPlaying ? handlePause : handlePlay}
+              disabled={disabled || !isController || !audioUrl || !syncReady || socketDisconnected}
+              style={{ transition: 'background 0.3s, color 0.3s, transform 0.3s cubic-bezier(0.4,0,0.2,1)' }}
+              aria-label={isPlaying ? 'Pause' : 'Play'}
+            >
+              <span className="relative w-6 h-6 flex items-center justify-center">
+                {/* Animated icon morph: Play <-> Pause */}
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="22"
+                  height="22"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="absolute left-0 top-0 w-full h-full"
+                  style={{
+                    transition: 'opacity 0.5s, transform 0.5s cubic-bezier(0.4,0,0.2,1)',
+                    opacity: isPlaying ? 1 : 0,
+                    transform: isPlaying ? 'scale(1) rotate(0deg)' : 'scale(0.85) rotate(-15deg)',
+                    zIndex: isPlaying ? 2 : 1,
+                  }}
+                >
+                  {/* Pause icon */}
+                  <rect
+                    x="6"
+                    y="4"
+                    width="4"
+                    height="16"
+                    rx="1"
+                    style={{
+                      transition: 'all 0.5s cubic-bezier(0.4,0,0.2,1)',
+                      transform: isPlaying ? 'scaleY(1)' : 'scaleY(0.7) translateY(4px)',
+                      opacity: isPlaying ? 1 : 0.5,
+                    }}
+                  />
+                  <rect
+                    x="14"
+                    y="4"
+                    width="4"
+                    height="16"
+                    rx="1"
+                    style={{
+                      transition: 'all 0.5s cubic-bezier(0.4,0,0.2,1)',
+                      transform: isPlaying ? 'scaleY(1)' : 'scaleY(0.7) translateY(4px)',
+                      opacity: isPlaying ? 1 : 0.5,
+                    }}
+                  />
+                </svg>
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="22"
+                  height="22"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="absolute left-0 top-0 w-full h-full"
+                  style={{
+                    transition: 'opacity 0.5s, transform 0.5s cubic-bezier(0.4,0,0.2,1)',
+                    opacity: !isPlaying ? 1 : 0,
+                    transform: !isPlaying ? 'scale(1) rotate(0deg)' : 'scale(0.85) rotate(15deg)',
+                    zIndex: !isPlaying ? 2 : 1,
+                  }}
+                >
+                  {/* Play icon */}
+                  <polygon
+                    points="5 3 19 12 5 21 5 3"
+                    style={{
+                      transition: 'all 0.5s cubic-bezier(0.4,0,0.2,1)',
+                      transform: !isPlaying ? 'scale(1)' : 'scale(0.7) translateX(4px)',
+                      opacity: !isPlaying ? 1 : 0.5,
+                    }}
+                  />
+                </svg>
+              </span>
+            </button>
+            <button
+              className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 shadow-lg bg-neutral-800 hover:bg-neutral-700 text-white disabled:opacity-50 disabled:cursor-not-allowed`}
+              onClick={onNextTrack}
+              disabled={disabled || !isController || !audioUrl || !syncReady || socketDisconnected || selectedTrackIdx === queue.length - 1}
+              aria-label="Next Track"
+              title="Next Track"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>
+            </button>
           </div>
         </div>
       </div>
-    </div>
+    </>
   );
 } 

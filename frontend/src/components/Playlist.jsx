@@ -265,13 +265,10 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
             {allTracks.map((track, idx) => (
               <div
                 key={track.url}
-                className="p-2 hover:bg-primary/10 transition-all duration-200 cursor-pointer flex items-center gap-3"
+                className={`p-2 ${isController ? 'hover:bg-primary/10 cursor-pointer' : 'cursor-not-allowed'} transition-all duration-200 flex items-center gap-3`}
                 onClick={() => {
-                  if (!isController || !socket || !sessionId) {
-                    // Just preview for non-controller or if missing socket/session
-                    onSelectTrack && onSelectTrack(null, track);
-                    return;
-                  }
+                  if (!isController) return;
+                  if (!socket || !sessionId) return;
                   // If already in queue, select it
                   const existingIdx = queue.findIndex(q => q.url === track.url);
                   if (existingIdx !== -1) {
@@ -284,7 +281,7 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
                     });
                   }
                 }}
-                title={`Play ${track.title}`}
+                title={isController ? `Play ${track.title}` : 'Only the controller can add or preview tracks'}
               >
                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${track.type === 'sample' ? 'bg-blue-800' : 'bg-neutral-800'}`}> 
                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white">
@@ -372,9 +369,9 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
             {queue.map((item, idx) => (
               <div
                 key={idx}
-                className={`p-4 hover:bg-primary/10 transition-all duration-300 group cursor-pointer ${queueAnimations[idx]?.animationClass || ''} ${selectedTrackIdx === idx ? 'bg-primary/20 border-l-4 border-primary' : ''}`}
-                onClick={() => onSelectTrack && onSelectTrack(idx)}
-                title={selectedTrackIdx === idx ? 'Currently Playing' : 'Click to play'}
+                className={`p-4 ${isController ? 'hover:bg-primary/10 cursor-pointer' : 'cursor-not-allowed'} transition-all duration-300 group ${queueAnimations[idx]?.animationClass || ''} ${selectedTrackIdx === idx ? 'bg-primary/20 border-l-4 border-primary' : ''}`}
+                onClick={() => isController && onSelectTrack && onSelectTrack(idx)}
+                title={selectedTrackIdx === idx ? 'Currently Playing' : isController ? 'Click to play' : 'Only the controller can change tracks'}
               >
                 <div className="flex items-center gap-3">
                   <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${selectedTrackIdx === idx ? 'bg-primary/80' : 'bg-neutral-800'}`}> 
