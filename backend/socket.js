@@ -777,6 +777,14 @@ export function setupSocket(io) {
       // (Optional) Adaptive correction logic can be added here
     });
 
+    // Avatar position update: ultra-low-latency broadcast to all other clients in the session
+    // Use volatile emit for best-effort, lightning-fast delivery (okay to drop if network congested)
+    socket.on('avatar_position_update', ({ sessionId, clientId, position }) => {
+      if (!sessionId || !clientId || !Array.isArray(position)) return;
+      // Use .volatile to minimize latency (does not queue if client is not ready)
+      socket.volatile.to(sessionId).emit('avatar_position_update', { clientId, position });
+    });
+
     socket.on('disconnect', () => {
       for (const [sessionId, session] of Object.entries(getAllSessions())) {
         const clientId = getClientIdBySocket(sessionId, socket.id);

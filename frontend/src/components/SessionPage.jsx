@@ -22,6 +22,7 @@ import {
 } from '../utils/persistence'
 import usePeerTimeSync from '../hooks/usePeerTimeSync'
 import useMultiPeerTimeSync from '../hooks/useMultiPeerTimeSync'
+import ThreeDRoom from './ThreeDRoom';
 
 function SessionPage({
   currentSessionId,
@@ -759,28 +760,43 @@ function SessionPage({
                   />
                 }
                 rightPanel={
-                  <ChatBox
-                    socket={socket}
-                    sessionId={currentSessionId}
-                    clientId={clientId}
-                    messages={messages}
-                    onSend={(msg) => {
-                      setMessages((prev) => {
-                        const newMessages = [...prev, msg]
-                        if (currentSessionId) {
-                          saveMessages(currentSessionId, newMessages)
-                        }
-                        return newMessages
-                      })
-                    }}
-                    clients={clients}
-                  />
+                  <div className="flex flex-col h-full" style={{ minHeight: 0 }}>
+                    <div className="flex-1 min-h-0" style={{ height: '50%' }}>
+                      <ThreeDRoom 
+                        displayName={displayName} 
+                        clientId={clientId} 
+                        roomName={currentSessionId} 
+                        users={clients || []} 
+                        socket={socket}
+                        sessionId={currentSessionId}
+                      />
+                    </div>
+                    <div className="flex-1 min-h-0 border-t border-neutral-800 overflow-hidden" style={{ height: '50%' }}>
+                      <ChatBox
+                        socket={socket}
+                        sessionId={currentSessionId}
+                        clientId={clientId}
+                        messages={messages}
+                        onSend={(msg) => {
+                          setMessages((prev) => {
+                            const newMessages = [...prev, msg]
+                            if (currentSessionId) {
+                              saveMessages(currentSessionId, newMessages)
+                            }
+                            return newMessages
+                          })
+                        }}
+                        clients={clients}
+                      />
+                    </div>
+                  </div>
                 }
                 leftMinWidth={200}
                 middleMinWidth={200}
                 rightMinWidth={200}
               />
             </div>
+            {/* Remove this duplicate ThreeDRoom from the left-side desktop layout */}
           </div>
 
           {/* Mobile Layout */}
@@ -934,6 +950,19 @@ function SessionPage({
                   mobile={true}
                   isChatTabActive={mobileTab === 2}
                 />
+              )}
+              {/* 3D Spatial Room Section */}
+              {mobileTab === 3 && (
+                <div className="h-full overflow-y-auto relative">
+                  <ThreeDRoom
+                    displayName={displayName}
+                    clientId={clientId}
+                    roomName={currentSessionId}
+                    users={clients || []}
+                    socket={socket}
+                    sessionId={currentSessionId}
+                  />
+                </div>
               )}
             </div>
             {/* Bottom Tab Bar */}
