@@ -19,16 +19,24 @@ const DRIFT_THRESHOLD = 0.25; // seconds (increased from 0.12)
 const PLAY_OFFSET = 0.35; // seconds (350ms future offset for play events)
 const DEFAULT_AUDIO_LATENCY = 0.08; // 80ms fallback if not measured
 const MICRO_DRIFT_THRESHOLD = 0.04; // seconds (was 0.08)
-const MICRO_RATE_CAP = 0.03; // max playbackRate delta (was 0.07)
 const MICRO_CORRECTION_WINDOW = 250; // ms (was 420)
 const DRIFT_JITTER_BUFFER = 4; // consecutive drift detections before correction (increased from 2)
 const RESYNC_COOLDOWN_MS = 2000; // minimum time between manual resyncs
 const RESYNC_HISTORY_SIZE = 5; // number of recent resyncs to track
 const SMART_RESYNC_THRESHOLD = 0.5; // drift threshold for smart resync suggestion
 // Micro drift correction constants
-const MICRO_DRIFT_MIN = 0.01; // 10ms
-const MICRO_DRIFT_MAX = 0.1;  // 100ms
-const MICRO_RATE_CAP_MICRO = 0.003; // max playbackRate delta for micro-correction
+const MICRO_DRIFT_MIN = 0.005; // 5ms (was 0.01)
+const MICRO_DRIFT_MAX = 0.05;  // 50ms (was 0.1)
+const MICRO_RATE_CAP = 0.01; // max playbackRate delta (was 0.03)
+const MICRO_RATE_CAP_MICRO = 0.001; // max playbackRate delta for micro-correction (was 0.003)
+
+// Add at the top of the file, after imports
+const log = (...args) => {
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(...args);
+  }
+};
+const MIN_BUFFER_AHEAD = 1.5; // seconds required ahead to allow drift correction
 
 function isFiniteNumber(n) {
   return typeof n === 'number' && isFinite(n);
@@ -200,11 +208,14 @@ function getNow(getServerTime) {
   }
 }
 
-// Move maybeCorrectDrift definition here, before any useEffect or handler that uses it
+// Move microCorrectDrift and maybeCorrectDrift here so they can access refs
 function microCorrectDrift(audio, drift, context = {}, updateDebug) {
   if (!audio) return;
-  if (Math.abs(drift) > MICRO_DRIFT_MIN && Math.abs(drift) < MICRO_DRIFT_MAX) {
-    let rate = 1 + Math.max(-MICRO_RATE_CAP, Math.min(MICRO_RATE_CAP, drift * 0.5));
+  // Use MICRO_DRIFT_THRESHOLD as the lower bound for micro-correction
+  if (Math.abs(drift) > MICRO_DRIFT_THRESHOLD && Math.abs(drift) < MICRO_DRIFT_MAX) {
+    // Use a smaller rate cap for very small drifts
+    let rateCap = Math.abs(drift) < 0.02 ? MICRO_RATE_CAP_MICRO : MICRO_RATE_CAP;
+    let rate = 1 + Math.max(-rateCap, Math.min(rateCap, drift * 0.3));
     if (process.env.NODE_ENV !== 'production') {
       console.log('[DriftCorrection] microCorrectDrift', {
         drift,
@@ -220,7 +231,7 @@ function microCorrectDrift(audio, drift, context = {}, updateDebug) {
     audio.playbackRate = rate;
     setTimeout(() => {
       audio.playbackRate = 1.0;
-    }, 500);
+    }, MICRO_CORRECTION_WINDOW); // use the constant for correction window
   } else {
     if (process.env.NODE_ENV !== 'production') {
       console.log('[DriftCorrection] microCorrectDrift skipped', {
@@ -240,8 +251,36 @@ function microCorrectDrift(audio, drift, context = {}, updateDebug) {
 function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
   if (!audio) return;
   const drift = audio.currentTime - expected;
+  // Prevent correction if buffer is low
+  let bufferAhead = 0;
+  try {
+    const buf = audio.buffered;
+    for (let i = 0; i < buf.length; i++) {
+      if (audio.currentTime >= buf.start(i) && audio.currentTime <= buf.end(i)) {
+        bufferAhead = buf.end(i) - audio.currentTime;
+        break;
+      }
+    }
+  } catch (e) {}
+  if (bufferAhead < MIN_BUFFER_AHEAD) {
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[DriftCorrection] Skipped: buffer ahead too low', { bufferAhead, drift });
+    }
+    if (typeof updateDebug === 'function') updateDebug('buffer-skip', drift, { ...context, bufferAhead });
+    return;
+  }
+  // Add cooldown after correction
+  const now = Date.now();
+  if (lastCorrectionRef.current && now - lastCorrectionRef.current < DRIFT_CORRECTION_COOLDOWN) {
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[DriftCorrection] Skipped: cooldown active', { lastCorrection: lastCorrectionRef.current, now });
+    }
+    if (typeof updateDebug === 'function') updateDebug('cooldown-skip', drift, { ...context, bufferAhead });
+    return;
+  }
   if (Math.abs(drift) > MICRO_DRIFT_MIN && Math.abs(drift) < MICRO_DRIFT_MAX) {
     microCorrectDrift(audio, drift, context, updateDebug);
+    lastCorrectionRef.current = now;
     return;
   }
   if (Math.abs(drift) >= MICRO_DRIFT_MAX) {
@@ -257,11 +296,12 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
         ...context
       });
     }
-    if (typeof updateDebug === 'function') updateDebug('seek', drift, context);
+    if (typeof updateDebug === 'function') updateDebug('seek', drift, { ...context, bufferAhead });
     setCurrentTimeSafely(audio, expected, (val) => {
       audio.currentTime = val;
     });
     audio.playbackRate = 1.0;
+    lastCorrectionRef.current = now;
   } else {
     if (process.env.NODE_ENV !== 'production') {
       console.log('[DriftCorrection] No correction needed', {
@@ -275,7 +315,7 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
         ...context
       });
     }
-    if (typeof updateDebug === 'function') updateDebug('none', drift, context);
+    if (typeof updateDebug === 'function') updateDebug('none', drift, { ...context, bufferAhead });
   }
 }
 
@@ -327,6 +367,8 @@ export default function AudioPlayer({
   const [displayedCurrentTime, setDisplayedCurrentTime] = useState(0);
   const lastSyncSeq = useRef(-1);
   const [syncReady, setSyncReady] = useState(false);
+  const [isBuffering, setIsBuffering] = useState(false);
+  const [bufferedAhead, setBufferedAhead] = useState(0);
 
   // Drift correction debug state (move here to ensure defined)
   const [driftCorrectionHistory, setDriftCorrectionHistory] = useState([]);
@@ -511,7 +553,21 @@ export default function AudioPlayer({
     const audio = audioRef.current;
     if (!audio) return;
     
-    const update = () => setCurrentTime(audio.currentTime);
+    const update = () => {
+      setCurrentTime(audio.currentTime);
+      // Update buffered ahead
+      let ahead = 0;
+      try {
+        const buf = audio.buffered;
+        for (let i = 0; i < buf.length; i++) {
+          if (audio.currentTime >= buf.start(i) && audio.currentTime <= buf.end(i)) {
+            ahead = buf.end(i) - audio.currentTime;
+            break;
+          }
+        }
+      } catch (e) {}
+      setBufferedAhead(ahead);
+    };
     const setDur = () => setDuration(audio.duration || 0);
     const handlePlaying = () => {
       if (playRequestedAt.current) {
@@ -519,16 +575,41 @@ export default function AudioPlayer({
         setAudioLatency(latency);
         playRequestedAt.current = null;
       }
+      setIsBuffering(false);
     };
-    
+    const handleWaiting = () => {
+      setIsBuffering(true);
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('[Buffer] Audio waiting event: likely buffer underrun');
+      }
+    };
+    const handleStalled = () => {
+      setIsBuffering(true);
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('[Buffer] Audio stalled event: network issue or buffer underrun');
+      }
+    };
+    const handleCanPlayThrough = () => {
+      setIsBuffering(false);
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('[Buffer] Audio canplaythrough: buffer refilled');
+      }
+    };
+
     audio.addEventListener('timeupdate', update);
     audio.addEventListener('durationchange', setDur);
     audio.addEventListener('playing', handlePlaying);
-    
+    audio.addEventListener('waiting', handleWaiting);
+    audio.addEventListener('stalled', handleStalled);
+    audio.addEventListener('canplaythrough', handleCanPlayThrough);
+
     return () => {
       audio.removeEventListener('timeupdate', update);
       audio.removeEventListener('durationchange', setDur);
       audio.removeEventListener('playing', handlePlaying);
+      audio.removeEventListener('waiting', handleWaiting);
+      audio.removeEventListener('stalled', handleStalled);
+      audio.removeEventListener('canplaythrough', handleCanPlayThrough);
     };
   }, [audioUrl]);
 
@@ -1804,6 +1885,14 @@ export default function AudioPlayer({
   } else {
     albumArt = defaultAlbumArt;
   }
+
+  // Add buffer state to UI (simple indicator)
+  {/* Buffering indicator */}
+  {isBuffering && (
+    <div className="fixed top-0 left-0 w-full bg-yellow-500 text-black text-center z-50 py-1 animate-pulse">
+      Buffering... ({bufferedAhead.toFixed(1)}s buffered)
+    </div>
+  )}
 
   return (
     <>

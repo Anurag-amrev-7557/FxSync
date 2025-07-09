@@ -18,7 +18,14 @@ export default function useMultiPeerTimeSync(socket, clientId, peerIds) {
 
   // Add forceUpdate state to trigger re-renders
   const [, setForceUpdate] = useState(0);
-  const forceUpdate = useCallback(() => setForceUpdate(f => f + 1), []);
+  const forceUpdate = useCallback(() => {
+    setForceUpdate(f => {
+      if (process.env.NODE_ENV !== 'production') {
+        console.debug('[MultiPeerSync] forceUpdate triggered');
+      }
+      return f + 1;
+    });
+  }, []);
 
   // Call usePeerTimeSync for each peer, passing forceUpdate as onUpdate
   const peerSyncs = paddedPeerIds.map(peerId =>
