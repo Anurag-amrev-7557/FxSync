@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import SyncStatus from './SyncStatus';
 import useSmoothAppearance from '../hooks/useSmoothAppearance';
 import LoadingSpinner from './LoadingSpinner';
@@ -30,6 +30,77 @@ const MICRO_DRIFT_MIN = 0.01; // 10ms
 const MICRO_DRIFT_MAX = 0.15;  // 150ms (was 0.1, increased to make seeking rarer)
 const MICRO_RATE_CAP_MICRO = 0.003; // max playbackRate delta for micro-correction
 const MIN_BUFFER_AHEAD = 0.5; // seconds, minimum buffer ahead to allow drift correction
+
+// Adaptive drift correction constants
+const BASE_DRIFT_THRESHOLD = 0.25; // seconds (baseline)
+const BASE_MICRO_DRIFT_MIN = 0.01; // 10ms baseline
+const BASE_MICRO_DRIFT_MAX = 0.15; // 150ms baseline
+const BASE_MICRO_RATE_CAP = 0.015; // max playbackRate delta baseline
+
+// Device-specific multipliers
+const DEVICE_MULTIPLIERS = {
+  mobile: { threshold: 1.5, microMin: 1.2, microMax: 1.3, rateCap: 0.8 },
+  tablet: { threshold: 1.3, microMin: 1.1, microMax: 1.2, rateCap: 0.9 },
+  desktop: { threshold: 1.0, microMin: 1.0, microMax: 1.0, rateCap: 1.0 },
+  lowEnd: { threshold: 2.0, microMin: 1.5, microMax: 1.8, rateCap: 0.6 }
+};
+
+// Network condition multipliers
+const NETWORK_MULTIPLIERS = {
+  excellent: { threshold: 0.8, microMin: 0.8, microMax: 0.8, rateCap: 1.2 },
+  good: { threshold: 1.0, microMin: 1.0, microMax: 1.0, rateCap: 1.0 },
+  fair: { threshold: 1.3, microMin: 1.2, microMax: 1.3, rateCap: 0.8 },
+  poor: { threshold: 1.8, microMin: 1.5, microMax: 1.8, rateCap: 0.6 }
+};
+
+// Helper function to detect device type
+function detectDeviceType() {
+  const ua = navigator.userAgent.toLowerCase();
+  const isMobile = /mobile|android|iphone|ipad|ipod|blackberry|windows phone/i.test(ua);
+  const isTablet = /tablet|ipad/i.test(ua);
+  const isLowEnd = navigator.hardwareConcurrency <= 2 || navigator.deviceMemory <= 2;
+  
+  if (isLowEnd) return 'lowEnd';
+  if (isTablet) return 'tablet';
+  if (isMobile) return 'mobile';
+  return 'desktop';
+}
+
+// Helper function to assess network quality
+function assessNetworkQuality(rtt, jitter) {
+  if (rtt < 30 && jitter < 10) return 'excellent';
+  if (rtt < 80 && jitter < 25) return 'good';
+  if (rtt < 150 && jitter < 50) return 'fair';
+  return 'poor';
+}
+
+// Dynamic threshold calculation
+function calculateAdaptiveThresholds(rtt, jitter, audioLatency) {
+  const deviceType = detectDeviceType();
+  const networkQuality = assessNetworkQuality(rtt, jitter);
+  
+  const deviceMultiplier = DEVICE_MULTIPLIERS[deviceType];
+  const networkMultiplier = NETWORK_MULTIPLIERS[networkQuality];
+  
+  // Combine multipliers (geometric mean for better balance)
+  const combinedThreshold = Math.sqrt(deviceMultiplier.threshold * networkMultiplier.threshold);
+  const combinedMicroMin = Math.sqrt(deviceMultiplier.microMin * networkMultiplier.microMin);
+  const combinedMicroMax = Math.sqrt(deviceMultiplier.microMax * networkMultiplier.microMax);
+  const combinedRateCap = Math.sqrt(deviceMultiplier.rateCap * networkMultiplier.rateCap);
+  
+  // Additional latency-based adjustment
+  const latencyAdjustment = audioLatency ? Math.min(2.0, Math.max(0.5, audioLatency / 0.1)) : 1.0;
+  
+  return {
+    driftThreshold: BASE_DRIFT_THRESHOLD * combinedThreshold * latencyAdjustment,
+    microDriftMin: BASE_MICRO_DRIFT_MIN * combinedMicroMin,
+    microDriftMax: BASE_MICRO_DRIFT_MAX * combinedMicroMax,
+    microRateCap: BASE_MICRO_RATE_CAP * combinedRateCap,
+    deviceType,
+    networkQuality,
+    latencyAdjustment
+  };
+}
 
 function isFiniteNumber(n) {
   return typeof n === 'number' && isFinite(n);
@@ -274,47 +345,161 @@ export default function AudioPlayer({
   const [lastCorrectionType, setLastCorrectionType] = useState('none');
   const [bufferedAhead, setBufferedAhead] = useState(0);
 
+  // Enhanced drift analytics and monitoring
+  const [driftAnalytics, setDriftAnalytics] = useState({
+    totalDrifts: 0,
+    correctedDrifts: 0,
+    averageDrift: 0,
+    maxDrift: 0,
+    deviceType: 'unknown',
+    networkQuality: 'unknown',
+    lastUpdate: Date.now()
+  });
+
+  // Enhanced drift history tracking
+  useEffect(() => {
+    if (!window._audioDriftHistory || window._audioDriftHistory.length === 0) return;
+    
+    const recentDrifts = window._audioDriftHistory.slice(-20);
+    const totalDrifts = recentDrifts.length;
+    const correctedDrifts = recentDrifts.filter(d => d.corrected).length;
+    const averageDrift = recentDrifts.reduce((sum, d) => sum + d.drift, 0) / totalDrifts;
+    const maxDrift = Math.max(...recentDrifts.map(d => d.drift));
+    
+    const currentThresholds = calculateAdaptiveThresholds(rtt || 0, jitter || 0, audioLatency || 0);
+    
+    setDriftAnalytics({
+      totalDrifts,
+      correctedDrifts,
+      averageDrift,
+      maxDrift,
+      deviceType: currentThresholds.deviceType,
+      networkQuality: currentThresholds.networkQuality,
+      lastUpdate: Date.now()
+    });
+  }, [rtt, jitter, audioLatency]);
+
+  // Enhanced drift reporting with analytics
+  const emitEnhancedDriftReport = useCallback((drift, expected, current, extra = {}) => {
+    if (socket && socket.emit && socket.sessionId && typeof drift === 'number') {
+      const currentThresholds = calculateAdaptiveThresholds(rtt || 0, jitter || 0, audioLatency || 0);
+      
+      socket.emit('drift_report', {
+        sessionId: socket.sessionId,
+        drift,
+        expected,
+        current,
+        clientId,
+        timestamp: Date.now(),
+        analytics: {
+          deviceType: currentThresholds.deviceType,
+          networkQuality: currentThresholds.networkQuality,
+          adaptiveThreshold: currentThresholds.driftThreshold,
+          rtt,
+          jitter,
+          audioLatency,
+          driftHistory: window._audioDriftHistory ? window._audioDriftHistory.slice(-5) : []
+        },
+        ...extra,
+      });
+    }
+  }, [socket, rtt, jitter, audioLatency, clientId]);
+
 // --- Drift correction helpers moved inside the component ---
 function microCorrectDrift(audio, drift, context = {}, updateDebug) {
   if (!audio) return;
-  if (Math.abs(drift) > MICRO_DRIFT_MIN && Math.abs(drift) < MICRO_DRIFT_MAX) {
-    let rate = 1 + Math.max(-MICRO_RATE_CAP, Math.min(MICRO_RATE_CAP, drift * 0.5));
+  
+  // Calculate adaptive thresholds based on current conditions
+  const adaptiveThresholds = calculateAdaptiveThresholds(
+    context.rtt || 0, 
+    context.jitter || 0, 
+    context.audioLatency || 0
+  );
+  
+  const { microDriftMin, microDriftMax, microRateCap } = adaptiveThresholds;
+  
+  if (Math.abs(drift) > microDriftMin && Math.abs(drift) < microDriftMax) {
+    // Enhanced rate calculation with predictive adjustment
+    const baseRate = 1 + Math.max(-microRateCap, Math.min(microRateCap, drift * 0.5));
+    
+    // Predictive adjustment based on drift trend
+    const driftTrend = context.driftHistory ? calculateDriftTrend(context.driftHistory) : 0;
+    const predictiveAdjustment = Math.max(-0.002, Math.min(0.002, driftTrend * 0.1));
+    
+    const finalRate = baseRate + predictiveAdjustment;
+    
     if (process.env.NODE_ENV !== 'production') {
-      console.log('[DriftCorrection] microCorrectDrift', {
+      console.log('[DriftCorrection] Enhanced microCorrectDrift', {
         drift,
-        playbackRate: rate,
+        baseRate,
+        predictiveAdjustment,
+        finalRate,
+        deviceType: adaptiveThresholds.deviceType,
+        networkQuality: adaptiveThresholds.networkQuality,
         jitter: context.jitter,
         audioLatency: context.audioLatency,
         rtt: context.rtt,
-        correction: 'micro',
+        correction: 'enhanced-micro',
         ...context
       });
     }
-    if (typeof updateDebug === 'function') updateDebug('micro', drift, context);
-    audio.playbackRate = rate;
+    
+    if (typeof updateDebug === 'function') updateDebug('enhanced-micro', drift, { ...context, adaptiveThresholds });
+    
+    audio.playbackRate = finalRate;
+    
+    // Adaptive correction window based on network quality
+    const correctionWindow = adaptiveThresholds.networkQuality === 'poor' ? 500 : 300;
     setTimeout(() => {
       audio.playbackRate = 1.0;
-    }, MICRO_CORRECTION_WINDOW); // use new constant
+    }, correctionWindow);
   } else {
     if (process.env.NODE_ENV !== 'production') {
       console.log('[DriftCorrection] microCorrectDrift skipped', {
         drift,
+        microDriftMin,
+        microDriftMax,
+        deviceType: adaptiveThresholds.deviceType,
+        networkQuality: adaptiveThresholds.networkQuality,
         jitter: context.jitter,
         audioLatency: context.audioLatency,
         rtt: context.rtt,
-        correction: 'micro-skip',
+        correction: 'enhanced-micro-skip',
         ...context
       });
     }
-    if (typeof updateDebug === 'function') updateDebug('micro-skip', drift, context);
+    if (typeof updateDebug === 'function') updateDebug('enhanced-micro-skip', drift, { ...context, adaptiveThresholds });
     audio.playbackRate = 1.0;
   }
 }
 
+// Helper function to calculate drift trend
+function calculateDriftTrend(driftHistory) {
+  if (!driftHistory || driftHistory.length < 3) return 0;
+  
+  const recent = driftHistory.slice(-3);
+  const trend = recent.reduce((sum, drift, i) => {
+    return sum + (drift * (i + 1)); // Weight recent drifts more heavily
+  }, 0) / 6; // Normalize by sum of weights
+  
+  return trend;
+}
+
 function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
   if (!audio) return;
+  
   const drift = audio.currentTime - expected;
-  // Prevent correction if buffer is low
+  
+  // Calculate adaptive thresholds
+  const adaptiveThresholds = calculateAdaptiveThresholds(
+    context.rtt || 0, 
+    context.jitter || 0, 
+    context.audioLatency || 0
+  );
+  
+  const { microDriftMin, microDriftMax, driftThreshold } = adaptiveThresholds;
+  
+  // Enhanced buffer ahead calculation with adaptive minimum
   let bufferAhead = 0;
   try {
     const buf = audio.buffered;
@@ -325,44 +510,96 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
       }
     }
   } catch (e) {}
-  if (bufferAhead < MIN_BUFFER_AHEAD) {
+  
+  // Adaptive buffer threshold based on network quality
+  const adaptiveBufferThreshold = adaptiveThresholds.networkQuality === 'poor' ? 1.0 : 0.5;
+  
+  if (bufferAhead < adaptiveBufferThreshold) {
     if (process.env.NODE_ENV !== 'production') {
-      console.log('[DriftCorrection] Skipped: buffer ahead too low', { bufferAhead, drift });
+      console.log('[DriftCorrection] Skipped: buffer ahead too low', { 
+        bufferAhead, 
+        adaptiveBufferThreshold,
+        drift,
+        networkQuality: adaptiveThresholds.networkQuality
+      });
     }
-    if (typeof updateDebug === 'function') updateDebug('buffer-skip', drift, { ...context, bufferAhead });
+    if (typeof updateDebug === 'function') updateDebug('buffer-skip', drift, { ...context, bufferAhead, adaptiveThresholds });
     return;
   }
-  // Add cooldown after correction
+  
+  // Enhanced cooldown logic with adaptive timing
   const now = Date.now();
-  if (lastCorrectionRef.current && now - lastCorrectionRef.current < CORRECTION_COOLDOWN) {
+  const baseCooldown = 1200; // ms
+  const adaptiveCooldown = baseCooldown * (adaptiveThresholds.networkQuality === 'poor' ? 1.5 : 1.0);
+  
+  if (lastCorrectionRef.current && now - lastCorrectionRef.current < adaptiveCooldown) {
     if (process.env.NODE_ENV !== 'production') {
-      console.log('[DriftCorrection] Skipped: cooldown active', { lastCorrection: lastCorrectionRef.current, now });
+      console.log('[DriftCorrection] Skipped: adaptive cooldown active', { 
+        lastCorrection: lastCorrectionRef.current, 
+        now,
+        adaptiveCooldown,
+        networkQuality: adaptiveThresholds.networkQuality
+      });
     }
-    if (typeof updateDebug === 'function') updateDebug('cooldown-skip', drift, { ...context, bufferAhead });
+    if (typeof updateDebug === 'function') updateDebug('adaptive-cooldown-skip', drift, { ...context, bufferAhead, adaptiveThresholds });
     return;
   }
-  if (Math.abs(drift) > MICRO_DRIFT_MIN && Math.abs(drift) < MICRO_DRIFT_MAX) {
-    microCorrectDrift(audio, drift, context, updateDebug);
+  
+  // Enhanced correction logic with adaptive thresholds
+  if (Math.abs(drift) > microDriftMin && Math.abs(drift) < microDriftMax) {
+    microCorrectDrift(audio, drift, { ...context, driftHistory: window._audioDriftHistory }, updateDebug);
     lastCorrectionRef.current = now;
     return;
   }
-  if (Math.abs(drift) >= MICRO_DRIFT_MAX) {
+  
+  if (Math.abs(drift) >= microDriftMax) {
     if (process.env.NODE_ENV !== 'production') {
-      console.log('[DriftCorrection] Hard seek', {
+      console.log('[DriftCorrection] Enhanced hard seek', {
         drift,
         expected,
         current: audio.currentTime,
+        deviceType: adaptiveThresholds.deviceType,
+        networkQuality: adaptiveThresholds.networkQuality,
         jitter: context.jitter,
         audioLatency: context.audioLatency,
         rtt: context.rtt,
-        correction: 'seek',
+        correction: 'enhanced-seek',
         ...context
       });
     }
-    if (typeof updateDebug === 'function') updateDebug('seek', drift, { ...context, bufferAhead });
-    setCurrentTimeSafely(audio, expected, (val) => {
-      audio.currentTime = val;
-    });
+    if (typeof updateDebug === 'function') updateDebug('enhanced-seek', drift, { ...context, bufferAhead, adaptiveThresholds });
+    
+    // Enhanced seeking with gradual approach for large drifts
+    if (Math.abs(drift) > 1.0) {
+      // For very large drifts, seek gradually to avoid jarring jumps
+      const targetTime = expected;
+      const currentTime = audio.currentTime;
+      const step = (targetTime - currentTime) / 3;
+      
+      setTimeout(() => {
+        setCurrentTimeSafely(audio, currentTime + step, (val) => {
+          audio.currentTime = val;
+        });
+      }, 50);
+      
+      setTimeout(() => {
+        setCurrentTimeSafely(audio, currentTime + step * 2, (val) => {
+          audio.currentTime = val;
+        });
+      }, 100);
+      
+      setTimeout(() => {
+        setCurrentTimeSafely(audio, targetTime, (val) => {
+          audio.currentTime = val;
+        });
+      }, 150);
+    } else {
+      // Direct seek for smaller drifts
+      setCurrentTimeSafely(audio, expected, (val) => {
+        audio.currentTime = val;
+      });
+    }
+    
     audio.playbackRate = 1.0;
     lastCorrectionRef.current = now;
   } else {
@@ -371,6 +608,8 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
         drift,
         expected,
         current: audio.currentTime,
+        deviceType: adaptiveThresholds.deviceType,
+        networkQuality: adaptiveThresholds.networkQuality,
         jitter: context.jitter,
         audioLatency: context.audioLatency,
         rtt: context.rtt,
@@ -378,7 +617,7 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
         ...context
       });
     }
-    if (typeof updateDebug === 'function') updateDebug('none', drift, { ...context, bufferAhead });
+    if (typeof updateDebug === 'function') updateDebug('none', drift, { ...context, bufferAhead, adaptiveThresholds });
   }
 }
   // Add at the top of the component
@@ -644,9 +883,12 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
       syncTimeout = setTimeout(() => setSyncStatus('In Sync'), duration);
     };
 
-    // Helper: emit drift report with more context
+    // Enhanced drift report with ML context
     const emitDriftReport = (drift, expected, current, extra = {}) => {
       if (socket && socket.emit && socket.sessionId && typeof drift === 'number') {
+        const deviceType = detectDeviceType();
+        const networkQuality = assessNetworkQuality(rtt || 0, jitter || 0);
+        
         socket.emit('drift_report', {
           sessionId: socket.sessionId,
           drift,
@@ -654,6 +896,13 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
           current,
           clientId,
           timestamp: Date.now(),
+          deviceType,
+          networkQuality,
+          rtt,
+          jitter,
+          audioLatency: measuredAudioLatency,
+          networkLatency: propNetworkLatency,
+          adaptiveThresholds,
           ...extra,
         });
       }
@@ -720,9 +969,9 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
       }
       const drift = Math.abs(audio.currentTime - expected);
 
-      // Enhanced: keep drift history for analytics (last 10 drifts)
+      // Enhanced: keep drift history for analytics (last 20 drifts with correction status)
       if (!window._audioDriftHistory) window._audioDriftHistory = [];
-      window._audioDriftHistory.push({
+      const driftEntry = {
         drift,
         current: audio.currentTime,
         expected,
@@ -730,22 +979,34 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
         isPlaying,
         ctrlId,
         trackId,
-      });
-      if (window._audioDriftHistory.length > 10) window._audioDriftHistory.shift();
+        corrected: false, // Will be set to true if correction is applied
+        threshold: adaptiveThreshold,
+        deviceType: adaptiveThresholds.deviceType,
+        networkQuality: adaptiveThresholds.networkQuality
+      };
+      window._audioDriftHistory.push(driftEntry);
+      if (window._audioDriftHistory.length > 20) window._audioDriftHistory.shift();
 
-      // Enhanced: show drift in UI if large
-      if (drift > DRIFT_THRESHOLD) {
+      // Enhanced: show drift in UI if large (using adaptive threshold)
+      if (drift > adaptiveThreshold) {
         driftCountRef.current += 1;
         if (driftCountRef.current >= DRIFT_JITTER_BUFFER) {
           showSyncStatus('Drifted', 1000);
           maybeCorrectDrift(
             audio,
             expected,
-            { jitter, audioLatency, rtt, drift },
+            { jitter, audioLatency, rtt, drift, adaptiveThresholds },
             (type, driftVal, ctx) => {
               setDriftCorrectionCount(c => c + 1);
               setLastCorrectionType(type);
               setDriftCorrectionHistory(h => [{ type, drift: driftVal, ctx, ts: Date.now() }, ...h.slice(0, 9)]);
+              
+              // Mark the most recent drift entry as corrected
+              if (window._audioDriftHistory && window._audioDriftHistory.length > 0) {
+                const lastEntry = window._audioDriftHistory[window._audioDriftHistory.length - 1];
+                lastEntry.corrected = true;
+                lastEntry.correctionType = type;
+              }
             }
           );
           setSyncStatus('Re-syncing...');
@@ -755,7 +1016,7 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
           if (typeof socket?.forceTimeSync === 'function') {
             socket.forceTimeSync();
           }
-          emitDriftReport(drift, expected, audio.currentTime, { ctrlId, trackId, meta });
+          emitEnhancedDriftReport(drift, expected, audio.currentTime, { ctrlId, trackId, meta });
           driftCountRef.current = 0;
         }
       } else {
@@ -778,17 +1039,60 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
       setSyncReady(true);
     };
 
+    // ML-based sync optimization handler
+    const handleSyncOptimization = (optimization) => {
+      if (!optimization || !optimization.sessionId) return;
+      
+      const { optimalIntervals, driftPatterns, mlInsights } = optimization;
+      
+      // Store optimization data for local use
+      if (!window._mlSyncOptimization) {
+        window._mlSyncOptimization = {};
+      }
+      window._mlSyncOptimization[optimization.sessionId] = optimization;
+      
+      // Log ML insights in development
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[ML] Sync optimization received:', {
+          sessionId: optimization.sessionId,
+          optimalIntervals,
+          driftPatterns,
+          mlInsights
+        });
+      }
+      
+      // Update local sync behavior based on ML insights
+      if (mlInsights && mlInsights.avgConfidence > 0.7) {
+        // High confidence predictions - adjust local thresholds
+        const clientInterval = optimalIntervals[clientId];
+        if (clientInterval && clientInterval < BASE_SYNC_INTERVAL) {
+          // More aggressive sync for this client
+          setAdaptiveThresholds(prev => ({
+            ...prev,
+            driftThreshold: prev.driftThreshold * 0.8,
+            microDriftMax: prev.microDriftMax * 0.8
+          }));
+        }
+      }
+    };
+
     socket.on('sync_state', handleSyncState);
+    socket.on('sync_optimization', handleSyncOptimization);
 
     return () => {
       socket.off('sync_state', handleSyncState);
+      socket.off('sync_optimization', handleSyncOptimization);
       if (syncTimeout) clearTimeout(syncTimeout);
       if (resyncTimeout) clearTimeout(resyncTimeout);
     };
   }, [socket, audioLatency, getServerTime, clientId, rtt, smoothedOffset, testLatency, networkLatency]);
 
-  // --- Adaptive Drift Threshold ---
-  const adaptiveThreshold = Math.max(0.12, (jitter || 0) * 2, (audioLatency || 0) * 2);
+  // --- Enhanced Adaptive Drift Threshold ---
+  const adaptiveThresholds = useMemo(() => 
+    calculateAdaptiveThresholds(rtt || 0, jitter || 0, audioLatency || 0), 
+    [rtt, jitter, audioLatency]
+  );
+  const adaptiveThreshold = adaptiveThresholds.driftThreshold;
 
   // Enhanced periodic drift check (for followers)
   useEffect(() => {
@@ -1417,13 +1721,30 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
     }
   }, []);
 
+  // Animation ref to prevent multiple animation loops
+  const animationRef = useRef(null);
+  const isAnimatingRef = useRef(false);
+
   // Smoothly animate displayedCurrentTime toward audio.currentTime
   useEffect(() => {
+    // Cancel any existing animation
+    if (animationRef.current) {
+      cancelAnimationFrame(animationRef.current);
+      animationRef.current = null;
+    }
+    
     setDisplayedCurrentTime(0); // Immediately reset timer visually on track change
-    let raf;
+    isAnimatingRef.current = true;
+    
     const animate = () => {
+      if (!isAnimatingRef.current) return;
+      
       const audio = audioRef.current;
-      if (!audio) return;
+      if (!audio) {
+        isAnimatingRef.current = false;
+        return;
+      }
+      
       const actual = audio.currentTime;
       setDisplayedCurrentTime(prev => {
         // If the difference is extremely tiny, snap to actual
@@ -1431,10 +1752,19 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
         // Ultra-smooth lerp (smaller factor)
         return prev + (actual - prev) * 0.10;
       });
-      raf = requestAnimationFrame(animate);
+      
+      animationRef.current = requestAnimationFrame(animate);
     };
-    raf = requestAnimationFrame(animate);
-    return () => cancelAnimationFrame(raf);
+    
+    animationRef.current = requestAnimationFrame(animate);
+    
+    return () => {
+      isAnimatingRef.current = false;
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+        animationRef.current = null;
+      }
+    };
   }, [audioUrl, currentTrack?.url]);
 
   // Reset playback position to start when track changes
@@ -1535,55 +1865,71 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
   const [lastAutoResyncTime, setLastAutoResyncTime] = useState(0);
   const persistentDriftCountRef = useRef(0);
 
+  // Use a ref to track the last drift check to prevent excessive updates
+  const lastDriftCheckRef = useRef(0);
+  const DRIFT_CHECK_INTERVAL = 100; // ms, minimum time between drift checks
+
   useEffect(() => {
+    const now = Date.now();
+    if (now - lastDriftCheckRef.current < DRIFT_CHECK_INTERVAL) return;
+    lastDriftCheckRef.current = now;
+    
     if (typeof displayedCurrentTime !== 'number' || typeof currentTime !== 'number') return;
     const drift = Math.abs(displayedCurrentTime - currentTime);
+    
     setDriftHistory(prev => {
       const newHistory = [...prev, drift].slice(-PERSISTENT_DRIFT_WINDOW);
+      
+      // Outlier filtering for persistent drift (using the new history)
+      const med = median(newHistory);
+      const deviation = mad(newHistory, med);
+      const filteredDrifts = newHistory.filter(d => Math.abs(d - med) <= 2 * deviation);
+      
+      if (drift > adaptiveThreshold) {
+        persistentDriftCountRef.current += 1;
+        if (
+          persistentDriftCountRef.current >= PERSISTENT_DRIFT_LIMIT &&
+          !autoResyncTriggered &&
+          now - lastAutoResyncTime > AUTO_RESYNC_COOLDOWN &&
+          filteredDrifts.filter(d => d > adaptiveThreshold).length >= Math.floor(PERSISTENT_DRIFT_WINDOW * 0.7)
+        ) {
+          // Use setTimeout to avoid state updates during render
+          setTimeout(() => {
+            setSyncStatus('Auto-resyncing...');
+            setAutoResyncTriggered(true);
+            setLastAutoResyncTime(Date.now());
+            if (typeof socket?.triggerResync === 'function') {
+              socket.triggerResync();
+            }
+            // Enhanced logging for persistent drift
+            if (process.env.NODE_ENV === 'production') {
+              fetch('/log/drift', {
+                method: 'POST',
+                body: JSON.stringify({
+                  clientId,
+                  drift,
+                  driftHistory: filteredDrifts.slice(),
+                  type: 'persistent',
+                  timestamp: Date.now(),
+                  threshold: adaptiveThreshold,
+                  autoResync: true
+                }),
+                headers: { 'Content-Type': 'application/json' }
+              }).catch(() => {});
+            }
+            persistentDriftCountRef.current = 0;
+          }, 0);
+        }
+      } else {
+        persistentDriftCountRef.current = 0;
+        if (autoResyncTriggered) {
+          setTimeout(() => setAutoResyncTriggered(false), 0);
+        }
+      }
+      
       return newHistory;
     });
-    // Outlier filtering for persistent drift
-    const med = median(driftHistory);
-    const deviation = mad(driftHistory, med);
-    const filteredDrifts = driftHistory.filter(d => Math.abs(d - med) <= 2 * deviation);
-    const now = Date.now();
-    if (drift > adaptiveThreshold) {
-      persistentDriftCountRef.current += 1;
-      if (
-        persistentDriftCountRef.current >= PERSISTENT_DRIFT_LIMIT &&
-        !autoResyncTriggered &&
-        now - lastAutoResyncTime > AUTO_RESYNC_COOLDOWN &&
-        filteredDrifts.filter(d => d > adaptiveThreshold).length >= Math.floor(PERSISTENT_DRIFT_WINDOW * 0.7)
-      ) {
-        setSyncStatus('Auto-resyncing...');
-        setAutoResyncTriggered(true);
-        setLastAutoResyncTime(now);
-        if (typeof socket?.triggerResync === 'function') {
-          socket.triggerResync();
-        }
-        // Enhanced logging for persistent drift
-        if (process.env.NODE_ENV === 'production') {
-          fetch('/log/drift', {
-            method: 'POST',
-            body: JSON.stringify({
-              clientId,
-              drift,
-              driftHistory: filteredDrifts.slice(),
-              type: 'persistent',
-              timestamp: now,
-              threshold: adaptiveThreshold,
-              autoResync: true
-            }),
-            headers: { 'Content-Type': 'application/json' }
-          }).catch(() => {});
-        }
-        persistentDriftCountRef.current = 0;
-      }
-    } else {
-      persistentDriftCountRef.current = 0;
-      setAutoResyncTriggered(false);
-    }
-  }, [displayedCurrentTime, currentTime, adaptiveThreshold, socket, clientId]);
+  }, [displayedCurrentTime, currentTime, adaptiveThreshold, socket, clientId, autoResyncTriggered, lastAutoResyncTime]);
 
   // --- Debug panel for latency, offset, RTT, drift (dev only) ---
   const debugPanel = process.env.NODE_ENV !== 'production' ? (
@@ -1682,7 +2028,10 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
           <div className="flex items-center justify-between mb-1 px-1">
             {/* Left: SyncStatus and status text */}
             <div className="flex items-center gap-2 w-fit min-w-0" style={{ minHeight: 28, height: 28, maxWidth: '100%' }}>
-              <SyncStatus status={syncStatus} />
+              <SyncStatus 
+                status={syncStatus} 
+                mlInsights={window._mlSyncOptimization?.[socket?.sessionId]?.mlInsights}
+              />
             </div>
             <button
               className={`text-[11px] font-mono rounded px-1.5 py-0.5 flex items-center justify-center transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed
@@ -2007,12 +2356,23 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
     </div>
   )}
 
+
+
   return (
     <>
       {!mobile && (
         <div className="flex items-center justify-between mb-3 px-2">
           <div className="flex items-center">
-            <SyncStatus status={syncStatus} showSmartSuggestion={smartResyncSuggestion} />
+            <SyncStatus 
+              status={syncStatus} 
+              showSmartSuggestion={smartResyncSuggestion}
+              rtt={rtt}
+              jitter={jitter}
+              drift={typeof displayedCurrentTime === 'number' && typeof currentTime === 'number' ? (displayedCurrentTime - currentTime) * 1000 : null}
+              deviceType={adaptiveThresholds?.deviceType}
+              networkQuality={adaptiveThresholds?.networkQuality}
+              showMetrics={process.env.NODE_ENV === 'development'}
+            />
           </div>
           <div className="flex items-center">
             <button
