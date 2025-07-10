@@ -16,7 +16,7 @@ function CreateRoomPage({ onConfirm }) {
       setError('')
       try {
         const url = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000'
-        const res = await fetch(`${url}/generate-session-id`)
+        const res = await fetch(`${url}/session/generate-session-id`)
         const data = await res.json()
         setSessionId(data.sessionId || '')
       } catch (e) {
@@ -46,7 +46,7 @@ function CreateRoomPage({ onConfirm }) {
   return (
     <CreateRoom
       sessionId={sessionId}
-      onConfirm={() => navigate(`/${sessionId}`)}
+      onConfirm={() => navigate(`/session/${sessionId}`)}
       onCancel={() => navigate('/')}
     />
   )

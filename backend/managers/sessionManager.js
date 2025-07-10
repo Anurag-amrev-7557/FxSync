@@ -14,7 +14,8 @@ export function createSession(sessionId, controllerId, controllerClientId) {
     clients: new Map(), // Map<socketId, {displayName, deviceInfo, clientId}>
     queue: [],
     selectedTrackIdx: 0,
-    pendingControllerRequests: new Map() // Map<clientId, {requestTime, requesterName}>
+    pendingControllerRequests: new Map(), // Map<clientId, {requestTime, requesterName}>
+    syncSeq: 0 // Add syncSeq property
   };
   return sessions[sessionId];
 }
@@ -61,6 +62,7 @@ export function updatePlayback(sessionId, { isPlaying, timestamp, controllerId }
   sessions[sessionId].timestamp = timestamp;
   sessions[sessionId].lastUpdated = Date.now();
   sessions[sessionId].controllerId = controllerId;
+  sessions[sessionId].syncSeq = (sessions[sessionId].syncSeq || 0) + 1; // Increment syncSeq
 }
 
 export function updateTimestamp(sessionId, timestamp, controllerId) {
@@ -68,6 +70,7 @@ export function updateTimestamp(sessionId, timestamp, controllerId) {
   sessions[sessionId].timestamp = timestamp;
   sessions[sessionId].lastUpdated = Date.now();
   sessions[sessionId].controllerId = controllerId;
+  sessions[sessionId].syncSeq = (sessions[sessionId].syncSeq || 0) + 1; // Increment syncSeq
 }
 
 export function getClientIdBySocket(sessionId, socketId) {
@@ -124,4 +127,5 @@ export function setSelectedTrackIdx(sessionId, idx) {
   if (!sessions[sessionId]) return;
   sessions[sessionId].selectedTrackIdx = idx;
   sessions[sessionId].lastUpdated = Date.now();
+  sessions[sessionId].syncSeq = (sessions[sessionId].syncSeq || 0) + 1; // Increment syncSeq
 } 

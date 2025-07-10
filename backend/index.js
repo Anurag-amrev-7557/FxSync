@@ -6,6 +6,7 @@ import { setupSocket } from './socket.js';
 import audioRouter from './routes/audio.js';
 import sessionRouter from './routes/session.js';
 import healthRouter from './routes/health.js';
+import logRouter from './routes/log.js';
 import { log } from './utils/utils.js';
 import dotenv from 'dotenv';
 dotenv.config();
@@ -34,6 +35,7 @@ app.use(express.json());
 app.use('/audio', audioRouter);
 app.use('/session', sessionRouter);
 app.use('/health', healthRouter);
+app.use('/log', logRouter);
 
 app.get('/', (req, res) => {
   res.send('<h1>Audio Sync Backend is running! 🚀</h1><p>Deployed on Render.</p>');

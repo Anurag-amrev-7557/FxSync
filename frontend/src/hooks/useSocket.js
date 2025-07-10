@@ -32,7 +32,7 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
   const clientId = getClientId();
 
   // --- NTP-like multi-round time sync before joining session ---
-  async function ntpBatchSync(socket, rounds = 8) {
+  async function ntpBatchSync(socket, rounds = 16) {
     const samples = [];
     for (let i = 0; i < rounds; i++) {
       const now = Date.now();
@@ -48,44 +48,38 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
               typeof data.clientSent === 'number'
             ) {
               const clientReceived = Date.now();
-              // Use midpoint between serverReceived and serverProcessed for more accurate offset
               const serverMid = (data.serverReceived + data.serverProcessed) / 2;
               const roundTrip = clientReceived - data.clientSent;
-              if (roundTrip > MAX_RTT) return resolve(); // Ignore high RTT
+              if (roundTrip > MAX_RTT) return resolve();
               const offset = serverMid - clientReceived;
               samples.push({ offset, rtt: roundTrip });
-            } else if (
-              data &&
-              typeof data.serverTime === 'number' &&
-              typeof data.clientSent === 'number'
-            ) {
-              // Fallback to old method if serverReceived/Processed missing
-              const clientReceived = Date.now();
-              const roundTrip = clientReceived - data.clientSent;
-              if (roundTrip > MAX_RTT) return resolve();
-              const estimatedServerTime = data.serverTime + roundTrip / 2;
-              const offset = estimatedServerTime - clientReceived;
-              samples.push({ offset, rtt: roundTrip });
             }
-            setTimeout(resolve, 20); // Small delay between rounds
+            setTimeout(resolve, 20);
           }
         );
       });
     }
-    if (samples.length < 4) return; // Not enough samples
+    if (samples.length < 8) return; // Not enough samples
     samples.sort((a, b) => a.rtt - b.rtt);
-    const trimmed = samples.slice(2, -2); // Remove top/bottom 2 RTTs
-    // Weighted offset calculation: 50% lowest, 30% second, 20% third
-    let avgOffset;
-    if (trimmed.length >= 3) {
-      const [best, second, third] = trimmed;
-      avgOffset = (best.offset * 0.5 + second.offset * 0.3 + third.offset * 0.2) / 1.0;
-    } else {
-      avgOffset = trimmed.reduce((sum, s) => sum + s.offset, 0) / trimmed.length;
-    }
+    const trim = Math.floor(samples.length * 0.25);
+    const trimmed = samples.slice(trim, samples.length - trim);
+    const avgOffset = trimmed.reduce((sum, s) => sum + s.offset, 0) / trimmed.length;
     const avgRtt = trimmed.reduce((sum, s) => sum + s.rtt, 0) / trimmed.length;
     setTimeOffset(avgOffset);
     setRtt(avgRtt);
+    // --- Production logging for diagnostics ---
+    if (process.env.NODE_ENV === 'production') {
+      fetch('/log/sync-diagnostics', {
+        method: 'POST',
+        body: JSON.stringify({
+          clientId,
+          timeOffset: avgOffset,
+          rtt: avgRtt,
+          timestamp: Date.now()
+        }),
+        headers: { 'Content-Type': 'application/json' }
+      }).catch(() => {});
+    }
   }
 
   // Further enhanced time sync logic with drift smoothing, error handling, diagnostics, and visibility/reactivity improvements
@@ -241,10 +235,7 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
 
           // Adaptive interval: shorter if unstable, longer if stable
           if (calcJitterVal > 20 || Math.abs(driftVal) > 20) {
-            adaptiveInterval = ADAPTIVE_INTERVAL_BAD; // Unstable, sync more often
-            if (process.env.NODE_ENV !== 'production') {
-              console.warn('[TimeSync] High jitter or drift detected:', { jitter: calcJitterVal, drift: driftVal });
-            }
+            adaptiveInterval = ADAPTIVE_INTERVAL_BAD;
           } else if (calcJitterVal < JITTER_GOOD && Math.abs(driftVal) < 5 && avgRtt < AVG_RTT_GOOD) {
             adaptiveInterval = ADAPTIVE_INTERVAL_GOOD; // Very stable, sync less often
           } else {
@@ -308,11 +299,9 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
   // --- Continuous Adaptive Sync: periodic NTP batch in background ---
   useEffect(() => {
     if (!socketRef.current || !connected || !sessionId) return;
-    let interval;
-    // Periodic NTP batch sync every 20 seconds
-    interval = setInterval(() => {
+    let interval = setInterval(() => {
       ntpBatchSync(socketRef.current);
-    }, 20000);
+    }, 25000); // every 25 seconds
     // Trigger NTP batch sync on tab focus or network reconnect
     function handleVisibilityChange() {
       if (document.visibilityState === 'visible') {
@@ -330,6 +319,33 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
       window.removeEventListener('online', handleOnline);
     };
   }, [connected, sessionId]);
+
+  // --- Heartbeat/Ping Mechanism ---
+  useEffect(() => {
+    if (!socketRef.current) return;
+    let lastPong = Date.now();
+    let interval = setInterval(() => {
+      socketRef.current.emit('ping', { clientId, timestamp: Date.now() }, (pong) => {
+        if (pong && pong.serverTime) {
+          lastPong = Date.now();
+        } else {
+          // If no pong or pong is late, trigger resync
+          if (Date.now() - lastPong > 3000) {
+            if (typeof window !== 'undefined' && window.__forceTimeSync) {
+              window.__forceTimeSync();
+            }
+          }
+        }
+      });
+      // If pong is late, trigger resync
+      if (Date.now() - lastPong > 3000) {
+        if (typeof window !== 'undefined' && window.__forceTimeSync) {
+          window.__forceTimeSync();
+        }
+      }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [clientId]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -355,7 +371,6 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
 
     // --- Event Handlers ---
     const handleConnect = async () => {
-      console.info(`${logPrefix} Socket connected`);
       setConnected(true);
       reconnectAttempts = 0;
       // --- Perform NTP-like batch sync before joining session ---
@@ -483,16 +498,6 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
     };
   }, [sessionId, clientId]);
 
-  useEffect(() => {
-    console.log('useSocket: State update:', {
-      controllerClientId,
-      clientId,
-      isController: controllerClientId && clientId && controllerClientId === clientId,
-      socketExists: !!socketRef.current,
-      connected
-    });
-  }, [controllerClientId, clientId, connected]);
-
   // Expose a method to force immediate time sync (for use on drift)
   function forceTimeSync() {
     if (typeof window !== 'undefined' && window.__forceTimeSync) {
@@ -532,6 +537,11 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
       };
     }
     return serverTimestamp;
+  }
+
+  // --- Expose a function for AudioPlayer to trigger resync ---
+  function triggerResync() {
+    forceNtpBatchSync();
   }
 
   // Enhanced return object with more diagnostics, utility methods, and controller status
@@ -598,5 +608,6 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
       }
     },
     forceNtpBatchSync,
+    triggerResync,
   };
 } 

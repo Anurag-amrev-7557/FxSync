@@ -21,6 +21,8 @@ import {
   cleanupOldSessions 
 } from '../utils/persistence'
 import usePeerTimeSync from '../hooks/usePeerTimeSync'
+import useMultiPeerTimeSync from '../hooks/useMultiPeerTimeSync'
+import ThreeDRoom from './ThreeDRoom';
 
 function SessionPage({
   currentSessionId,
@@ -46,7 +48,8 @@ function SessionPage({
   timeOffset,
   jitter,
   drift,
-  forceNtpBatchSync
+  forceNtpBatchSync,
+  calibrationResults
 }) {
   const { sessionId: urlSessionId } = useParams()
   const [messages, setMessages] = useState([])
@@ -57,7 +60,46 @@ function SessionPage({
   const [selectedTrackIdx, setSelectedTrackIdx] = useState(0);
   const [currentTrackOverride, setCurrentTrackOverride] = useState(null);
   const pendingTrackIdx = useRef(null); // Buffer for track_change before queue is set
-  const [peerIds, setPeerIds] = useState([]);
+
+  // Add state for allTracks
+  const [allTracks, setAllTracks] = useState([]);
+  const [allTracksLoading, setAllTracksLoading] = useState(true);
+  const [allTracksError, setAllTracksError] = useState(null);
+
+  // Fetch allTracks on mount
+  useEffect(() => {
+    const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
+    setAllTracksLoading(true);
+    fetch(`${backendUrl}/audio/all-tracks`)
+      .then(res => {
+        if (!res.ok) throw new Error('Failed to fetch tracks');
+        return res.json();
+      })
+      .then(data => {
+        setAllTracks(data);
+        setAllTracksLoading(false);
+      })
+      .catch(err => {
+        setAllTracksError('Could not load tracks');
+        setAllTracksLoading(false);
+      });
+  }, []);
+
+  // Pass calibration results to AudioPlayer
+  const audioLatency = calibrationResults?.audioLatency || undefined;
+  const testLatency = calibrationResults?.testLatency || undefined;
+  const networkLatency = calibrationResults?.networkLatency || undefined;
+
+  // Peer-to-peer time sync (declare only once)
+  const peerIds = (clients || []).filter(c => c.clientId !== clientId).map(c => c.clientId);
+  const multiPeerSync = useMultiPeerTimeSync(socket, clientId, peerIds);
+  const peerSyncs = multiPeerSync.peerSyncs || [];
+  // Prefer peer-to-peer median values if available, else fallback to server props
+  const hasPeerOffsets = (multiPeerSync.peerCount && multiPeerSync.peerCount > 0);
+  const liveTimeOffset = hasPeerOffsets ? multiPeerSync.globalOffset : timeOffset;
+  const liveRtt = multiPeerSync.medianRtt ?? rtt;
+  const liveJitter = multiPeerSync.medianJitter ?? jitter;
+  const liveDrift = drift; // Drift is only from server sync for now
 
   // Clean up old sessions on component mount
   useEffect(() => {
@@ -141,17 +183,6 @@ function SessionPage({
         autoDisplayName = generatedName;
       }
 
-      // Logging for debugging
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
-        console.log('[SessionPage][AutoJoin] Joining session', {
-          urlSessionId,
-          autoDisplayName,
-          savedMessagesCount: savedMessages.length,
-          savedQueueCount: savedQueue.length,
-        });
-      }
-
       setCurrentSessionId(urlSessionId);
       setDisplayName(autoDisplayName);
       setMessages(Array.isArray(savedMessages) ? savedMessages : []);
@@ -206,23 +237,21 @@ function SessionPage({
   useEffect(() => {
     if (!socket) return;
     const handleQueueUpdate = (q) => {
-      console.log('[DEBUG] Received queue_update:', q);
-      setQueue(q);
+      // Merge albumArtUrl from allTracks if missing
+      const mergedQueue = q.map(track => {
+        if (track.albumArtUrl) return track;
+        const match = allTracks.find(t => t.url === track.url);
+        return match ? { ...track, albumArtUrl: match.albumArtUrl } : track;
+      });
+      setQueue(mergedQueue);
       // If a track_change was received before the queue, apply it now
       if (pendingTrackIdx.current !== null) {
-        console.log('[DEBUG] Applying buffered track_change:', pendingTrackIdx.current, pendingTrackIdx.currentTrack);
-        // If a track was also buffered, set it
         if (pendingTrackIdx.currentTrack) {
           setCurrentTrackOverride(pendingTrackIdx.currentTrack);
         } else {
           setCurrentTrackOverride(null);
         }
         setSelectedTrackIdx(pendingTrackIdx.current);
-        console.log('[DEBUG] After applying buffered track_change:', {
-          queue: q,
-          selectedTrackIdx: pendingTrackIdx.current,
-          currentTrackOverride: pendingTrackIdx.currentTrack
-        });
         pendingTrackIdx.current = null;
         pendingTrackIdx.currentTrack = null;
       }
@@ -231,7 +260,7 @@ function SessionPage({
     return () => {
       socket.off('queue_update', handleQueueUpdate);
     };
-  }, [socket]);
+  }, [socket, allTracks]);
 
   useEffect(() => {
     if (!socket) return;
@@ -258,18 +287,8 @@ function SessionPage({
         return;
       }
 
-      // Enhanced: Log with more context
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
-        console.log('[SessionPage][track_change] Received:', { payload, idx, track, extra, queueLength: queue?.length });
-      }
-
       // If queue is not set yet, buffer the track_change
       if (!Array.isArray(queue) || queue.length === 0) {
-        if (process.env.NODE_ENV === 'development') {
-          // eslint-disable-next-line no-console
-          console.log('[SessionPage][track_change] Buffering until queue is set', { idx, track });
-        }
         pendingTrackIdx.current = idx;
         pendingTrackIdx.currentTrack = track;
       } else {
@@ -277,16 +296,6 @@ function SessionPage({
         const clampedIdx = Math.max(0, Math.min(idx, queue.length - 1));
         setCurrentTrackOverride(track || null);
         setSelectedTrackIdx(clampedIdx);
-
-        if (process.env.NODE_ENV === 'development') {
-          // eslint-disable-next-line no-console
-          console.log('[SessionPage][track_change] Applied immediately:', {
-            queue,
-            selectedTrackIdx: clampedIdx,
-            currentTrackOverride: track,
-            originalIdx: idx
-          });
-        }
       }
     };
 
@@ -295,10 +304,6 @@ function SessionPage({
     // Enhanced: Clean up and warn if handler was still active
     return () => {
       socket.off('track_change', handleTrackChange);
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
-        console.log('[SessionPage][track_change] Handler removed');
-      }
     };
   }, [socket, queue]);
 
@@ -315,14 +320,6 @@ function SessionPage({
       const clampedIdx = Math.max(0, Math.min(pendingTrackIdx.current, queue.length - 1));
       setCurrentTrackOverride(pendingTrackIdx.currentTrack || null);
       setSelectedTrackIdx(clampedIdx);
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
-        console.log('[SessionPage][listener-fix] Applied buffered track_change after queue set:', {
-          clampedIdx,
-          currentTrack: pendingTrackIdx.currentTrack,
-          queue
-        });
-      }
       pendingTrackIdx.current = null;
       pendingTrackIdx.currentTrack = null;
     }
@@ -332,7 +329,6 @@ function SessionPage({
   useEffect(() => {
     if (!socket) return;
     const logAll = (event, ...args) => {
-      console.log('[SOCKET EVENT]', event, ...args);
     };
     socket.onAny(logAll);
     return () => {
@@ -358,11 +354,6 @@ function SessionPage({
       clearTimeout(syncTimeout);
       if (didCancel) return;
 
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
-        console.log('[SessionPage][sync_request] Received state:', state);
-      }
-
       if (state && state.currentTrack) {
         setCurrentTrackOverride(state.currentTrack);
 
@@ -373,10 +364,6 @@ function SessionPage({
           );
           if (idx !== -1) {
             setSelectedTrackIdx(idx);
-            if (process.env.NODE_ENV === 'development') {
-              // eslint-disable-next-line no-console
-              console.log('[SessionPage][sync_request] Matched currentTrack in queue at idx', idx);
-            }
           } else {
             setSelectedTrackIdx(0);
             if (process.env.NODE_ENV === 'development') {
@@ -396,10 +383,6 @@ function SessionPage({
         const clampedIdx = Math.max(0, Math.min(state.currentTrackIdx, queue.length - 1));
         setSelectedTrackIdx(clampedIdx);
         setCurrentTrackOverride(queue[clampedIdx] || null);
-        if (process.env.NODE_ENV === 'development') {
-          // eslint-disable-next-line no-console
-          console.log('[SessionPage][sync_request] Used currentTrackIdx fallback:', clampedIdx);
-        }
       }
     });
 
@@ -463,11 +446,6 @@ function SessionPage({
       const chatInput = document.querySelector('input[name="chat"]');
       if (chatInput) chatInput.focus();
     }, 200);
-
-    if (process.env.NODE_ENV === 'development') {
-      // eslint-disable-next-line no-console
-      console.log('[SessionPage][handleJoin] Joined session', { sessionId, displayName, messages: savedMessages.length, queue: savedQueue.length });
-    }
   }
 
   const handleExitRoom = () => {
@@ -487,6 +465,8 @@ function SessionPage({
     
     // Close modal
     setShowExitModal(false)
+    // Navigate to home
+    navigate('/');
   }
 
   // Enhanced handler for Playlist selection with improved robustness, logging, and user experience
@@ -497,10 +477,6 @@ function SessionPage({
       setSelectedTrackIdx(idx !== null && typeof idx === 'number' ? idx : 0); // fallback to 0 if idx is null
       if (isController && socket) {
         socket.emit('track_change', { sessionId: currentSessionId, idx }, { override: true, track: trackObj });
-      }
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
-        console.log('[SessionPage][handleSelectTrack] Overriding with custom track', { idx, trackObj });
       }
       return;
     }
@@ -520,15 +496,21 @@ function SessionPage({
     if (isController && socket) {
       socket.emit('track_change', { sessionId: currentSessionId, idx }, { override: false });
     }
-    if (process.env.NODE_ENV === 'development') {
-      // eslint-disable-next-line no-console
-      console.log('[SessionPage][handleSelectTrack] Selected track from queue', { idx, track: queue[idx] });
+  };
+
+  const handlePrevTrack = () => {
+    if (selectedTrackIdx > 0) {
+      handleSelectTrack(selectedTrackIdx - 1, queue[selectedTrackIdx - 1]);
+    }
+  };
+  const handleNextTrack = () => {
+    if (queue && selectedTrackIdx < queue.length - 1) {
+      handleSelectTrack(selectedTrackIdx + 1, queue[selectedTrackIdx + 1]);
     }
   };
 
   // In render, always derive currentTrack from latest queue and selectedTrackIdx
   const currentTrack = currentTrackOverride || (queue && queue.length > 0 ? queue[selectedTrackIdx] : null);
-  console.log('[DEBUG] Render: currentTrack', currentTrack, 'selectedTrackIdx', selectedTrackIdx, 'queue', queue);
 
   // When sessionSyncState changes (from join_session), initialize playback/session state
   useEffect(() => {
@@ -543,37 +525,33 @@ function SessionPage({
 
   // --- Sync Quality Calculation ---
   const syncQuality = useMemo(() => {
-    // Use RTT, jitter, and drift if available
-    const r = rtt !== null && !isNaN(rtt) ? rtt : 0;
-    const j = jitter !== null && !isNaN(jitter) ? Math.abs(jitter) : 0;
-    const d = drift !== null && !isNaN(drift) ? Math.abs(drift) : 0;
+    // Use live RTT, jitter, and drift if available
+    const r = liveRtt !== null && !isNaN(liveRtt) ? liveRtt : 0;
+    const j = liveJitter !== null && !isNaN(liveJitter) ? Math.abs(liveJitter) : 0;
+    const d = liveDrift !== null && !isNaN(liveDrift) ? Math.abs(liveDrift) : 0;
     if (r < 30 && j < 10 && d < 10) return { label: 'Good', color: 'bg-green-500', tooltip: 'Sync is excellent. Low latency, jitter, and drift.' };
     if (r < 80 && j < 25 && d < 25) return { label: 'Fair', color: 'bg-yellow-500', tooltip: 'Sync is fair. Some latency, jitter, or drift detected.' };
     return { label: 'Poor', color: 'bg-red-500', tooltip: 'Sync is poor. High latency, jitter, or drift.' };
-  }, [rtt, jitter, drift]);
+  }, [liveRtt, liveJitter, liveDrift]);
 
   // --- Peer Discovery ---
   useEffect(() => {
     if (!socket) return;
     const handleClientsUpdate = (clients) => {
       // Exclude self
-      setPeerIds(clients.filter(c => c.clientId && c.clientId !== clientId).map(c => c.clientId));
+      // No need to update peerIds here, as peerIds is already defined
     };
     socket.on('clients_update', handleClientsUpdate);
     return () => socket.off('clients_update', handleClientsUpdate);
-  }, [socket, clientId]);
+  }, [socket]);
 
   // --- Peer-to-Peer Time Sync (Fixed Hooks) ---
   const MAX_PEERS = 5;
   const paddedPeerIds = [...peerIds.slice(0, MAX_PEERS)];
   while (paddedPeerIds.length < MAX_PEERS) paddedPeerIds.push(null);
 
-  const peerSyncA = usePeerTimeSync(socket, clientId, paddedPeerIds[0]);
-  const peerSyncB = usePeerTimeSync(socket, clientId, paddedPeerIds[1]);
-  const peerSyncC = usePeerTimeSync(socket, clientId, paddedPeerIds[2]);
-  const peerSyncD = usePeerTimeSync(socket, clientId, paddedPeerIds[3]);
-  const peerSyncE = usePeerTimeSync(socket, clientId, paddedPeerIds[4]);
-  const peerSyncs = [peerSyncA, peerSyncB, peerSyncC, peerSyncD, peerSyncE];
+  // Removed individual usePeerTimeSync calls (peerSyncA to peerSyncE)
+  // Use multiPeerSync.peerSyncs instead
 
   // --- Combine Peer and Server Sync ---
   const allOffsets = [
@@ -583,8 +561,30 @@ function SessionPage({
   const best = allOffsets.reduce((a, b) => (a.rtt < b.rtt ? a : b));
   const ultraPreciseOffset = best.offset;
 
-  // Debug log for ultra-precise offset
-  console.log('Ultra-precise offset:', ultraPreciseOffset, 'All offsets:', allOffsets);
+  useEffect(() => {
+    if (!allTracks || allTracks.length === 0 || !queue || queue.length === 0) return;
+    // Only update if any track is missing albumArtUrl
+    if (queue.some(track => !track.albumArtUrl)) {
+      const mergedQueue = queue.map(track => {
+        if (track.albumArtUrl) return track;
+        const match = allTracks.find(t => t.url === track.url);
+        return match ? { ...track, albumArtUrl: match.albumArtUrl } : track;
+      });
+      // Only update if mergedQueue is actually different
+      const isDifferent = mergedQueue.some((track, i) =>
+        track.albumArtUrl !== queue[i].albumArtUrl
+      );
+      if (isDifferent) {
+        setQueue(mergedQueue);
+      }
+    }
+  }, [allTracks, queue]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      console.log('[SessionPage] UI received new stats:', { liveRtt, liveTimeOffset, liveJitter });
+    }
+  }, [liveRtt, liveTimeOffset, liveJitter]);
 
   return (
     <div className="min-h-screen bg-neutral-950 text-white">
@@ -597,8 +597,8 @@ function SessionPage({
             {/* Header */}
             <header className="flex items-center justify-between p-2 border-b border-neutral-800 bg-neutral-900/50 backdrop-blur-sm">
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <div className="w-8 h-8 rounded-lg flex items-center justify-center">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white transition-all duration-300 group-hover:scale-110 sm:w-5 sm:h-5">
                     <path d="M9 18V5l12-2v13"></path>
                     <circle cx="6" cy="18" r="3"></circle>
                     <circle cx="18" cy="16" r="3"></circle>
@@ -609,43 +609,56 @@ function SessionPage({
                   <p className="text-xs text-neutral-400">Room: {currentSessionId}</p>
                 </div>
               </div>
-              {/* Center: RTT and Offset display */}
+              {/* Minimalist, monochrome RTT/Offset display */}
               <div className="flex-1 flex justify-center">
-                <div className="flex items-center gap-3 bg-neutral-800/70 px-1 py-1 rounded-full shadow-sm border border-neutral-700 backdrop-blur-md min-w-[210px] max-w-xs">
+                <div className="flex items-center gap-4 px-2 py-1 rounded min-w-[180px] max-w-xs">
                   {/* RTT */}
-                  <span className="flex ml-1 items-center gap-1 text-xs font-medium text-blue-300" title={`RTT (Round Trip Time): Time for a message to go to the server and back. Lower is better.\nCurrent: ${rtt !== null && !isNaN(rtt) ? rtt.toFixed(1) : '--'} ms`}> 
-                    <svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" className="inline-block"><circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="2"/><path d="M10 6v4l2 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                    <span>{rtt !== null && !isNaN(rtt) ? rtt.toFixed(1) : '--'}</span>
-                    <span className="text-neutral-400 font-normal">ms</span>
+                  <span className="flex items-center gap-1 text-xs text-neutral-200" title="RTT: Round Trip Time (ms)">
+                    <svg width="12" height="12" viewBox="0 0 20 20" fill="none" className="inline-block text-neutral-400"><circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="2"/><path d="M10 6v4l2 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                    <span>{liveRtt !== null && !isNaN(liveRtt) ? liveRtt.toFixed(1) : '--'}</span>
+                    <span className="text-neutral-500">ms</span>
                   </span>
                   {/* Divider */}
-                  <span className="w-1 h-1 bg-neutral-600 rounded-full mx-1"></span>
+                  <span className="w-1 h-1 bg-neutral-700 rounded-full"></span>
                   {/* Offset */}
-                  <span className="flex items-center gap-1 text-xs font-medium text-green-300" title={`Offset: Estimated difference between your clock and the server.\nCurrent: ${timeOffset !== null && !isNaN(timeOffset) ? timeOffset.toFixed(1) : '--'} ms`}> 
-                    <svg width="14" height="14" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" className="inline-block"><rect x="4" y="9" width="12" height="2" rx="1" fill="currentColor"/><rect x="9" y="4" width="2" height="12" rx="1" fill="currentColor"/></svg>
-                    <span>{timeOffset !== null && !isNaN(timeOffset) ? timeOffset.toFixed(1) : '--'}</span>
-                    <span className="text-neutral-400 font-normal">ms</span>
+                  <span className="flex items-center gap-1 text-xs text-neutral-200" title="Offset: Clock difference (ms)">
+                    <svg width="12" height="12" viewBox="0 0 20 20" fill="none" className="inline-block text-neutral-400"><rect x="4" y="9" width="12" height="2" rx="1" fill="currentColor"/><rect x="9" y="4" width="2" height="12" rx="1" fill="currentColor"/></svg>
+                    <span>{liveTimeOffset !== null && !isNaN(liveTimeOffset) ? liveTimeOffset.toFixed(1) : '--'}</span>
+                    <span className="ml-2 px-2 py-0.5 rounded-full text-xs font-semibold bg-neutral-800 text-neutral-400 border border-neutral-700" title={hasPeerOffsets ? 'Peer-to-peer sync' : 'Server sync'}>
+                      {hasPeerOffsets ? 'Peer' : 'Server'}
+                    </span>
+                    <span className="text-neutral-500">ms</span>
                   </span>
                   {/* Divider */}
-                  <span className="w-1 h-1 bg-neutral-600 rounded-full mx-1"></span>
+                  <span className="w-1 h-1 bg-neutral-700 rounded-full"></span>
                   {/* Sync Quality Badge */}
-                  <span className={`flex items-center gap-1 text-xs font-semibold text-white px-2 py-0.5 rounded-full ${syncQuality.color} cursor-help`} title={syncQuality.tooltip}>
-                    <svg width="12" height="12" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" className="inline-block"><circle cx="10" cy="10" r="9" stroke="currentColor" strokeWidth="2" fill="none"/><circle cx="10" cy="10" r="4" fill="currentColor"/></svg>
+                  <span className="flex items-center gap-1 text-xs font-semibold text-neutral-300 px-2 py-0.5 rounded " title={syncQuality.tooltip}>
+                    <svg width="10" height="10" viewBox="0 0 20 20" fill="none" className="inline-block text-neutral-400"><circle cx="10" cy="10" r="9" stroke="currentColor" strokeWidth="2" fill="none"/><circle cx="10" cy="10" r="4" fill="currentColor"/></svg>
                     {syncQuality.label}
                   </span>
                 </div>
               </div>
               <div className="flex items-center gap-4">
+
+              {isController && (
+                  <span
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-neutral-800 border border-white/20 text-white/50 text-xs font-medium tracking-wide shadow-none"
+                    style={{ letterSpacing: '0.04em', backgroundColor: '#23272a' }}
+                    title="You are the controller"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 20 20" fill="none" className="text-white/50">
+                      <circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="2" fill="none"/>
+                      <circle cx="10" cy="10" r="3" fill="currentColor"/>
+                    </svg>
+                    Controller
+                  </span>
+                )}
                 <div className={`flex items-center gap-2 text-sm transition-all duration-300 ${connectionStatus.animationClass}`}>
                   <div className={`w-2 h-2 rounded-full transition-all duration-300 ${connected ? 'bg-green-500' : 'bg-red-500'}`}></div>
                   <span className="text-neutral-400">{connected ? 'Connected' : 'Disconnected'}</span>
                 </div>
                 
-                {isController && (
-                  <div className={`px-2 py-1 bg-primary/20 border border-primary/30 rounded text-xs text-primary transition-all duration-300 ${controllerStatus.animationClass}`}>
-                    Controller
-                  </div>
-                )}
+
                 
                 <button
                   onClick={() => {
@@ -698,9 +711,19 @@ function SessionPage({
                         clients={clients}
                         getServerTime={getServerTime}
                         currentTrack={currentTrack}
-                        rtt={rtt}
+                        rtt={liveRtt}
+                        timeOffset={liveTimeOffset}
+                        jitter={liveJitter}
+                        peerSyncs={peerSyncs}
                         sessionSyncState={sessionSyncState}
                         forceNtpBatchSync={forceNtpBatchSync}
+                        audioLatency={audioLatency}
+                        testLatency={testLatency}
+                        networkLatency={networkLatency}
+                        queue={queue}
+                        selectedTrackIdx={selectedTrackIdx}
+                        onPrevTrack={handlePrevTrack}
+                        onNextTrack={handleNextTrack}
                       />
                     </div>
                     <div className="p-4">
@@ -737,28 +760,43 @@ function SessionPage({
                   />
                 }
                 rightPanel={
-                  <ChatBox
-                    socket={socket}
-                    sessionId={currentSessionId}
-                    clientId={clientId}
-                    messages={messages}
-                    onSend={(msg) => {
-                      setMessages((prev) => {
-                        const newMessages = [...prev, msg]
-                        if (currentSessionId) {
-                          saveMessages(currentSessionId, newMessages)
-                        }
-                        return newMessages
-                      })
-                    }}
-                    clients={clients}
-                  />
+                  <div className="flex flex-col h-full" style={{ minHeight: 0 }}>
+                    <div className="flex-1 min-h-0" style={{ height: '50%' }}>
+                      <ThreeDRoom 
+                        displayName={displayName} 
+                        clientId={clientId} 
+                        roomName={currentSessionId} 
+                        users={clients || []} 
+                        socket={socket}
+                        sessionId={currentSessionId}
+                      />
+                    </div>
+                    <div className="flex-1 min-h-0 border-t border-neutral-800 overflow-hidden" style={{ height: '50%' }}>
+                      <ChatBox
+                        socket={socket}
+                        sessionId={currentSessionId}
+                        clientId={clientId}
+                        messages={messages}
+                        onSend={(msg) => {
+                          setMessages((prev) => {
+                            const newMessages = [...prev, msg]
+                            if (currentSessionId) {
+                              saveMessages(currentSessionId, newMessages)
+                            }
+                            return newMessages
+                          })
+                        }}
+                        clients={clients}
+                      />
+                    </div>
+                  </div>
                 }
                 leftMinWidth={200}
                 middleMinWidth={200}
                 rightMinWidth={200}
               />
             </div>
+            {/* Remove this duplicate ThreeDRoom from the left-side desktop layout */}
           </div>
 
           {/* Mobile Layout */}
@@ -832,9 +870,19 @@ function SessionPage({
                         mobile={true}
                         isAudioTabActive={mobileTab === 0}
                         currentTrack={currentTrack}
-                        rtt={rtt}
+                        rtt={liveRtt}
+                        timeOffset={liveTimeOffset}
+                        jitter={liveJitter}
+                        peerSyncs={peerSyncs}
                         sessionSyncState={sessionSyncState}
                         forceNtpBatchSync={forceNtpBatchSync}
+                        audioLatency={audioLatency}
+                        testLatency={testLatency}
+                        networkLatency={networkLatency}
+                        queue={queue}
+                        selectedTrackIdx={selectedTrackIdx}
+                        onPrevTrack={handlePrevTrack}
+                        onNextTrack={handleNextTrack}
                       />
                     </div>
                   </div>
@@ -865,9 +913,19 @@ function SessionPage({
                         mobile={true}
                         isAudioTabActive={mobileTab === 1}
                         currentTrack={currentTrack}
-                        rtt={rtt}
+                        rtt={liveRtt}
+                        timeOffset={liveTimeOffset}
+                        jitter={liveJitter}
+                        peerSyncs={peerSyncs}
                         sessionSyncState={sessionSyncState}
                         forceNtpBatchSync={forceNtpBatchSync}
+                        audioLatency={audioLatency}
+                        testLatency={testLatency}
+                        networkLatency={networkLatency}
+                        queue={queue}
+                        selectedTrackIdx={selectedTrackIdx}
+                        onPrevTrack={handlePrevTrack}
+                        onNextTrack={handleNextTrack}
                       />
                     </div>
                   </div>
@@ -892,6 +950,19 @@ function SessionPage({
                   mobile={true}
                   isChatTabActive={mobileTab === 2}
                 />
+              )}
+              {/* 3D Spatial Room Section */}
+              {mobileTab === 3 && (
+                <div className="h-full overflow-y-auto relative">
+                  <ThreeDRoom
+                    displayName={displayName}
+                    clientId={clientId}
+                    roomName={currentSessionId}
+                    users={clients || []}
+                    socket={socket}
+                    sessionId={currentSessionId}
+                  />
+                </div>
               )}
             </div>
             {/* Bottom Tab Bar */}

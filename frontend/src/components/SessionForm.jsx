@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import CreateRoom from './CreateRoom';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 // Add QR code component
 const QRCode = ({ value, size = 128 }) => {
@@ -27,6 +27,7 @@ const QRCode = ({ value, size = 128 }) => {
 };
 
 export default function SessionForm({ onJoin, currentSessionId }) {
+  const navigate = useNavigate();
   const [sessionId, setSessionId] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [error, setError] = useState('');
@@ -306,7 +307,7 @@ export default function SessionForm({ onJoin, currentSessionId }) {
   };
 
   const handleCreateRoomConfirm = () => {
-    onJoin(createRoomSessionId, displayName);
+    navigate(`/session/${createRoomSessionId}`);
   };
 
   const handleCreateRoomCancel = () => {
@@ -333,7 +334,7 @@ export default function SessionForm({ onJoin, currentSessionId }) {
 
   const joinRecentRoom = (roomId) => {
     setSessionId(roomId);
-    onJoin(roomId, displayName);
+    navigate(`/session/${roomId}`);
     addToRecentRooms(roomId);
   };
 
@@ -383,7 +384,7 @@ export default function SessionForm({ onJoin, currentSessionId }) {
     setError('');
     setLoading(true);
     addToRecentRooms(sessionId.trim());
-    onJoin(sessionId.trim(), displayName);
+    navigate(`/session/${sessionId.trim()}`);
     setLoading(false);
   };
 
@@ -884,7 +885,11 @@ export default function SessionForm({ onJoin, currentSessionId }) {
                         <span className="relative z-10 flex items-center gap-3 transition-all duration-300 group-hover:translate-x-1">
                           {isCreatingRoom ? (
                             <>
-                              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="transition-transform duration-300 group-hover:scale-110 sm:w-5 sm:h-5">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <path d="M8 12h8"></path>
+                                <path d="M12 8v8"></path>
+                              </svg>
                               Creating...
                             </>
                           ) : (
