@@ -166,6 +166,66 @@ export function setupSocket(io) {
       }
     });
 
+    // Enhanced drift report handling with ML integration
+    socket.on('drift_report', ({ sessionId, drift, rtt, jitter, deviceType, networkQuality, clientTime } = {}) => {
+      if (!sessionId || typeof drift !== 'number') return;
+      
+      const clientId = getClientIdBySocket(sessionId, socket.id);
+      if (!clientId) return;
+      
+      const now = Date.now();
+      
+      // Store drift data for analysis
+      if (!clientDriftMap[sessionId]) {
+        clientDriftMap[sessionId] = {};
+      }
+      
+      clientDriftMap[sessionId][clientId] = {
+        drift: Math.abs(drift),
+        timestamp: now,
+        deviceType: deviceType || 'unknown',
+        networkQuality: networkQuality || 'unknown',
+        rtt: rtt || null,
+        jitter: jitter || null,
+        clientTime: clientTime || null,
+        analytics: {
+          reportCount: (clientDriftMap[sessionId][clientId]?.analytics?.reportCount || 0) + 1,
+          lastReportTime: now,
+          avgDrift: calculateRollingAverage(
+            clientDriftMap[sessionId][clientId]?.analytics?.avgDrift || 0,
+            Math.abs(drift),
+            clientDriftMap[sessionId][clientId]?.analytics?.reportCount || 0
+          )
+        }
+      };
+      
+      // Update ML prediction model
+      const predictionModel = predictDrift(sessionId, clientId, Math.abs(drift));
+      
+      // Log drift report with ML insights
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[ML] Drift report for ${clientId} in ${sessionId}:`, {
+          drift: Math.abs(drift),
+          predictedDrift: predictionModel.prediction,
+          confidence: predictionModel.confidence,
+          pattern: recognizeDriftPattern(sessionId, clientId),
+          deviceType,
+          networkQuality
+        });
+      }
+      
+      // Trigger optimization if significant drift detected
+      if (Math.abs(drift) > DRIFT_THRESHOLD) {
+        optimizeSyncIntervals(sessionId);
+      }
+    });
+    
+    // Helper function for rolling average calculation
+    function calculateRollingAverage(currentAvg, newValue, count) {
+      if (count === 0) return newValue;
+      return (currentAvg * (count - 1) + newValue) / count;
+    }
+
     socket.on('request_controller', ({ sessionId } = {}, callback) => {
       if (!sessionId) return typeof callback === "function" && callback({ error: 'No sessionId provided' });
       const session = getSession(sessionId);
@@ -729,16 +789,37 @@ export function setupSocket(io) {
       }
     });
 
-    // Store per-client drift for diagnostics/adaptive correction
-    const clientDriftMap = {};
-
-    socket.on('drift_report', ({ sessionId, drift, clientId, timestamp, manual, resyncDuration, beforeDrift, afterDrift, improvement } = {}) => {
+    socket.on('drift_report', ({ sessionId, drift, clientId, timestamp, manual, resyncDuration, beforeDrift, afterDrift, improvement, analytics } = {}) => {
       if (!sessionId || typeof drift !== 'number' || !clientId) return;
       if (!clientDriftMap[sessionId]) clientDriftMap[sessionId] = {};
-      clientDriftMap[sessionId][clientId] = { drift, timestamp };
+      
+      // Enhanced drift data storage with device and network analytics
+      clientDriftMap[sessionId][clientId] = {
+        drift,
+        timestamp: timestamp || Date.now(),
+        deviceType: analytics?.deviceType || 'unknown',
+        networkQuality: analytics?.networkQuality || 'unknown',
+        analytics: {
+          adaptiveThreshold: analytics?.adaptiveThreshold,
+          rtt: analytics?.rtt,
+          jitter: analytics?.jitter,
+          audioLatency: analytics?.audioLatency,
+          driftHistory: analytics?.driftHistory || []
+        }
+      };
       
       // Enhanced logging with more context
       let logMessage = `[DRIFT] Session ${sessionId} Client ${clientId}: Drift=${drift.toFixed(3)}s at ${new Date(timestamp).toISOString()}`;
+      
+      if (analytics?.deviceType) {
+        logMessage += ` Device: ${analytics.deviceType}`;
+      }
+      if (analytics?.networkQuality) {
+        logMessage += ` Network: ${analytics.networkQuality}`;
+      }
+      if (analytics?.rtt) {
+        logMessage += ` RTT: ${analytics.rtt.toFixed(1)}ms`;
+      }
       
       if (manual) {
         logMessage += ` (MANUAL RESYNC)`;
@@ -754,6 +835,16 @@ export function setupSocket(io) {
       }
       
       log(logMessage);
+      
+      // Log significant drift events for monitoring
+      if (drift > 0.3) {
+        log(`[DRIFT] High drift detected: ${drift.toFixed(3)}s for client ${clientId} in session ${sessionId}`, {
+          deviceType: analytics?.deviceType,
+          networkQuality: analytics?.networkQuality,
+          rtt: analytics?.rtt,
+          jitter: analytics?.jitter
+        });
+      }
       
       // Store additional analytics for manual resyncs
       if (manual && typeof improvement === 'number') {
@@ -773,8 +864,6 @@ export function setupSocket(io) {
           clientDriftMap[sessionId][clientId].resyncHistory.shift();
         }
       }
-      
-      // (Optional) Adaptive correction logic can be added here
     });
 
     // Avatar position update: ultra-low-latency broadcast to all other clients in the session
@@ -887,12 +976,333 @@ export function setupSocket(io) {
     }
   }, 60 * 1000);
 
-  // --- Adaptive sync_state broadcast ---
+  // --- Enhanced Adaptive sync_state broadcast with device-specific handling ---
   const BASE_SYNC_INTERVAL = 300; // ms (was 500)
   const HIGH_DRIFT_SYNC_INTERVAL = 100; // ms (was 200)
+  const CRITICAL_DRIFT_SYNC_INTERVAL = 50; // ms for critical drift situations
   const DRIFT_THRESHOLD = 0.2; // seconds
+  const CRITICAL_DRIFT_THRESHOLD = 0.5; // seconds
   const DRIFT_WINDOW = 10000; // ms (10s)
-  const clientDriftMap = {}; // sessionId -> { clientId: { drift, timestamp } }
+  const clientDriftMap = {}; // sessionId -> { clientId: { drift, timestamp, deviceType, networkQuality, analytics } }
+  const sessionSyncStats = {}; // sessionId -> { avgDrift, maxDrift, deviceTypes, networkQualities }
+  
+  // Advanced drift prediction and ML-based sync optimization
+  const driftPredictionModels = {}; // sessionId -> { clientId: { history, trend, prediction, confidence } }
+  const syncOptimizationData = {}; // sessionId -> { optimalIntervals, driftPatterns, deviceProfiles }
+  const ML_SYNC_CONFIG = {
+    HISTORY_WINDOW: 30000, // 30s of drift history
+    PREDICTION_HORIZON: 5000, // 5s prediction horizon
+    MIN_CONFIDENCE: 0.7, // Minimum confidence for ML predictions
+    TREND_ANALYSIS_WINDOW: 10000, // 10s for trend analysis
+    PATTERN_RECOGNITION_THRESHOLD: 0.8, // Pattern recognition confidence
+    ADAPTIVE_LEARNING_RATE: 0.1, // Learning rate for model updates
+    MAX_HISTORY_SIZE: 100, // Maximum drift history entries per client
+    SYNC_OPTIMIZATION_INTERVAL: 5000 // 5s optimization interval
+  };
+
+  // Enhanced drift analysis and device profiling
+  function analyzeSessionDrift(sessionId) {
+    if (!clientDriftMap[sessionId]) return { highDrift: false, criticalDrift: false, deviceTypes: [], networkQualities: [] };
+    
+    const now = Date.now();
+    const recentDrifts = [];
+    const deviceTypes = new Set();
+    const networkQualities = new Set();
+    let highDrift = false;
+    let criticalDrift = false;
+    
+    for (const [clientId, data] of Object.entries(clientDriftMap[sessionId])) {
+      if (now - data.timestamp < DRIFT_WINDOW) {
+        recentDrifts.push(data.drift);
+        if (data.deviceType) deviceTypes.add(data.deviceType);
+        if (data.networkQuality) networkQualities.add(data.networkQuality);
+        
+        if (data.drift > CRITICAL_DRIFT_THRESHOLD) {
+          criticalDrift = true;
+        } else if (data.drift > DRIFT_THRESHOLD) {
+          highDrift = true;
+        }
+      }
+    }
+    
+    // Calculate session statistics
+    const avgDrift = recentDrifts.length > 0 ? recentDrifts.reduce((a, b) => a + b, 0) / recentDrifts.length : 0;
+    const maxDrift = recentDrifts.length > 0 ? Math.max(...recentDrifts) : 0;
+    
+    sessionSyncStats[sessionId] = {
+      avgDrift,
+      maxDrift,
+      deviceTypes: Array.from(deviceTypes),
+      networkQualities: Array.from(networkQualities),
+      clientCount: recentDrifts.length,
+      lastUpdate: now
+    };
+    
+    return { highDrift, criticalDrift, deviceTypes: Array.from(deviceTypes), networkQualities: Array.from(networkQualities) };
+  }
+
+  // Device-specific sync intervals
+  function getDeviceSpecificSyncInterval(deviceTypes, networkQualities) {
+    // Mobile devices need more frequent syncs
+    if (deviceTypes.includes('mobile') || deviceTypes.includes('lowEnd')) {
+      return Math.min(BASE_SYNC_INTERVAL / 2, 150); // 150ms for mobile
+    }
+    
+    // Poor network conditions need more frequent syncs
+    if (networkQualities.includes('poor')) {
+      return Math.min(BASE_SYNC_INTERVAL / 2, 150); // 150ms for poor network
+    }
+    
+    // Good conditions can use standard interval
+    return BASE_SYNC_INTERVAL;
+  }
+
+  // Advanced drift prediction using machine learning
+  function predictDrift(sessionId, clientId, currentDrift) {
+    if (!driftPredictionModels[sessionId]) {
+      driftPredictionModels[sessionId] = {};
+    }
+    
+    if (!driftPredictionModels[sessionId][clientId]) {
+      driftPredictionModels[sessionId][clientId] = {
+        history: [],
+        trend: 0,
+        prediction: 0,
+        confidence: 0,
+        lastUpdate: Date.now()
+      };
+    }
+    
+    const model = driftPredictionModels[sessionId][clientId];
+    const now = Date.now();
+    
+    // Add current drift to history
+    model.history.push({
+      drift: currentDrift,
+      timestamp: now,
+      deviceType: clientDriftMap[sessionId]?.[clientId]?.deviceType || 'unknown',
+      networkQuality: clientDriftMap[sessionId]?.[clientId]?.networkQuality || 'unknown'
+    });
+    
+    // Keep history within window and size limits
+    model.history = model.history.filter(entry => 
+      now - entry.timestamp < ML_SYNC_CONFIG.HISTORY_WINDOW
+    ).slice(-ML_SYNC_CONFIG.MAX_HISTORY_SIZE);
+    
+    // Calculate trend using linear regression
+    if (model.history.length >= 3) {
+      const recentHistory = model.history.slice(-10); // Last 10 entries
+      const xValues = recentHistory.map((_, i) => i);
+      const yValues = recentHistory.map(entry => entry.drift);
+      
+      const { slope, confidence } = calculateLinearTrend(xValues, yValues);
+      model.trend = slope;
+      model.confidence = confidence;
+      
+      // Predict future drift
+      const timeHorizon = ML_SYNC_CONFIG.PREDICTION_HORIZON / 1000; // Convert to seconds
+      model.prediction = currentDrift + (slope * timeHorizon);
+    }
+    
+    model.lastUpdate = now;
+    return model;
+  }
+  
+  // Linear regression for trend analysis
+  function calculateLinearTrend(xValues, yValues) {
+    const n = xValues.length;
+    if (n < 2) return { slope: 0, confidence: 0 };
+    
+    const sumX = xValues.reduce((a, b) => a + b, 0);
+    const sumY = yValues.reduce((a, b) => a + b, 0);
+    const sumXY = xValues.reduce((sum, x, i) => sum + x * yValues[i], 0);
+    const sumXX = xValues.reduce((sum, x) => sum + x * x, 0);
+    
+    const slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+    const intercept = (sumY - slope * sumX) / n;
+    
+    // Calculate R-squared for confidence
+    const yMean = sumY / n;
+    const ssRes = yValues.reduce((sum, y, i) => {
+      const predicted = slope * xValues[i] + intercept;
+      return sum + Math.pow(y - predicted, 2);
+    }, 0);
+    const ssTot = yValues.reduce((sum, y) => sum + Math.pow(y - yMean, 2), 0);
+    const confidence = ssTot > 0 ? 1 - (ssRes / ssTot) : 0;
+    
+    return { slope, confidence: Math.max(0, Math.min(1, confidence)) };
+  }
+  
+  // Pattern recognition for drift behavior
+  function recognizeDriftPattern(sessionId, clientId) {
+    const model = driftPredictionModels[sessionId]?.[clientId];
+    if (!model || model.history.length < 5) return null;
+    
+    const recentDrifts = model.history.slice(-10).map(entry => entry.drift);
+    const patterns = {
+      oscillating: detectOscillatingPattern(recentDrifts),
+      accelerating: detectAcceleratingPattern(recentDrifts),
+      stabilizing: detectStabilizingPattern(recentDrifts),
+      random: detectRandomPattern(recentDrifts)
+    };
+    
+    const bestPattern = Object.entries(patterns).reduce((best, [name, confidence]) => 
+      confidence > best.confidence ? { name, confidence } : best
+    , { name: 'unknown', confidence: 0 });
+    
+    return bestPattern.confidence > ML_SYNC_CONFIG.PATTERN_RECOGNITION_THRESHOLD ? bestPattern : null;
+  }
+  
+  // Pattern detection algorithms
+  function detectOscillatingPattern(drifts) {
+    if (drifts.length < 4) return 0;
+    let oscillations = 0;
+    for (let i = 1; i < drifts.length - 1; i++) {
+      if ((drifts[i] > drifts[i-1] && drifts[i] > drifts[i+1]) || 
+          (drifts[i] < drifts[i-1] && drifts[i] < drifts[i+1])) {
+        oscillations++;
+      }
+    }
+    return Math.min(1, oscillations / (drifts.length - 2));
+  }
+  
+  function detectAcceleratingPattern(drifts) {
+    if (drifts.length < 3) return 0;
+    const changes = [];
+    for (let i = 1; i < drifts.length; i++) {
+      changes.push(drifts[i] - drifts[i-1]);
+    }
+    
+    let accelerating = 0;
+    for (let i = 1; i < changes.length; i++) {
+      if (Math.abs(changes[i]) > Math.abs(changes[i-1])) {
+        accelerating++;
+      }
+    }
+    return Math.min(1, accelerating / (changes.length - 1));
+  }
+  
+  function detectStabilizingPattern(drifts) {
+    if (drifts.length < 3) return 0;
+    const variance = calculateVariance(drifts);
+    const meanVariance = variance / drifts.length;
+    return Math.max(0, 1 - (meanVariance / 0.1)); // Normalize to 0-1
+  }
+  
+  function detectRandomPattern(drifts) {
+    if (drifts.length < 5) return 0;
+    const autocorrelation = calculateAutocorrelation(drifts);
+    return Math.max(0, 1 - autocorrelation); // Lower autocorrelation = more random
+  }
+  
+  // Statistical helper functions
+  function calculateVariance(values) {
+    const mean = values.reduce((a, b) => a + b, 0) / values.length;
+    return values.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0);
+  }
+  
+  function calculateAutocorrelation(values) {
+    if (values.length < 2) return 0;
+    const mean = values.reduce((a, b) => a + b, 0) / values.length;
+    const variance = calculateVariance(values);
+    
+    let autocorr = 0;
+    for (let lag = 1; lag < Math.min(values.length, 5); lag++) {
+      let sum = 0;
+      for (let i = lag; i < values.length; i++) {
+        sum += (values[i] - mean) * (values[i - lag] - mean);
+      }
+      autocorr += sum / (values.length - lag);
+    }
+    
+    return variance > 0 ? Math.abs(autocorr / variance) : 0;
+  }
+  
+  // Optimize sync intervals based on ML predictions
+  function optimizeSyncIntervals(sessionId) {
+    if (!syncOptimizationData[sessionId]) {
+      syncOptimizationData[sessionId] = {
+        optimalIntervals: {},
+        driftPatterns: {},
+        deviceProfiles: {},
+        lastOptimization: Date.now()
+      };
+    }
+    
+    const optimization = syncOptimizationData[sessionId];
+    const now = Date.now();
+    
+    // Analyze each client's drift patterns
+    for (const [clientId, model] of Object.entries(driftPredictionModels[sessionId] || {})) {
+      const pattern = recognizeDriftPattern(sessionId, clientId);
+      optimization.driftPatterns[clientId] = pattern;
+      
+      // Calculate optimal sync interval based on pattern and prediction
+      let optimalInterval = BASE_SYNC_INTERVAL;
+      
+      if (pattern) {
+        switch (pattern.name) {
+          case 'oscillating':
+            optimalInterval = Math.max(50, BASE_SYNC_INTERVAL * 0.3); // More frequent syncs
+            break;
+          case 'accelerating':
+            optimalInterval = Math.max(50, BASE_SYNC_INTERVAL * 0.5); // Moderate frequency
+            break;
+          case 'stabilizing':
+            optimalInterval = Math.min(1000, BASE_SYNC_INTERVAL * 1.5); // Less frequent syncs
+            break;
+          case 'random':
+            optimalInterval = BASE_SYNC_INTERVAL; // Standard interval
+            break;
+        }
+      }
+      
+      // Adjust based on prediction confidence
+      if (model.confidence > ML_SYNC_CONFIG.MIN_CONFIDENCE) {
+        const predictedDrift = Math.abs(model.prediction);
+        if (predictedDrift > CRITICAL_DRIFT_THRESHOLD) {
+          optimalInterval = Math.max(25, optimalInterval * 0.2);
+        } else if (predictedDrift > DRIFT_THRESHOLD) {
+          optimalInterval = Math.max(50, optimalInterval * 0.5);
+        }
+      }
+      
+      optimization.optimalIntervals[clientId] = optimalInterval;
+    }
+    
+    optimization.lastOptimization = now;
+    return optimization;
+  }
+  
+  // Enhanced predictive sync with ML
+  function shouldPredictiveSync(sessionId) {
+    if (!sessionSyncStats[sessionId]) return false;
+    
+    const stats = sessionSyncStats[sessionId];
+    const timeSinceUpdate = Date.now() - stats.lastUpdate;
+    
+    // Use ML predictions for more accurate sync timing
+    const optimization = syncOptimizationData[sessionId];
+    if (optimization) {
+      const avgOptimalInterval = Object.values(optimization.optimalIntervals).reduce((a, b) => a + b, 0) / 
+                                Object.keys(optimization.optimalIntervals).length;
+      
+      if (timeSinceUpdate >= avgOptimalInterval * 0.8) {
+        return true;
+      }
+    }
+    
+    // Fallback to original logic
+    if (stats.avgDrift > DRIFT_THRESHOLD * 0.8 && timeSinceUpdate > 200) {
+      return true;
+    }
+    
+    if (stats.deviceTypes.includes('mobile') || stats.networkQualities.includes('poor')) {
+      return timeSinceUpdate > 250;
+    }
+    
+    return false;
+  }
 
   // Clean up old drift reports every minute
   setInterval(() => {
@@ -907,30 +1317,40 @@ export function setupSocket(io) {
         delete clientDriftMap[sessionId];
       }
     }
+    
+    // Clean up old session stats
+    for (const sessionId in sessionSyncStats) {
+      if (now - sessionSyncStats[sessionId].lastUpdate > DRIFT_WINDOW * 2) {
+        delete sessionSyncStats[sessionId];
+      }
+    }
   }, 60000);
 
-  // Adaptive sync broadcast
+  // Enhanced adaptive sync broadcast with device-specific intervals
   setInterval(() => {
     const sessions = getAllSessions();
     const now = Date.now();
+    
     for (const [sessionId, session] of Object.entries(sessions)) {
-      let highDrift = false;
-      if (clientDriftMap[sessionId]) {
-        for (const { drift, timestamp } of Object.values(clientDriftMap[sessionId])) {
-          if (now - timestamp < DRIFT_WINDOW && drift > DRIFT_THRESHOLD) {
-            highDrift = true;
-            break;
-          }
-        }
-      }
-      if (!highDrift) {
+      const { highDrift, criticalDrift, deviceTypes, networkQualities } = analyzeSessionDrift(sessionId);
+      
+      // Skip if critical drift (handled by critical sync interval)
+      if (criticalDrift) continue;
+      
+      // Use device-specific intervals
+      const syncInterval = getDeviceSpecificSyncInterval(deviceTypes, networkQualities);
+      const timeSinceLastSync = now - (session.lastSyncBroadcast || 0);
+      
+      if (timeSinceLastSync >= syncInterval && !highDrift) {
         io.to(sessionId).emit('sync_state', {
           isPlaying: session.isPlaying,
           timestamp: session.timestamp,
           lastUpdated: session.lastUpdated,
           controllerId: session.controllerId,
-          serverTime: Date.now()
+          serverTime: Date.now(),
+          syncStats: sessionSyncStats[sessionId] || null
         });
+        session.lastSyncBroadcast = now;
       }
     }
   }, BASE_SYNC_INTERVAL);
@@ -939,25 +1359,105 @@ export function setupSocket(io) {
   setInterval(() => {
     const sessions = getAllSessions();
     const now = Date.now();
+    
     for (const [sessionId, session] of Object.entries(sessions)) {
-      let highDrift = false;
-      if (clientDriftMap[sessionId]) {
-        for (const { drift, timestamp } of Object.values(clientDriftMap[sessionId])) {
-          if (now - timestamp < DRIFT_WINDOW && drift > DRIFT_THRESHOLD) {
-            highDrift = true;
-            break;
-          }
-        }
-      }
-      if (highDrift) {
+      const { highDrift, criticalDrift } = analyzeSessionDrift(sessionId);
+      
+      if (highDrift && !criticalDrift) {
         io.to(sessionId).emit('sync_state', {
           isPlaying: session.isPlaying,
           timestamp: session.timestamp,
           lastUpdated: session.lastUpdated,
           controllerId: session.controllerId,
-          serverTime: Date.now()
+          serverTime: Date.now(),
+          syncStats: sessionSyncStats[sessionId] || null,
+          reason: 'high_drift'
         });
+        session.lastSyncBroadcast = now;
       }
     }
   }, HIGH_DRIFT_SYNC_INTERVAL);
+
+  // Critical drift sessions get immediate attention
+  setInterval(() => {
+    const sessions = getAllSessions();
+    const now = Date.now();
+    
+    for (const [sessionId, session] of Object.entries(sessions)) {
+      const { criticalDrift } = analyzeSessionDrift(sessionId);
+      
+      if (criticalDrift) {
+        io.to(sessionId).emit('sync_state', {
+          isPlaying: session.isPlaying,
+          timestamp: session.timestamp,
+          lastUpdated: session.lastUpdated,
+          controllerId: session.controllerId,
+          serverTime: Date.now(),
+          syncStats: sessionSyncStats[sessionId] || null,
+          reason: 'critical_drift'
+        });
+        session.lastSyncBroadcast = now;
+      }
+    }
+  }, CRITICAL_DRIFT_SYNC_INTERVAL);
+
+  // ML-based sync optimization interval
+  setInterval(() => {
+    const sessions = getAllSessions();
+    const now = Date.now();
+    
+    for (const [sessionId, session] of Object.entries(sessions)) {
+      // Run optimization for sessions with active drift data
+      if (clientDriftMap[sessionId] && Object.keys(clientDriftMap[sessionId]).length > 0) {
+        const optimization = optimizeSyncIntervals(sessionId);
+        
+        // Send optimization data to clients for local adjustments
+        io.to(sessionId).emit('sync_optimization', {
+          sessionId,
+          optimalIntervals: optimization.optimalIntervals,
+          driftPatterns: optimization.driftPatterns,
+          mlInsights: {
+            totalModels: Object.keys(driftPredictionModels[sessionId] || {}).length,
+            avgConfidence: Object.values(driftPredictionModels[sessionId] || {})
+              .reduce((sum, model) => sum + model.confidence, 0) / 
+              Math.max(1, Object.keys(driftPredictionModels[sessionId] || {}).length),
+            lastOptimization: optimization.lastOptimization
+          }
+        });
+      }
+    }
+  }, ML_SYNC_CONFIG.SYNC_OPTIMIZATION_INTERVAL);
+
+  // Enhanced predictive sync with ML insights
+  setInterval(() => {
+    const sessions = getAllSessions();
+    const now = Date.now();
+    
+    for (const [sessionId, session] of Object.entries(sessions)) {
+      if (shouldPredictiveSync(sessionId)) {
+        const optimization = syncOptimizationData[sessionId];
+        const mlInsights = {
+          predictionModels: driftPredictionModels[sessionId] ? 
+            Object.keys(driftPredictionModels[sessionId]).length : 0,
+          avgPredictionConfidence: driftPredictionModels[sessionId] ?
+            Object.values(driftPredictionModels[sessionId])
+              .reduce((sum, model) => sum + model.confidence, 0) / 
+              Object.keys(driftPredictionModels[sessionId]).length : 0,
+          detectedPatterns: optimization?.driftPatterns || {}
+        };
+        
+        io.to(sessionId).emit('sync_state', {
+          isPlaying: session.isPlaying,
+          timestamp: session.timestamp,
+          lastUpdated: session.lastUpdated,
+          controllerId: session.controllerId,
+          serverTime: Date.now(),
+          syncStats: sessionSyncStats[sessionId] || null,
+          mlInsights,
+          reason: 'ml_predictive'
+        });
+        session.lastSyncBroadcast = now;
+      }
+    }
+  }, 200); // Check every 200ms for ML-based predictive sync opportunities
 } 
