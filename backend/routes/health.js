@@ -1,10 +1,8 @@
-import { Router } from 'express';
-const router = Router();
+import express from 'express';
+const router = express.Router();
 
-console.log('Health route loaded');
-
-router.get('/', (req, res) => {
-  res.status(200).json({ status: 'ok' });
+router.get('/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: Date.now() });
 });
 
 export default router; 

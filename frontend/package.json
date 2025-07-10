@@ -12,9 +12,6 @@
     "env:example": "echo 'VITE_BACKEND_URL=http://localhost:4000' > .env && echo 'Created example .env file'"
   },
   "dependencies": {
-    "@react-three/drei": "^10.5.0",
-    "@react-three/fiber": "^9.2.0",
-    "@react-three/postprocessing": "^3.0.4",
     "@tailwindcss/postcss": "^4.1.11",
     "browser-id3-writer": "^6.2.0",
     "jsmediatags": "^3.9.7",
@@ -22,8 +19,7 @@
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-router-dom": "^7.6.3",
-    "socket.io-client": "^4.8.1",
-    "three": "^0.178.0"
+    "socket.io-client": "^4.8.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.29.0",

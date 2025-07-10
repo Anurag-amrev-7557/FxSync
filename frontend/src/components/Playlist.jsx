@@ -184,51 +184,69 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
 
   return (
     <div className="h-full flex flex-col">
+      {/* Header */}
+      <div className="p-4 border-b border-neutral-800">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 bg-neutral-800 rounded-lg flex items-center justify-center">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-400">
+                <path d="M9 18V5l12-2v13"></path>
+                <circle cx="6" cy="18" r="3"></circle>
+                <circle cx="18" cy="16" r="3"></circle>
+              </svg>
+            </div>
+            <div>
+              <h3 className="text-white font-medium text-sm">Playlist</h3>
+              <p className="text-neutral-400 text-xs">{queue.length} track{queue.length !== 1 ? 's' : ''}</p>
+            </div>
+          </div>
+          {isController && (
+            <div className="text-xs text-neutral-400 bg-neutral-800 px-2 py-1 rounded">
+              Controller
+            </div>
+          )}
+        </div>
+      </div>
 
-      {/* Add Track Form & Upload - Mobile Optimized, Modern, Black & White Theme, Custom Background */}
+      {/* Add Track Form & Upload */}
       {isController && (
-        <div
-          className="p-4 border-b border-neutral-800"
-          style={{ background: "#0A0A0A" }}
-        >
+        <div className="p-4 border-b border-neutral-800">
           <form onSubmit={handleAdd} className="space-y-3">
             <div>
-              <label className="block text-xs font-semibold text-white mb-2 tracking-wide">
+              <label className="block text-xs font-medium text-neutral-400 mb-2">
                 Add Audio URL or Upload MP3
               </label>
-              <div className="flex flex-col sm:flex-row sm:items-center gap-2 w-full">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-2 w-full">
                 <input
-                  className="flex-1 bg-black border border-neutral-700 rounded-xl px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none transition-all duration-200 shadow-sm"
+                  className="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50 transition-all duration-200"
                   type="text"
                   value={input}
                   onChange={e => setInput(e.target.value)}
-                  placeholder="Paste audio URL here"
+                  placeholder="https://example.com/audio.mp3"
                   disabled={loading}
-                  autoComplete="off"
-                  inputMode="url"
                 />
-                <div className="flex flex-row gap-2 w-full sm:w-auto">
-                  <button
-                    type="submit"
-                    className="flex-1 sm:flex-none px-4 py-2 bg-white hover:bg-neutral-200 text-black rounded-xl text-sm font-semibold shadow transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                    disabled={loading || !input.trim()}
-                  >
-                    {loading ? (
-                      <>
-                        <InlineLoadingSpinner size="sm" />
-                        <span className="ml-1">Adding...</span>
-                      </>
-                    ) : (
-                      <>
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-black">
-                          <line x1="12" y1="5" x2="12" y2="19"></line>
-                          <line x1="5" y1="12" x2="19" y2="12"></line>
-                        </svg>
-                        <span>Add</span>
-                      </>
-                    )}
-                  </button>
-                  {/* Upload Button */}
+                <button
+                  type="submit"
+                  className="w-full sm:w-auto px-4 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg text-sm font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 mt-2 sm:mt-0"
+                  disabled={loading || !input.trim()}
+                >
+                  {loading ? (
+                    <>
+                      <InlineLoadingSpinner size="sm" />
+                      Adding...
+                    </>
+                  ) : (
+                    <>
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="12" y1="5" x2="12" y2="19"></line>
+                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                      </svg>
+                      Add
+                    </>
+                  )}
+                </button>
+                {/* Enhanced Upload UI */}
+                <div className="flex flex-col items-stretch sm:flex-row sm:items-center gap-2 w-full sm:w-auto mt-2 sm:mt-0">
                   <input
                     type="file"
                     accept="audio/mp3"
@@ -241,31 +259,30 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
                     type="button"
                     onClick={handleUploadClick}
                     disabled={uploading}
-                    className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-white hover:bg-neutral-200 text-black rounded-xl text-sm font-semibold border border-neutral-700 shadow transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 bg-neutral-800 hover:bg-primary/80 text-white rounded-lg text-sm font-medium border border-neutral-700 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
                     title="Upload MP3"
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-black">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
                       <path d="M12 5v14M5 12h14" />
                     </svg>
-                    <span>{uploading ? 'Uploading...' : 'Upload'}</span>
+                    {uploading ? 'Uploading...' : 'Upload MP3'}
                   </button>
+                  {selectedFile && !uploading && (
+                    <span className="text-xs text-neutral-400 truncate max-w-full sm:max-w-[120px] text-center mt-1 sm:mt-0">{selectedFile.name}</span>
+                  )}
+                  {uploading && (
+                    <div className="w-full sm:w-40 mt-2 sm:mt-0">
+                      <div className="h-2 bg-neutral-700 rounded-full overflow-hidden">
+                        <div
+                          className="h-2 bg-primary rounded-full transition-all duration-200"
+                          style={{ width: `${uploadProgress}%` }}
+                        />
+                      </div>
+                      <div className="text-xs text-neutral-400 mt-1 text-center">{uploadProgress}%</div>
+                    </div>
+                  )}
                 </div>
               </div>
-              {/* Enhanced Progress bar for upload - always below the controls, responsive and visually distinct */}
-              {uploading && (
-                <div className="w-full mt-4">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-xs text-neutral-400 font-medium">Uploading...</span>
-                    <span className="text-xs text-white font-semibold tabular-nums">{uploadProgress}%</span>
-                  </div>
-                  <div className="relative w-full h-3 bg-neutral-800 rounded-full overflow-hidden shadow-inner">
-                    <div
-                      className="absolute left-0 top-0 h-3 bg-gradient-to-r from-white via-neutral-300 to-neutral-500 transition-all duration-300 rounded-full"
-                      style={{ width: `${uploadProgress}%` }}
-                    />
-                  </div>
-                </div>
-              )}
             </div>
           </form>
         </div>
@@ -285,10 +302,13 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
             {allTracks.map((track, idx) => (
               <div
                 key={track.url}
-                className={`p-2 ${isController ? 'hover:bg-primary/10 cursor-pointer' : 'cursor-not-allowed'} transition-all duration-200 flex items-center gap-3`}
+                className="p-2 hover:bg-primary/10 transition-all duration-200 cursor-pointer flex items-center gap-3"
                 onClick={() => {
-                  if (!isController) return;
-                  if (!socket || !sessionId) return;
+                  if (!isController || !socket || !sessionId) {
+                    // Just preview for non-controller or if missing socket/session
+                    onSelectTrack && onSelectTrack(null, track);
+                    return;
+                  }
                   // If already in queue, select it
                   const existingIdx = queue.findIndex(q => q.url === track.url);
                   if (existingIdx !== -1) {
@@ -301,14 +321,13 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
                     });
                   }
                 }}
-                title={isController ? `Play ${track.title}` : 'Only the controller can add or preview tracks'}
+                title={`Play ${track.title}`}
               >
                 <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${track.type === 'sample' ? 'bg-blue-800' : 'bg-neutral-800'}`}> 
-                  {/* Advanced Play icon */}
-                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" className="text-white">
-                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" fill="transparent" />
-                    <polygon points="9 8 17 12 9 16 9 8" fill="currentColor" />
-                    <circle cx="12" cy="12" r="2.5" fill="#fff" opacity="0.7" />
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white">
+                    <path d="M9 18V5l12-2v13"></path>
+                    <circle cx="6" cy="18" r="3"></circle>
+                    <circle cx="18" cy="16" r="3"></circle>
                   </svg>
                 </div>
                 <div className="flex-1 min-w-0">
@@ -325,93 +344,34 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
       <div className="flex-1 overflow-y-auto">
         {queue.length === 0 ? (
           <div className="p-8 text-center">
-            <div className="w-20 h-20 bg-neutral-800 rounded-2xl flex items-center justify-center mx-auto mb-4 relative overflow-hidden">
-              {/* Animated spinning vinyl */}
-              <div className="absolute inset-0 flex items-center justify-center">
-                <svg className="animate-spin-slow" width="64" height="64" viewBox="0 0 64 64" fill="none">
-                  <circle cx="32" cy="32" r="28" stroke="#52525b" strokeWidth="4" fill="#18181b" />
-                  <circle cx="32" cy="32" r="18" stroke="#27272a" strokeWidth="2" fill="#27272a" />
-                  <circle cx="32" cy="32" r="6" fill="#a3a3a3" />
-                  <circle cx="32" cy="32" r="2" fill="#fff" />
-                  {/* Grooves */}
-                  <circle cx="32" cy="32" r="24" stroke="#3f3f46" strokeWidth="1" fill="none" />
-                  <circle cx="32" cy="32" r="21" stroke="#3f3f46" strokeWidth="0.5" fill="none" />
-                </svg>
-              </div>
-              {/* Animated music notes */}
-              <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
-                <svg className="absolute -top-6 left-6 animate-float-up-slow opacity-70" width="18" height="18" viewBox="0 0 18 18" fill="none">
-                  <path d="M6 16V6l8-2v10" stroke="#60a5fa" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                  <circle cx="4" cy="16" r="2" fill="#60a5fa" />
-                  <circle cx="14" cy="14" r="2" fill="#60a5fa" />
-                </svg>
-                <svg className="absolute -top-8 left-2 animate-float-up opacity-60" width="14" height="14" viewBox="0 0 14 14" fill="none">
-                  <path d="M4 12V4l6-1v8" stroke="#f472b6" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
-                  <circle cx="3" cy="12" r="1.5" fill="#f472b6" />
-                  <circle cx="10" cy="11" r="1.5" fill="#f472b6" />
-                </svg>
-                <svg className="absolute -top-4 left-10 animate-float-up-fast opacity-50" width="12" height="12" viewBox="0 0 12 12" fill="none">
-                  <path d="M3 10V3l5-1v7" stroke="#fbbf24" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/>
-                  <circle cx="2" cy="10" r="1" fill="#fbbf24" />
-                  <circle cx="8" cy="9" r="1" fill="#fbbf24" />
-                </svg>
-              </div>
+            <div className="w-16 h-16 bg-neutral-800 rounded-lg flex items-center justify-center mx-auto mb-4">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-400">
+                <path d="M9 18V5l12-2v13"></path>
+                <circle cx="6" cy="18" r="3"></circle>
+                <circle cx="18" cy="16" r="3"></circle>
+              </svg>
             </div>
             <p className="text-neutral-400 text-sm mb-1">No tracks in queue</p>
             <p className="text-neutral-500 text-xs">
               {isController ? 'Add audio URLs or upload MP3s to get started' : 'The controller will add tracks here'}
             </p>
-            {/* Animations CSS */}
-            <style>{`
-              .animate-spin-slow {
-                animation: spin 3.5s linear infinite;
-              }
-              @keyframes spin {
-                100% { transform: rotate(360deg); }
-              }
-              .animate-float-up {
-                animation: floatUp 2.5s ease-in-out infinite alternate;
-              }
-              .animate-float-up-slow {
-                animation: floatUp 3.2s ease-in-out infinite alternate;
-              }
-              .animate-float-up-fast {
-                animation: floatUp 1.7s ease-in-out infinite alternate;
-              }
-              @keyframes floatUp {
-                0% { transform: translateY(0) scale(1); opacity: 0.7; }
-                60% { opacity: 1; }
-                100% { transform: translateY(-18px) scale(1.1); opacity: 0.2; }
-              }
-            `}</style>
           </div>
         ) : (
           <div className="divide-y divide-neutral-800">
             {queue.map((item, idx) => (
               <div
                 key={idx}
-                className={`p-4 ${isController ? 'hover:bg-primary/10 cursor-pointer' : 'cursor-not-allowed'} transition-all duration-300 group ${queueAnimations[idx]?.animationClass || ''} ${selectedTrackIdx === idx ? 'bg-primary/20 border-l-4 border-primary' : ''}`}
-                onClick={() => isController && onSelectTrack && onSelectTrack(idx)}
-                title={selectedTrackIdx === idx ? 'Currently Playing' : isController ? 'Click to play' : 'Only the controller can change tracks'}
+                className={`p-4 hover:bg-primary/10 transition-all duration-300 group cursor-pointer ${queueAnimations[idx]?.animationClass || ''} ${selectedTrackIdx === idx ? 'bg-primary/20 border-l-4 border-primary' : ''}`}
+                onClick={() => onSelectTrack && onSelectTrack(idx)}
+                title={selectedTrackIdx === idx ? 'Currently Playing' : 'Click to play'}
               >
                 <div className="flex items-center gap-3">
                   <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${selectedTrackIdx === idx ? 'bg-primary/80' : 'bg-neutral-800'}`}> 
-                    {selectedTrackIdx === idx ? (
-                      // Equalizer animation for currently playing track
-                      <span className="flex items-end h-6 gap-[2px]">
-                        <span className="bg-white w-[3px] h-3 animate-eqbar1 rounded-sm" />
-                        <span className="bg-white w-[3px] h-5 animate-eqbar2 rounded-sm" />
-                        <span className="bg-white w-[3px] h-4 animate-eqbar3 rounded-sm" />
-                        <span className="bg-white w-[3px] h-2 animate-eqbar4 rounded-sm" />
-                      </span>
-                    ) : (
-                      // Advanced Play icon with transparent background
-                      <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" className="text-white">
-                        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" fill="transparent" />
-                        <polygon points="9 8 17 12 9 16 9 8" fill="currentColor" />
-                        <circle cx="12" cy="12" r="2.5" fill="#fff" opacity="0.7" />
-                      </svg>
-                    )}
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={selectedTrackIdx === idx ? 'text-white' : 'text-neutral-400'}>
+                      <path d="M9 18V5l12-2v13"></path>
+                      <circle cx="6" cy="18" r="3"></circle>
+                      <circle cx="18" cy="16" r="3"></circle>
+                    </svg>
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
@@ -441,78 +401,6 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
           </div>
         )}
       </div>
-      {/* Enhanced, slower, dynamic, and visually appealing monochromatic equalizer bar keyframes and styles */}
-      <style>
-        {`
-        /* Slower, dynamic, visually appealing monochrome equalizer bars */
-        @keyframes eqbar1 {
-          0%   { height: 14px; filter: brightness(1.1); }
-          10%  { height: 28px; filter: brightness(1.3); }
-          20%  { height: 10px; filter: brightness(0.9); }
-          30%  { height: 22px; filter: brightness(1.2); }
-          40%  { height: 18px; filter: brightness(1.0); }
-          50%  { height: 26px; filter: brightness(1.4); }
-          60%  { height: 12px; filter: brightness(1.0); }
-          70%  { height: 20px; filter: brightness(1.2); }
-          80%  { height: 16px; filter: brightness(0.95);}
-          90%  { height: 24px; filter: brightness(1.3);}
-          100% { height: 14px; filter: brightness(1.1);}
-        }
-        @keyframes eqbar2 {
-          0%   { height: 22px; filter: brightness(1.0);}
-          12%  { height: 12px; filter: brightness(1.2);}
-          25%  { height: 30px; filter: brightness(1.4);}
-          37%  { height: 14px; filter: brightness(1.0);}
-          50%  { height: 28px; filter: brightness(1.3);}
-          62%  { height: 10px; filter: brightness(0.9);}
-          75%  { height: 24px; filter: brightness(1.2);}
-          87%  { height: 16px; filter: brightness(1.1);}
-          100% { height: 22px; filter: brightness(1.0);}
-        }
-        @keyframes eqbar3 {
-          0%   { height: 18px; filter: brightness(1.1);}
-          15%  { height: 28px; filter: brightness(1.3);}
-          30%  { height: 12px; filter: brightness(1.0);}
-          45%  { height: 24px; filter: brightness(1.2);}
-          60%  { height: 10px; filter: brightness(0.9);}
-          75%  { height: 26px; filter: brightness(1.3);}
-          90%  { height: 14px; filter: brightness(1.0);}
-          100% { height: 18px; filter: brightness(1.1);}
-        }
-        @keyframes eqbar4 {
-          0%   { height: 12px; filter: brightness(1.0);}
-          20%  { height: 26px; filter: brightness(1.2);}
-          40%  { height: 14px; filter: brightness(1.1);}
-          60%  { height: 30px; filter: brightness(1.4);}
-          80%  { height: 10px; filter: brightness(0.9);}
-          100% { height: 12px; filter: brightness(1.0);}
-        }
-        .animate-eqbar1 {
-          animation: eqbar1 2.2s infinite cubic-bezier(0.4,0,0.2,1) alternate;
-          background: linear-gradient(180deg, #fafafa 0%, #a3a3a3 100%);
-          box-shadow: 0 0 8px #a3a3a3cc, 0 2px 8px #18181b33;
-          transition: background 0.3s, box-shadow 0.3s;
-        }
-        .animate-eqbar2 {
-          animation: eqbar2 2.5s infinite cubic-bezier(0.4,0,0.2,1) alternate;
-          background: linear-gradient(180deg, #e5e7eb 0%, #52525b 100%);
-          box-shadow: 0 0 8px #52525bcc, 0 2px 8px #18181b22;
-          transition: background 0.3s, box-shadow 0.3s;
-        }
-        .animate-eqbar3 {
-          animation: eqbar3 2.7s infinite cubic-bezier(0.4,0,0.2,1) alternate;
-          background: linear-gradient(180deg, #a3a3a3 0%, #27272a 100%);
-          box-shadow: 0 0 8px #27272acc, 0 2px 8px #18181b22;
-          transition: background 0.3s, box-shadow 0.3s;
-        }
-        .animate-eqbar4 {
-          animation: eqbar4 2.1s infinite cubic-bezier(0.4,0,0.2,1) alternate;
-          background: linear-gradient(180deg, #52525b 0%, #18181b 100%);
-          box-shadow: 0 0 8px #18181bcc, 0 2px 8px #18181b22;
-          transition: background 0.3s, box-shadow 0.3s;
-        }
-        `}
-      </style>
     </div>
   );
 } 

@@ -10,53 +10,57 @@ const ResizableLayout = ({
   initialLeftWidth = null, // Will be calculated as equal width
   initialMiddleWidth = null // Will be calculated as equal width
 }) => {
-  const [leftWidth, setLeftWidth] = useState(null);
-  const [middleWidth, setMiddleWidth] = useState(null);
+  const [leftWidth, setLeftWidth] = useState(initialLeftWidth)
+  const [middleWidth, setMiddleWidth] = useState(initialMiddleWidth)
   const [isDraggingLeft, setIsDraggingLeft] = useState(false)
   const [isDraggingRight, setIsDraggingRight] = useState(false)
   const containerRef = useRef(null)
   const leftResizerRef = useRef(null)
   const rightResizerRef = useRef(null)
-  // Track if user has resized
-  const userResized = useRef(false);
 
-  // Calculate initial equal widths if not provided or if user hasn't resized
+  // Calculate initial equal widths if not provided
   useEffect(() => {
-    if (containerRef.current && !userResized.current) {
-      const containerWidth = containerRef.current.offsetWidth;
-      const resizerWidth = 20; // Total width of both resizers
-      const availableWidth = containerWidth - resizerWidth;
-      const equalWidth = availableWidth / 3;
-      setLeftWidth(Math.max(equalWidth, leftMinWidth));
-      setMiddleWidth(Math.max(equalWidth, middleMinWidth));
+    if ((initialLeftWidth === null || initialMiddleWidth === null) && containerRef.current) {
+      const containerWidth = containerRef.current.offsetWidth
+      const resizerWidth = 20 // Total width of both resizers
+      const availableWidth = containerWidth - resizerWidth
+      const equalWidth = availableWidth / 3
+      
+      if (initialLeftWidth === null) {
+        setLeftWidth(Math.max(equalWidth, leftMinWidth))
+      }
+      if (initialMiddleWidth === null) {
+        setMiddleWidth(Math.max(equalWidth, middleMinWidth))
+      }
     }
-  }, [leftMinWidth, middleMinWidth]);
+  }, [initialLeftWidth, initialMiddleWidth, leftMinWidth, middleMinWidth])
 
   // Handle window resize to maintain equal widths if not manually adjusted
   useEffect(() => {
     const handleResize = () => {
-      if (containerRef.current && !userResized.current) {
-        const containerWidth = containerRef.current.offsetWidth;
-        const resizerWidth = 20;
-        const availableWidth = containerWidth - resizerWidth;
-        const equalWidth = availableWidth / 3;
-        setLeftWidth(Math.max(equalWidth, leftMinWidth));
-        setMiddleWidth(Math.max(equalWidth, middleMinWidth));
+      if (initialLeftWidth === null && initialMiddleWidth === null && containerRef.current) {
+        const containerWidth = containerRef.current.offsetWidth
+        const resizerWidth = 20
+        const availableWidth = containerWidth - resizerWidth
+        const equalWidth = availableWidth / 3
+        
+        setLeftWidth(Math.max(equalWidth, leftMinWidth))
+        setMiddleWidth(Math.max(equalWidth, middleMinWidth))
       }
-    };
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, [leftMinWidth, middleMinWidth]);
+    }
+
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [initialLeftWidth, initialMiddleWidth, leftMinWidth, middleMinWidth])
 
   const handleMouseDown = (e, resizerType) => {
-    e.preventDefault();
-    userResized.current = true;
+    e.preventDefault()
     if (resizerType === 'left') {
-      setIsDraggingLeft(true);
+      setIsDraggingLeft(true)
     } else {
-      setIsDraggingRight(true);
+      setIsDraggingRight(true)
     }
-  };
+  }
 
   const handleMouseMove = (e) => {
     if (!isDraggingLeft && !isDraggingRight) return
