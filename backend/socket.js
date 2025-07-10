@@ -27,37 +27,6 @@ function buildSessionSyncState(session) {
   };
 }
 
-// --- Heartbeat Timer Map ---
-const heartbeatTimers = new Map();
-
-function startHeartbeat(io, sessionId) {
-  if (heartbeatTimers.has(sessionId)) return;
-  const session = getSession(sessionId);
-  if (!session) return;
-  heartbeatTimers.set(sessionId, setInterval(() => {
-    const session = getSession(sessionId);
-    if (!session) return;
-    // Only emit if controller is present
-    if (!session.controllerId) return;
-    const syncState = buildSessionSyncState(session);
-    io.to(sessionId).emit('sync_heartbeat', {
-      trackId: syncState.currentTrack?.url || null,
-      playbackTime: syncState.timestamp,
-      isPlaying: syncState.isPlaying,
-      serverTime: Date.now(),
-      controllerClientId: syncState.controllerClientId,
-      bufferHealth: null // (optional, can be filled in future)
-    });
-  }, 1000));
-}
-
-function stopHeartbeat(sessionId) {
-  if (heartbeatTimers.has(sessionId)) {
-    clearInterval(heartbeatTimers.get(sessionId));
-    heartbeatTimers.delete(sessionId);
-  }
-}
-
 export function setupSocket(io) {
   io.on('connection', (socket) => {
     console.log('Socket connected:', socket.id);
@@ -110,7 +79,6 @@ export function setupSocket(io) {
       if (becameController) {
         io.to(sessionId).emit('controller_change', socket.id);
         io.to(sessionId).emit('controller_client_change', clientId);
-        startHeartbeat(io, sessionId); // Start heartbeat if this client is the controller
       }
       log('Client joined session', sessionId, 'Current queue:', getQueue(sessionId));
     });
@@ -818,12 +786,6 @@ export function setupSocket(io) {
     });
 
     socket.on('disconnect', () => {
-      // If this socket was the controller, stop the heartbeat
-      // (You may need to check if the session still exists and if this was the controller)
-      // For simplicity, stop heartbeat for the session
-      const sessionId = Array.from(socket.rooms)[1]; // [0] is socket.id, [1] is sessionId
-      if (sessionId) stopHeartbeat(sessionId);
-
       for (const [sessionId, session] of Object.entries(getAllSessions())) {
         const clientId = getClientIdBySocket(sessionId, socket.id);
         removeClient(sessionId, socket.id);
