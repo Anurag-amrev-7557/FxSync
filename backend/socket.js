@@ -140,7 +140,7 @@ export function setupSocket(io) {
       });
     });
 
-    socket.on('sync_request', async ({ sessionId } = {}, callback) => {
+    socket.on('sync_request', async ({ sessionId, reason = 'standard' } = {}, callback) => {
       try {
         if (!sessionId) {
           if (typeof callback === "function") callback({ error: 'No sessionId provided' });
@@ -151,15 +151,42 @@ export function setupSocket(io) {
           if (typeof callback === "function") callback({ error: 'Session not found' });
           return;
         }
+        
+        // Enhanced sync response with zero-lag/advance protection
         const response = buildSessionSyncState(session);
+        
+        // Add sync optimization data for continuous sync
+        if (reason === 'continuous_sync' || reason === 'timeupdate_fallback') {
+          const clientId = getClientIdBySocket(sessionId, socket.id);
+          if (clientId && clientDriftMap[sessionId] && clientDriftMap[sessionId][clientId]) {
+            const clientData = clientDriftMap[sessionId][clientId];
+            
+            // Add predictive sync data
+            response.syncOptimization = {
+              predictedDrift: predictDrift(sessionId, clientId, clientData.drift),
+              recommendedInterval: getDeviceSpecificSyncInterval([clientData.deviceType], [clientData.networkQuality]),
+              driftPattern: recognizeDriftPattern(sessionId, clientId),
+              shouldPredictiveSync: shouldPredictiveSync(sessionId),
+              syncHealth: calculateSyncHealth(sessionId, clientId)
+            };
+          }
+        }
+        
+        // Add emergency sync data for critical drifts
+        if (reason === 'timeupdate_emergency_drift' || reason === 'timeupdate_critical_drift') {
+          response.emergencySync = {
+            timestamp: Date.now(),
+            priority: reason === 'timeupdate_emergency_drift' ? 'emergency' : 'critical',
+            requiresImmediateCorrection: true
+          };
+        }
+        
         if (process.env.NODE_ENV === 'development') {
-          // eslint-disable-next-line no-console
-          console.log('[socket][sync_request] Responding to sync_request for session', sessionId, response);
+          console.log('[socket][sync_request] Responding to sync_request for session', sessionId, 'reason:', reason, response);
         }
         if (typeof callback === "function") callback(response);
       } catch (err) {
         if (process.env.NODE_ENV === 'development') {
-          // eslint-disable-next-line no-console
           console.error('[socket][sync_request] Error handling sync_request:', err);
         }
         if (typeof callback === "function") callback({ error: 'Internal server error' });
@@ -1302,6 +1329,38 @@ export function setupSocket(io) {
     }
     
     return false;
+  }
+  
+  // Calculate sync health score for a client
+  function calculateSyncHealth(sessionId, clientId) {
+    if (!clientDriftMap[sessionId] || !clientDriftMap[sessionId][clientId]) {
+      return { score: 100, status: 'excellent' };
+    }
+    
+    const clientData = clientDriftMap[sessionId][clientId];
+    const recentReports = clientData.analytics?.reportCount || 0;
+    const avgDrift = clientData.analytics?.avgDrift || 0;
+    
+    let score = 100;
+    
+    // Reduce score based on average drift
+    if (avgDrift > 0.5) score -= 50;
+    else if (avgDrift > 0.2) score -= 30;
+    else if (avgDrift > 0.1) score -= 15;
+    else if (avgDrift > 0.05) score -= 5;
+    
+    // Reduce score if too many reports (indicating instability)
+    if (recentReports > 20) score -= 20;
+    else if (recentReports > 10) score -= 10;
+    
+    score = Math.max(0, Math.min(100, score));
+    
+    let status = 'excellent';
+    if (score < 50) status = 'poor';
+    else if (score < 70) status = 'fair';
+    else if (score < 90) status = 'good';
+    
+    return { score, status, avgDrift, reportCount: recentReports };
   }
 
   // Clean up old drift reports every minute

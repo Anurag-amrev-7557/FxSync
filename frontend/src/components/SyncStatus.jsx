@@ -331,7 +331,10 @@ export default function SyncStatus({
   deviceType = null,
   networkQuality = null,
   showMetrics = false,
-  mlInsights = null
+  mlInsights = null,
+  syncMode = null,
+  syncQuality = null,
+  syncHealthScore = null
 }) {
   const config = getStatusConfig(status);
   const qualityIndicator = getSyncQualityIndicator(config.quality, rtt, jitter, drift);
@@ -372,6 +375,71 @@ export default function SyncStatus({
                     {getNetworkQualityIcon(networkQuality)}
                   </div>
                   <span className="text-xs">{networkQuality}</span>
+                </div>
+              )}
+              
+              {/* Sync Mode Indicator */}
+              {syncMode && (
+                <div className="flex items-center gap-1">
+                  {syncMode === 'emergency' && (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-red-400 animate-pulse">
+                      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                      <line x1="12" y1="9" x2="12" y2="13"/>
+                      <line x1="12" y1="17" x2="12.01" y2="17"/>
+                    </svg>
+                  )}
+                  {syncMode === 'aggressive' && (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-orange-400 animate-pulse">
+                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/>
+                      <path d="M8 12h8"/>
+                      <path d="M12 8v8"/>
+                    </svg>
+                  )}
+                  {syncMode === 'standard' && (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-green-400">
+                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/>
+                      <path d="M9 12l2 2 4-4"/>
+                    </svg>
+                  )}
+                  <span className="text-xs capitalize">{syncMode}</span>
+                </div>
+              )}
+              
+              {/* Sync Quality Indicator */}
+              {syncQuality && (
+                <div className="flex items-center gap-1">
+                  {syncQuality === 'excellent' && (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-green-400">
+                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/>
+                      <path d="M9 12l2 2 4-4"/>
+                    </svg>
+                  )}
+                  {syncQuality === 'good' && (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-400">
+                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/>
+                      <path d="M8 12h8"/>
+                      <path d="M12 8v8"/>
+                    </svg>
+                  )}
+                  {syncQuality === 'fair' && (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-yellow-400">
+                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/>
+                      <path d="M8 12h8"/>
+                      <path d="M12 8v8"/>
+                      <path d="M9 9l6 6"/>
+                    </svg>
+                  )}
+                  {syncQuality === 'poor' && (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-red-400">
+                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/>
+                      <path d="M15 9l-6 6"/>
+                      <path d="M9 9l6 6"/>
+                    </svg>
+                  )}
+                  <span className="text-xs capitalize">{syncQuality}</span>
+                  {syncHealthScore !== null && (
+                    <span className="text-xs opacity-75">({syncHealthScore})</span>
+                  )}
                 </div>
               )}
             </div>

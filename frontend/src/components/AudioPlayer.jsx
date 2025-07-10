@@ -15,21 +15,32 @@ if (typeof window !== 'undefined' && !window._audioPlayerErrorHandlerAdded) {
   window._audioPlayerErrorHandlerAdded = true;
 }
 
-const DRIFT_THRESHOLD = 0.25; // seconds (increased from 0.12)
+// Enhanced automatic sync constants for zero-lag/advance protection
+const DRIFT_THRESHOLD = 0.1; // seconds (reduced for tighter sync)
 const PLAY_OFFSET = 0.35; // seconds (350ms future offset for play events)
 const DEFAULT_AUDIO_LATENCY = 0.08; // 80ms fallback if not measured
-const MICRO_DRIFT_THRESHOLD = 0.04; // seconds (was 0.08)
-const MICRO_RATE_CAP = 0.015; // max playbackRate delta (was 0.03, reduced for gentler correction)
-const MICRO_CORRECTION_WINDOW = 300; // ms (was 500, shortened for quicker reset)
-const DRIFT_JITTER_BUFFER = 6; // consecutive drift detections before correction (increased from 4)
-const RESYNC_COOLDOWN_MS = 2000; // minimum time between manual resyncs
+const MICRO_DRIFT_THRESHOLD = 0.02; // seconds (reduced for micro-corrections)
+const MICRO_RATE_CAP = 0.01; // max playbackRate delta (reduced for gentler correction)
+const MICRO_CORRECTION_WINDOW = 200; // ms (shortened for quicker reset)
+const DRIFT_JITTER_BUFFER = 2; // consecutive drift detections before correction (reduced for faster response)
+const RESYNC_COOLDOWN_MS = 1000; // minimum time between manual resyncs (reduced)
 const RESYNC_HISTORY_SIZE = 5; // number of recent resyncs to track
-const SMART_RESYNC_THRESHOLD = 0.5; // drift threshold for smart resync suggestion
+const SMART_RESYNC_THRESHOLD = 0.3; // drift threshold for smart resync suggestion (reduced)
+
+// Zero-lag/advance protection constants
+const ZERO_DRIFT_TOLERANCE = 0.05; // 50ms tolerance for "perfect" sync
+const CRITICAL_DRIFT_THRESHOLD = 0.2; // 200ms - immediate correction
+const EMERGENCY_DRIFT_THRESHOLD = 0.5; // 500ms - emergency hard seek
+const CONTINUOUS_SYNC_INTERVAL = 200; // 200ms continuous sync for followers
+const PROACTIVE_SYNC_INTERVAL = 100; // 100ms proactive sync check
+const BUFFER_UNDERRUN_THRESHOLD = 0.3; // 300ms buffer ahead required
+const MAX_CONSECUTIVE_CORRECTIONS = 5; // Max corrections before forced resync
+
 // Micro drift correction constants
-const MICRO_DRIFT_MIN = 0.01; // 10ms
-const MICRO_DRIFT_MAX = 0.15;  // 150ms (was 0.1, increased to make seeking rarer)
-const MICRO_RATE_CAP_MICRO = 0.003; // max playbackRate delta for micro-correction
-const MIN_BUFFER_AHEAD = 0.5; // seconds, minimum buffer ahead to allow drift correction
+const MICRO_DRIFT_MIN = 0.005; // 5ms (reduced for finer control)
+const MICRO_DRIFT_MAX = 0.1;  // 100ms (reduced for more frequent corrections)
+const MICRO_RATE_CAP_MICRO = 0.002; // max playbackRate delta for micro-correction (reduced)
+const MIN_BUFFER_AHEAD = 0.3; // seconds, minimum buffer ahead to allow drift correction (reduced)
 
 // Adaptive drift correction constants
 const BASE_DRIFT_THRESHOLD = 0.25; // seconds (baseline)
@@ -336,8 +347,20 @@ export default function AudioPlayer({
   const correctionInProgressRef = useRef(false);
   const [displayedCurrentTime, setDisplayedCurrentTime] = useState(0);
   const lastSyncSeq = useRef(-1);
+  const lastSyncState = useRef(null);
+  const lastTimeUpdateCheck = useRef(0);
   const [syncReady, setSyncReady] = useState(false);
   const [isBuffering, setIsBuffering] = useState(false);
+  
+  // Enhanced zero-lag/advance protection state
+  const continuousSyncInterval = useRef(null);
+  const proactiveSyncInterval = useRef(null);
+  const consecutiveCorrections = useRef(0);
+  const lastCorrectionTime = useRef(0);
+  const syncHealthScore = useRef(100); // 0-100, higher is better
+  const enhancedDriftHistory = useRef([]);
+  const [syncMode, setSyncMode] = useState('standard'); // 'standard', 'aggressive', 'emergency'
+  const [syncQuality, setSyncQuality] = useState('excellent'); // 'excellent', 'good', 'fair', 'poor'
 
   // Drift correction debug state (move here to ensure defined)
   const [driftCorrectionHistory, setDriftCorrectionHistory] = useState([]);
@@ -799,14 +822,162 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
     if (!audio) return;
     
     const update = () => {
-      setCurrentTime(audio.currentTime);
+      const currentTime = audio.currentTime;
+      setCurrentTime(currentTime);
+      setDisplayedCurrentTime(currentTime);
+      
+      // Enhanced zero-lag/advance drift detection for followers
+      if (!isController && isPlaying && socket && socket.sessionId) {
+        const now = Date.now();
+        
+        // Quick drift check using last known sync state (more frequent for better responsiveness)
+        if (lastSyncState.current && lastSyncState.current.timestamp && lastSyncState.current.lastUpdated) {
+          const expectedTime = lastSyncState.current.timestamp + 
+            (now - lastSyncState.current.lastUpdated) / 1000 - 
+            (audioLatency || 0) + 
+            (rtt ? rtt / 2000 : 0) + 
+            smoothedOffset;
+          
+          const drift = Math.abs(currentTime - expectedTime);
+          
+          // Emergency drift handling (> 500ms) - immediate correction
+          if (drift > EMERGENCY_DRIFT_THRESHOLD) {
+            console.log('[TimeUpdate] Emergency drift detected:', { drift, expectedTime, current: currentTime });
+            setSyncMode('emergency');
+            setSyncStatus('Emergency correction');
+            
+            // Immediate hard seek
+            setCurrentTimeSafely(audio, expectedTime, setCurrentTime);
+            
+            setSyncStatus('Emergency corrected');
+            setTimeout(() => setSyncStatus('In Sync'), 1000);
+            
+            emitDriftReport(drift, expectedTime, currentTime, { type: 'timeupdate_emergency_drift' });
+            consecutiveCorrections.current = 0;
+            return;
+          }
+          
+          // Critical drift handling (200-500ms) - immediate correction
+          if (drift > CRITICAL_DRIFT_THRESHOLD) {
+            console.log('[TimeUpdate] Critical drift detected:', { drift, expectedTime, current: currentTime });
+            setSyncMode('aggressive');
+            setSyncStatus('Critical correction');
+            
+            // Immediate correction
+            setCurrentTimeSafely(audio, expectedTime, setCurrentTime);
+            
+            setSyncStatus('Critical corrected');
+            setTimeout(() => setSyncStatus('In Sync'), 800);
+            
+            emitDriftReport(drift, expectedTime, currentTime, { type: 'timeupdate_critical_drift' });
+            consecutiveCorrections.current++;
+            return;
+          }
+          
+          // Standard drift handling (100-200ms) - check every 500ms
+          if (drift > DRIFT_THRESHOLD && now - lastTimeUpdateCheck.current >= 500) {
+            lastTimeUpdateCheck.current = now;
+            console.log('[TimeUpdate] Standard drift detected:', { drift, expectedTime, current: currentTime });
+            setSyncMode('standard');
+            setSyncStatus('Standard correction');
+            
+            // Use micro-correction for standard drifts
+            maybeCorrectDrift(
+              audio,
+              expectedTime,
+              { jitter, audioLatency, rtt, drift },
+              (type, driftVal, ctx) => {
+                setDriftCorrectionCount(c => c + 1);
+                setLastCorrectionType(type);
+                setDriftCorrectionHistory(h => [{ type, drift: driftVal, ctx, ts: Date.now() }, ...h.slice(0, 9)]);
+              }
+            );
+            
+            setSyncStatus('Standard corrected');
+            setTimeout(() => setSyncStatus('In Sync'), 600);
+            
+            emitDriftReport(drift, expectedTime, currentTime, { type: 'timeupdate_standard_drift' });
+            consecutiveCorrections.current++;
+          }
+          
+          // Micro drift handling (20-100ms) - continuous micro-adjustments
+          if (drift > MICRO_DRIFT_THRESHOLD && drift <= DRIFT_THRESHOLD) {
+            // Use playback rate adjustment for smooth micro-corrections
+            const rateAdjustment = currentTime < expectedTime ? 1.001 : 0.999;
+            audio.playbackRate = rateAdjustment;
+            
+            setTimeout(() => {
+              audio.playbackRate = 1.0;
+            }, 50);
+            
+            setSyncStatus('Micro-corrected');
+            setTimeout(() => setSyncStatus('In sync'), 200);
+          }
+          
+          // Perfect sync detection
+          if (drift <= ZERO_DRIFT_TOLERANCE) {
+            setSyncMode('standard');
+            setSyncQuality('excellent');
+            setSyncStatus('Perfect sync');
+            consecutiveCorrections.current = 0;
+          }
+          
+          // Update sync health score
+          const updateSyncHealthScore = (drift) => {
+            const currentScore = syncHealthScore.current;
+            let newScore = currentScore;
+            
+            if (drift <= ZERO_DRIFT_TOLERANCE) {
+              newScore = Math.min(100, currentScore + 2);
+            } else if (drift <= CRITICAL_DRIFT_THRESHOLD) {
+              newScore = Math.max(0, currentScore - 1);
+            } else {
+              newScore = Math.max(0, currentScore - 5);
+            }
+            
+            syncHealthScore.current = newScore;
+            
+            // Update sync quality based on health score
+            if (newScore >= 90) setSyncQuality('excellent');
+            else if (newScore >= 70) setSyncQuality('good');
+            else if (newScore >= 50) setSyncQuality('fair');
+            else setSyncQuality('poor');
+          };
+          
+          updateSyncHealthScore(drift);
+        }
+        
+        // Fallback: request sync state if we don't have recent sync data (every 2 seconds)
+        if (now - lastTimeUpdateCheck.current >= 2000) {
+          lastTimeUpdateCheck.current = now;
+          
+          socket.emit('sync_request', { sessionId: socket.sessionId, reason: 'timeupdate_fallback' }, (state) => {
+            if (state && state.timestamp && state.lastUpdated) {
+              const newExpected = state.timestamp + 
+                (Date.now() - state.lastUpdated) / 1000 - 
+                (audioLatency || 0) + 
+                (rtt ? rtt / 2000 : 0) + 
+                smoothedOffset;
+              
+              const newDrift = Math.abs(currentTime - newExpected);
+              if (newDrift > CRITICAL_DRIFT_THRESHOLD) {
+                console.log('[TimeUpdate] Fallback drift correction:', { newDrift, newExpected, current: currentTime });
+                setCurrentTimeSafely(audio, newExpected, setCurrentTime);
+                setSyncStatus('Fallback corrected');
+                setTimeout(() => setSyncStatus('In Sync'), 800);
+              }
+            }
+          });
+        }
+      }
+      
       // Update buffered ahead
       let ahead = 0;
       try {
         const buf = audio.buffered;
         for (let i = 0; i < buf.length; i++) {
-          if (audio.currentTime >= buf.start(i) && audio.currentTime <= buf.end(i)) {
-            ahead = buf.end(i) - audio.currentTime;
+          if (currentTime >= buf.start(i) && currentTime <= buf.end(i)) {
+            ahead = buf.end(i) - currentTime;
             break;
           }
         }
@@ -969,6 +1140,9 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
       }
       const drift = Math.abs(audio.currentTime - expected);
 
+      // Store last sync state for proactive drift detection
+      lastSyncState.current = { timestamp, lastUpdated, isPlaying };
+
       // Enhanced: keep drift history for analytics (last 20 drifts with correction status)
       if (!window._audioDriftHistory) window._audioDriftHistory = [];
       const driftEntry = {
@@ -987,10 +1161,31 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
       window._audioDriftHistory.push(driftEntry);
       if (window._audioDriftHistory.length > 20) window._audioDriftHistory.shift();
 
-      // Enhanced: show drift in UI if large (using adaptive threshold)
-      if (drift > adaptiveThreshold) {
+      // Enhanced: immediate sync for large drifts, progressive for smaller ones
+      if (drift > 1.0) {
+        // Large drift: immediate hard seek
+        console.log('[SYNC_STATE] Large drift detected, immediate sync:', { drift, expected, current: audio.currentTime });
+        showSyncStatus('Large drift detected', 1000);
+        
+        // Immediate hard seek
+        setCurrentTimeSafely(audio, expected, setCurrentTime);
+        
+        // Sync play state
+        if (isPlaying && audio.paused) {
+          audio.play().catch(e => console.warn('Failed to play after large drift correction:', e));
+        } else if (!isPlaying && !audio.paused) {
+          audio.pause();
+        }
+        
+        setSyncStatus('Re-synced');
+        setTimeout(() => setSyncStatus('In Sync'), 1000);
+        
+        emitDriftReport(drift, expected, audio.currentTime, { type: 'large_drift_immediate', ctrlId, trackId, meta });
+        driftCountRef.current = 0;
+      } else if (drift > adaptiveThreshold) {
+        // Moderate drift: use correction logic
         driftCountRef.current += 1;
-        if (driftCountRef.current >= DRIFT_JITTER_BUFFER) {
+        if (driftCountRef.current >= 2) { // Reduced from DRIFT_JITTER_BUFFER (6) to 2
           showSyncStatus('Drifted', 1000);
           maybeCorrectDrift(
             audio,
@@ -1013,10 +1208,7 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
           if (resyncTimeout) clearTimeout(resyncTimeout);
           resyncTimeout = setTimeout(() => setSyncStatus('In Sync'), 800);
 
-          if (typeof socket?.forceTimeSync === 'function') {
-            socket.forceTimeSync();
-          }
-          emitEnhancedDriftReport(drift, expected, audio.currentTime, { ctrlId, trackId, meta });
+          emitDriftReport(drift, expected, audio.currentTime, { type: 'moderate_drift_corrected', ctrlId, trackId, meta });
           driftCountRef.current = 0;
         }
       } else {
@@ -1094,103 +1286,218 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
   );
   const adaptiveThreshold = adaptiveThresholds.driftThreshold;
 
-  // Enhanced periodic drift check (for followers)
+  // Enhanced zero-lag/advance continuous sync system (for followers)
   useEffect(() => {
     if (!socket || isController) return;
 
-    let lastDrift = 0;
     let lastCorrection = 0;
-    let correctionCooldown = 1200; // ms, minimum time between corrections
+    let consecutiveDrifts = 0;
+    let syncAttempts = 0;
 
-    const interval = setInterval(() => {
-      // Defensive check: only emit if sessionId is set
-      if (!socket.sessionId) {
-        if (process.env.NODE_ENV === 'development') {
-          console.warn('[DriftCheck] No sessionId set on socket, skipping sync_request');
-        }
-        return;
-      }
-      socket.emit('sync_request', { sessionId: socket.sessionId }, (state) => {
-        // Validate state
-        if (
-          !state ||
-          typeof state.timestamp !== 'number' ||
-          typeof state.lastUpdated !== 'number' ||
-          !isFinite(state.timestamp) ||
-          !isFinite(state.lastUpdated)
-        ) {
-          if (process.env.NODE_ENV === 'development') {
-            // More detailed logging in dev
-            console.warn('[DriftCheck] Invalid state received', { state });
-          }
-          return;
-        }
+    // Continuous sync interval for zero-lag protection
+    const startContinuousSync = () => {
+      if (continuousSyncInterval.current) clearInterval(continuousSyncInterval.current);
+      
+      continuousSyncInterval.current = setInterval(() => {
+        if (!socket.sessionId || !audioRef.current) return;
+        
+        socket.emit('sync_request', { sessionId: socket.sessionId, reason: 'continuous_sync' }, (state) => {
+          if (!state || typeof state.timestamp !== 'number' || typeof state.lastUpdated !== 'number') return;
+          
+          const audio = audioRef.current;
+          if (!audio) return;
 
-        const audio = audioRef.current;
-        if (!audio) return;
+          const now = getNow(getServerTime);
+          const rttComp = rtt ? rtt / 2000 : 0;
+          const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency + rttComp + smoothedOffset;
+          
+          if (!isFiniteNumber(expected)) return;
 
-        const now = getNow(getServerTime);
-        const rttComp = rtt ? rtt / 2000 : 0; // ms to s, one-way
-        const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency + rttComp + smoothedOffset;
-        if (!isFiniteNumber(expected)) {
-          if (process.env.NODE_ENV === 'development') {
-            console.warn('[DriftCheck] Expected is not finite', { expected, state });
-          }
-          return;
-        }
+          const syncedNow = getNow(getServerTime);
+          const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000 + rttComp + smoothedOffset;
+          const drift = Math.abs(audio.currentTime - expectedSynced);
+          const nowMs = Date.now();
 
-        const syncedNow = getNow(getServerTime);
-        const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000 + rttComp + smoothedOffset;
-        const drift = Math.abs(audio.currentTime - expectedSynced);
+          // Update drift history for trend analysis
+          enhancedDriftHistory.current.push({ drift, timestamp: nowMs, expected: expectedSynced, current: audio.currentTime });
+          if (enhancedDriftHistory.current.length > 50) enhancedDriftHistory.current.shift();
 
-        // Only correct if not in cooldown
-        const nowMs = Date.now();
-        const canCorrect = nowMs - lastCorrection > correctionCooldown;
-
-        if (drift > adaptiveThreshold) {
-          driftCountRef.current += 1;
-          lastDrift = drift;
-
-          if (driftCountRef.current >= DRIFT_JITTER_BUFFER && canCorrect) {
-            setSyncStatus('Drifted');
-            maybeCorrectDrift(
-              audio,
-              expectedSynced,
-              { jitter, audioLatency, rtt, drift },
-              (type, driftVal, ctx) => {
-                setDriftCorrectionCount(c => c + 1);
-                setLastCorrectionType(type);
-                setDriftCorrectionHistory(h => [{ type, drift: driftVal, ctx, ts: Date.now() }, ...h.slice(0, 9)]);
-              }
-            );
-            setSyncStatus('Re-syncing...');
-            setTimeout(() => setSyncStatus('In Sync'), 800);
-
-            if (typeof socket?.forceTimeSync === 'function') {
-              socket.forceTimeSync();
+          // Emergency drift handling (> 500ms)
+          if (drift > EMERGENCY_DRIFT_THRESHOLD) {
+            console.log('[ContinuousSync] Emergency drift detected:', { drift, expectedSynced, current: audio.currentTime });
+            setSyncMode('emergency');
+            setSyncStatus('Emergency sync');
+            
+            // Immediate hard seek
+            setCurrentTimeSafely(audio, expectedSynced, setCurrentTime);
+            
+            // Force play state sync
+            if (state.isPlaying && audio.paused) {
+              audio.play().catch(e => console.warn('Emergency play failed:', e));
+            } else if (!state.isPlaying && !audio.paused) {
+              audio.pause();
             }
-
-            if (socket && socket.emit && socket.sessionId && typeof drift === 'number') {
-              socket.emit('drift_report', {
-                sessionId: socket.sessionId,
-                drift,
-                clientId,
-                timestamp: nowMs
-              });
-            }
-
-            driftCountRef.current = 0;
+            
+            setSyncStatus('Emergency corrected');
+            setTimeout(() => setSyncStatus('In Sync'), 1000);
+            
+            emitDriftReport(drift, expectedSynced, audio.currentTime, { type: 'emergency_drift' });
+            consecutiveCorrections.current = 0;
             lastCorrection = nowMs;
+            return;
           }
-        } else {
-          driftCountRef.current = 0;
-          setSyncStatus('In Sync');
-        }
-      });
-    }, 1200);
 
-    return () => clearInterval(interval);
-  }, [socket, isController, getServerTime, audioLatency, clientId, rtt, smoothedOffset, adaptiveThreshold]);
+          // Critical drift handling (200-500ms)
+          if (drift > CRITICAL_DRIFT_THRESHOLD) {
+            console.log('[ContinuousSync] Critical drift detected:', { drift, expectedSynced, current: audio.currentTime });
+            setSyncMode('aggressive');
+            setSyncStatus('Critical sync');
+            
+            // Immediate correction with micro-adjustments
+            setCurrentTimeSafely(audio, expectedSynced, setCurrentTime);
+            
+            // Sync play state
+            if (state.isPlaying && audio.paused) {
+              audio.play().catch(e => console.warn('Critical play failed:', e));
+            } else if (!state.isPlaying && !audio.paused) {
+              audio.pause();
+            }
+            
+            setSyncStatus('Critical corrected');
+            setTimeout(() => setSyncStatus('In Sync'), 800);
+            
+            emitDriftReport(drift, expectedSynced, audio.currentTime, { type: 'critical_drift' });
+            consecutiveCorrections.current++;
+            lastCorrection = nowMs;
+            return;
+          }
+
+          // Standard drift handling (100-200ms)
+          if (drift > DRIFT_THRESHOLD) {
+            consecutiveDrifts += 1;
+            
+            if (consecutiveDrifts >= 2) {
+              console.log('[ContinuousSync] Standard drift detected:', { drift, expectedSynced, current: audio.currentTime });
+              setSyncMode('standard');
+              setSyncStatus('Standard sync');
+              
+              maybeCorrectDrift(
+                audio,
+                expectedSynced,
+                { jitter, audioLatency, rtt, drift },
+                (type, driftVal, ctx) => {
+                  setDriftCorrectionCount(c => c + 1);
+                  setLastCorrectionType(type);
+                  setDriftCorrectionHistory(h => [{ type, drift: driftVal, ctx, ts: Date.now() }, ...h.slice(0, 9)]);
+                }
+              );
+              
+              setSyncStatus('Standard corrected');
+              setTimeout(() => setSyncStatus('In Sync'), 600);
+              
+              emitDriftReport(drift, expectedSynced, audio.currentTime, { type: 'standard_drift' });
+              consecutiveCorrections.current++;
+              lastCorrection = nowMs;
+              consecutiveDrifts = 0;
+            }
+          } else {
+            // Perfect sync or minor drift
+            consecutiveDrifts = 0;
+            if (drift <= ZERO_DRIFT_TOLERANCE) {
+              setSyncMode('standard');
+              setSyncQuality('excellent');
+              setSyncStatus('Perfect sync');
+              consecutiveCorrections.current = 0;
+            } else {
+              setSyncQuality('good');
+              setSyncStatus('In sync');
+            }
+          }
+
+          // Update sync health score
+          updateSyncHealthScore(drift);
+          
+          // Force resync if too many consecutive corrections
+          if (consecutiveCorrections.current >= MAX_CONSECUTIVE_CORRECTIONS) {
+            console.log('[ContinuousSync] Too many corrections, forcing resync');
+            handleResync();
+            consecutiveCorrections.current = 0;
+          }
+        });
+      }, CONTINUOUS_SYNC_INTERVAL);
+    };
+
+    // Proactive sync for early drift detection
+    const startProactiveSync = () => {
+      if (proactiveSyncInterval.current) clearInterval(proactiveSyncInterval.current);
+      
+      proactiveSyncInterval.current = setInterval(() => {
+        if (!socket.sessionId || !audioRef.current || !isPlaying) return;
+        
+        const audio = audioRef.current;
+        const currentTime = audio.currentTime;
+        
+        // Quick drift check using last known sync state
+        if (lastSyncState.current && lastSyncState.current.timestamp && lastSyncState.current.lastUpdated) {
+          const now = Date.now();
+          const expectedTime = lastSyncState.current.timestamp + 
+            (now - lastSyncState.current.lastUpdated) / 1000 - 
+            (audioLatency || 0) + 
+            (rtt ? rtt / 2000 : 0) + 
+            smoothedOffset;
+          
+          const drift = Math.abs(currentTime - expectedTime);
+          
+          // Proactive correction for small drifts
+          if (drift > MICRO_DRIFT_THRESHOLD && drift < DRIFT_THRESHOLD) {
+            console.log('[ProactiveSync] Micro drift detected, correcting:', { drift, expectedTime, current: currentTime });
+            
+            // Use playback rate adjustment for micro corrections
+            const rateAdjustment = drift > 0 ? 1.001 : 0.999;
+            audio.playbackRate = rateAdjustment;
+            
+            setTimeout(() => {
+              audio.playbackRate = 1.0;
+            }, 100);
+            
+            setSyncStatus('Micro-corrected');
+            setTimeout(() => setSyncStatus('In sync'), 300);
+          }
+        }
+      }, PROACTIVE_SYNC_INTERVAL);
+    };
+
+    // Helper function to update sync health score
+    const updateSyncHealthScore = (drift) => {
+      const currentScore = syncHealthScore.current;
+      let newScore = currentScore;
+      
+      if (drift <= ZERO_DRIFT_TOLERANCE) {
+        newScore = Math.min(100, currentScore + 2);
+      } else if (drift <= CRITICAL_DRIFT_THRESHOLD) {
+        newScore = Math.max(0, currentScore - 1);
+      } else {
+        newScore = Math.max(0, currentScore - 5);
+      }
+      
+      syncHealthScore.current = newScore;
+      
+      // Update sync quality based on health score
+      if (newScore >= 90) setSyncQuality('excellent');
+      else if (newScore >= 70) setSyncQuality('good');
+      else if (newScore >= 50) setSyncQuality('fair');
+      else setSyncQuality('poor');
+    };
+
+    // Start sync systems
+    startContinuousSync();
+    startProactiveSync();
+
+    return () => {
+      if (continuousSyncInterval.current) clearInterval(continuousSyncInterval.current);
+      if (proactiveSyncInterval.current) clearInterval(proactiveSyncInterval.current);
+    };
+  }, [socket, isController, getServerTime, audioLatency, clientId, rtt, smoothedOffset, adaptiveThreshold, isPlaying]);
 
   // Enhanced: On mount, immediately request sync state on join, with improved error handling, logging, and edge case resilience
   useEffect(() => {
@@ -2031,6 +2338,9 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
               <SyncStatus 
                 status={syncStatus} 
                 mlInsights={window._mlSyncOptimization?.[socket?.sessionId]?.mlInsights}
+                syncMode={syncMode}
+                syncQuality={syncQuality}
+                syncHealthScore={syncHealthScore.current}
               />
             </div>
             <button
@@ -2372,6 +2682,9 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
               deviceType={adaptiveThresholds?.deviceType}
               networkQuality={adaptiveThresholds?.networkQuality}
               showMetrics={process.env.NODE_ENV === 'development'}
+              syncMode={syncMode}
+              syncQuality={syncQuality}
+              syncHealthScore={syncHealthScore.current}
             />
           </div>
           <div className="flex items-center">
