@@ -274,9 +274,20 @@ export default function AudioPlayer({
   const [lastCorrectionType, setLastCorrectionType] = useState('none');
   const [bufferedAhead, setBufferedAhead] = useState(0);
 
+  // Add at the top of the component
+  const outOfSyncCountRef = useRef(0);
+
+  const [pausedByUser, setPausedByUser] = useState(false);
+  const [justResumedAt, setJustResumedAt] = useState(0);
+
 // --- Drift correction helpers moved inside the component ---
 function microCorrectDrift(audio, drift, context = {}, updateDebug) {
   if (!audio) return;
+  // Only correct if buffer is healthy
+  if (bufferedAhead <= MIN_BUFFER_AHEAD) {
+    if (typeof updateDebug === 'function') updateDebug('buffer-skip', drift, context);
+    return;
+  }
   if (Math.abs(drift) > MICRO_DRIFT_MIN && Math.abs(drift) < MICRO_DRIFT_MAX) {
     let rate = 1 + Math.max(-MICRO_RATE_CAP, Math.min(MICRO_RATE_CAP, drift * 0.5));
     if (process.env.NODE_ENV !== 'production') {
@@ -314,7 +325,7 @@ function microCorrectDrift(audio, drift, context = {}, updateDebug) {
 function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
   if (!audio) return;
   const drift = audio.currentTime - expected;
-  // Prevent correction if buffer is low
+  // Prevent correction if buffer is low (except for self-healing, which is handled in heartbeat effect)
   let bufferAhead = 0;
   try {
     const buf = audio.buffered;
@@ -487,6 +498,67 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
     }
   }, [mobile, isAudioTabActive, loading, audioError]);
 
+    // Heartbeat sync effect (must be at top level)
+    useEffect(() => {
+      if (!socket || !audioRef.current || isController) return;
+      // Handler for heartbeat
+      const handleHeartbeat = (data) => {
+        if (!data || !data.playbackTime || !data.isPlaying) return;
+        const audio = audioRef.current;
+        if (pausedByUser) {
+          if (!audio.paused) audio.pause(); // Force pause if not already paused
+          return; // Respect local pause
+        }
+        // Add grace period after resume
+        if (justResumedAt && Date.now() - justResumedAt < 1000) {
+          // Ignore backend syncs for 1 second after resuming
+          return;
+        }
+        if (!audio.paused && data.isPlaying) {
+          const drift = audio.currentTime - data.playbackTime;
+          if (Math.abs(drift) > 0.2 && bufferedAhead > MIN_BUFFER_AHEAD) {
+            // Normal instant correction
+            setCurrentTimeSafely(audio, data.playbackTime, (val) => {
+              audio.currentTime = val;
+            });
+            audio.playbackRate = 1.0;
+            setSyncStatus('Instant Resync');
+            setTimeout(() => setSyncStatus('In Sync'), 1200);
+            outOfSyncCountRef.current = 0; // Reset counter on successful correction
+          } else if (Math.abs(drift) > 0.2) {
+            // Out of sync but buffer is low, increment counter
+            outOfSyncCountRef.current += 1;
+            if (outOfSyncCountRef.current >= 3) {
+              // Force hard seek (self-heal)
+              setCurrentTimeSafely(audio, data.playbackTime, (val) => {
+                audio.currentTime = val;
+              });
+              audio.playbackRate = 1.0;
+              setSyncStatus('Self-Healing Resync');
+              setTimeout(() => setSyncStatus('In Sync'), 1500);
+              outOfSyncCountRef.current = 0;
+            }
+          } else {
+            // In sync, reset counter
+            outOfSyncCountRef.current = 0;
+          }
+        }
+      };
+      socket.on('sync_heartbeat', handleHeartbeat);
+      return () => {
+        socket.off('sync_heartbeat', handleHeartbeat);
+      };
+    }, [socket, isController, bufferedAhead, pausedByUser, justResumedAt]);
+
+    useEffect(() => {
+      const audio = audioRef.current;
+      if (!audio) return;
+      if (pausedByUser && !audio.paused) {
+        console.log('[AudioPlayer] Forcing pause in effect because pausedByUser is true');
+        audio.pause();
+      }
+    }, [pausedByUser, audioUrl, currentTrack?.url, isPlaying]);
+
   // Set audio source to currentTrack.url if available
   useEffect(() => {
     if (currentTrack && currentTrack.url) {
@@ -629,6 +701,56 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
       audio.pause();
     }
   }, [isController, isPlaying]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    // MutationObserver to forcibly pause if audio starts playing while pausedByUser is true
+    const observer = new MutationObserver(() => {
+      if (pausedByUser && !audio.paused) {
+        console.log('[AudioPlayer] MutationObserver: Forcing pause because pausedByUser is true');
+        audio.pause();
+      }
+    });
+    observer.observe(audio, { attributes: true, attributeFilter: ['paused'] });
+    // Also poll as a backup
+    const interval = setInterval(() => {
+      if (pausedByUser && !audio.paused) {
+        console.log('[AudioPlayer] Poll: Forcing pause because pausedByUser is true');
+        audio.pause();
+      }
+    }, 500);
+    return () => {
+      observer.disconnect();
+      clearInterval(interval);
+    };
+  }, [pausedByUser, audioUrl, currentTrack?.url]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    // Wrap .play() to block if pausedByUser is true
+    const originalPlay = audio.play;
+    audio.play = function(...args) {
+      if (pausedByUser) {
+        console.log('[AudioPlayer] Blocked .play() because pausedByUser is true');
+        return Promise.resolve();
+      }
+      console.log('[AudioPlayer] .play() called');
+      return originalPlay.apply(this, args);
+    };
+    // Debug log for .pause()
+    const originalPause = audio.pause;
+    audio.pause = function(...args) {
+      console.log('[AudioPlayer] .pause() called');
+      return originalPause.apply(this, args);
+    };
+    return () => {
+      // Restore original methods on cleanup
+      audio.play = originalPlay;
+      audio.pause = originalPause;
+    };
+  }, [pausedByUser, audioUrl, currentTrack?.url]);
 
   // Enhanced Socket event listeners with improved logging, error handling, and drift analytics
   useEffect(() => {
@@ -1057,6 +1179,9 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
   // Enhanced Play/Pause/Seek handlers with improved error handling, logging, and edge case resilience
 
   const handlePlay = async () => {
+    setPausedByUser(false);
+    setJustResumedAt(Date.now());
+    console.log('[AudioPlayer] User pressed play');
     const audio = audioRef.current;
     if (!audio) {
       if (process.env.NODE_ENV === 'development') {
@@ -1085,6 +1210,8 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
   };
 
   const handlePause = () => {
+    setPausedByUser(true);
+    console.log('[AudioPlayer] User pressed pause');
     const audio = audioRef.current;
     if (!audio) {
       if (process.env.NODE_ENV === 'development') {
@@ -1417,24 +1544,44 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
     }
   }, []);
 
-  // Smoothly animate displayedCurrentTime toward audio.currentTime
+  // Smoothly animate displayedCurrentTime toward audio.currentTime ONLY when playing
   useEffect(() => {
-    setDisplayedCurrentTime(0); // Immediately reset timer visually on track change
+    const audio = audioRef.current;
+    if (!audio) return;
     let raf;
     const animate = () => {
-      const audio = audioRef.current;
-      if (!audio) return;
-      const actual = audio.currentTime;
-      setDisplayedCurrentTime(prev => {
-        // If the difference is extremely tiny, snap to actual
-        if (Math.abs(prev - actual) < 0.005) return actual;
-        // Ultra-smooth lerp (smaller factor)
-        return prev + (actual - prev) * 0.10;
-      });
+      if (!audio.paused) {
+        const actual = audio.currentTime;
+        setDisplayedCurrentTime(prev => {
+          if (Math.abs(prev - actual) < 0.005) return actual;
+          return prev + (actual - prev) * 0.10;
+        });
+        raf = requestAnimationFrame(animate);
+      } else {
+        // If paused, snap timer to actual time
+        setDisplayedCurrentTime(audio.currentTime);
+      }
+    };
+    if (!audio.paused) {
+      raf = requestAnimationFrame(animate);
+    } else {
+      setDisplayedCurrentTime(audio.currentTime);
+    }
+    // Listen for play/pause events to start/stop animation
+    const handlePlay = () => {
       raf = requestAnimationFrame(animate);
     };
-    raf = requestAnimationFrame(animate);
-    return () => cancelAnimationFrame(raf);
+    const handlePause = () => {
+      setDisplayedCurrentTime(audio.currentTime);
+      if (raf) cancelAnimationFrame(raf);
+    };
+    audio.addEventListener('play', handlePlay);
+    audio.addEventListener('pause', handlePause);
+    return () => {
+      audio.removeEventListener('play', handlePlay);
+      audio.removeEventListener('pause', handlePause);
+      if (raf) cancelAnimationFrame(raf);
+    };
   }, [audioUrl, currentTrack?.url]);
 
   // Reset playback position to start when track changes
@@ -1668,7 +1815,7 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
               ref={audioRef}
               src={audioUrl}
               preload="auto"
-              style={{ display: 'none' }}
+              style={mobile ? { display: 'none' } : {}}
               onLoadedMetadata={() => {
                 const audio = audioRef.current;
                 if (audio && !isController && !isPlaying) {

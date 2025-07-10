@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 // Add Three.js and react-three-fiber imports
-import { Canvas, useFrame } from '@react-three/fiber';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, Html, Text, Environment } from '@react-three/drei';
 import { EffectComposer, GodRays } from '@react-three/postprocessing';
 import * as THREE from 'three';
@@ -44,51 +44,122 @@ function getInitials(name) {
 // PulsatingWave: supports both 3D (Three.js) and 2D (SVG) modes
 // Usage: <PulsatingWave mode="3d" ... /> or <PulsatingWave mode="2d" ... />
 
-function PulsatingWave({ position, color = '#6366f1', mode = '3d', size = 1, svgCenter = [0, 0], svgScale = 1, animate = true }) {
-  // 3D mode: original implementation
+function PulsatingWave({ position, color = '#f3f3f3', mode = '3d', size = 1, svgCenter = [0, 0], svgScale = 1, animate = true }) {
+  // Enhanced 3D Speaker-like sound wave with richer effects and more dynamic animation
   if (mode === '3d') {
-    const meshRef = useRef();
-    const t = useRef(0);
+    const ring1Ref = useRef();
+    const ring2Ref = useRef();
+    const ring3Ref = useRef();
+    const wavefrontRef = useRef();
+    const sparkRef = useRef();
     const glowRef = useRef();
+    const t = useRef(0);
+
+    // For sparkles
+    const [sparklePositions] = useState(() => {
+      // Generate a few random points around the rings
+      const arr = [];
+      for (let i = 0; i < 8; i++) {
+        const angle = (i / 8) * Math.PI * 2;
+        arr.push([
+          Math.cos(angle) * 0.32 * size * (1.1 + 0.2 * Math.random()),
+          position[1] + 0.01 * (Math.random() - 0.5),
+          Math.sin(angle) * 0.32 * size * (1.1 + 0.2 * Math.random()),
+        ]);
+      }
+      return arr;
+    });
 
     useFrame((_, delta) => {
       if (!animate) return;
       t.current += delta;
-      const pulse = (t.current % 1.5) / 1.5; // 0 to 1
+      // Each ring is a pulse: starts small, expands, fades, then resets
+      const duration = 1.6; // seconds for a full pulse
+      const delays = [0, 0.5, 1.0]; // staggered start for each ring
+      const baseRadius = 0.32 * size;
+      const ringWidths = [0.05 * size, 0.08 * size, 0.12 * size];
+      const maxScale = [1.7, 2.1, 2.5];
+      const opacities = [0.18, 0.11, 0.06]; // slightly stronger
+      const colorPulse = 0.7 + 0.3 * Math.sin(t.current * 2.2); // for subtle color pulsing
 
-      // Main wave pulse
-      if (meshRef.current) {
-        meshRef.current.scale.setScalar(size * (1 + pulse * 1.8));
-        meshRef.current.material.opacity = 0.25 * (1 - pulse);
-        meshRef.current.material.color.set(color);
+      const rings = [ring1Ref, ring2Ref, ring3Ref];
+      for (let i = 0; i < 3; i++) {
+        const localT = ((t.current - delays[i]) % duration + duration) % duration;
+        const progress = localT / duration; // 0 to 1
+        const scale = 1 + progress * (maxScale[i] - 1);
+        if (rings[i].current) {
+          rings[i].current.scale.setScalar(scale);
+          rings[i].current.material.opacity = opacities[i] * (1 - progress) * (0.8 + 0.2 * colorPulse);
+          // Animate color for a subtle "breathing" effect
+          rings[i].current.material.color.setHSL(0.6 + 0.08 * Math.sin(t.current + i), 0.1 + 0.08 * colorPulse, 0.95);
+        }
       }
-
-      // Glow pulse (slower, softer)
-      if (glowRef.current) {
-        const glowPulse = 0.7 + 0.3 * Math.sin(t.current * 1.2);
-        glowRef.current.scale.setScalar(size * (1.7 + glowPulse * 0.7));
-        glowRef.current.material.opacity = 0.12 * (1 - pulse) + 0.08 * glowPulse;
-        glowRef.current.material.color.set(color);
+      // Vertical wavefront: conical, animated upward, fading
+      if (wavefrontRef.current) {
+        const waveT = (t.current % 1.2) / 1.2; // 0 to 1
+        const height = 0.18 * size + 0.22 * size * waveT;
+        wavefrontRef.current.scale.set(1, 1 + 0.7 * waveT, 1);
+        wavefrontRef.current.position.y = position[1] + 0.32 * size + height / 2;
+        wavefrontRef.current.material.opacity = 0.13 * (1 - waveT) + 0.04 * colorPulse;
+        wavefrontRef.current.material.color.setHSL(0.62 + 0.05 * Math.sin(t.current * 1.5), 0.13, 0.98);
+      }
+      // Animate glow
+      if (glowRef?.current) {
+        const glowPulse = 1 + 0.18 * Math.sin(t.current * 2.5);
+        glowRef.current.scale.setScalar(1.25 * glowPulse);
+        glowRef.current.material.opacity = 0.18 * (0.7 + 0.3 * colorPulse);
+      }
+      // Animate sparkles
+      if (sparkRef?.current) {
+        for (let i = 0; i < sparkRef.current.children.length; i++) {
+          const mesh = sparkRef.current.children[i];
+          const base = sparklePositions[i];
+          const sparkleT = (t.current * 1.5 + i * 0.4) % 1;
+          const r = 0.32 * size * (1.1 + 0.13 * Math.sin(t.current * 2 + i));
+          const angle = (i / sparklePositions.length) * Math.PI * 2 + t.current * 0.5;
+          mesh.position.x = position[0] + Math.cos(angle) * r;
+          mesh.position.y = position[1] + 0.01 * Math.sin(t.current * 2.5 + i) + 0.01 * (Math.random() - 0.5);
+          mesh.position.z = position[2] + Math.sin(angle) * r;
+          mesh.scale.setScalar(0.07 * (0.7 + 0.3 * Math.sin(t.current * 3 + i)));
+          mesh.material.opacity = 0.18 * (0.7 + 0.3 * Math.sin(t.current * 2.5 + i));
+        }
       }
     });
 
     return (
       <group>
-        {/* Main pulsating torus */}
-        <mesh ref={meshRef} position={position} rotation={[-Math.PI / 2, 0, 0]}>
-          <torusGeometry args={[0.38 * size, 0.06 * size, 16, 64]} />
-          <meshBasicMaterial color={color} transparent opacity={0.25} />
+        {/* Soft glow under the rings */}
+        <mesh ref={glowRef} position={[position[0], position[1] + 0.01 * size, position[2]]} rotation={[-Math.PI / 2, 0, 0]}>
+          <circleGeometry args={[0.38 * size, 48]} />
+          <meshBasicMaterial color="#e0e7ff" transparent opacity={0.15} />
         </mesh>
-        {/* Subtle glow ring */}
-        <mesh ref={glowRef} position={position} rotation={[-Math.PI / 2, 0, 0]}>
-          <torusGeometry args={[0.38 * size, 0.13 * size, 16, 64]} />
-          <meshBasicMaterial color={color} transparent opacity={0.12} />
+        {/* Expanding, fading rings like sound pulses */}
+        <mesh ref={ring1Ref} position={position} rotation={[-Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[0.32 * size, 0.05 * size, 32, 96]} />
+          <meshBasicMaterial color="#f3f3f3" transparent opacity={0.18} />
         </mesh>
-        {/* Faint vertical beam */}
-        <mesh position={[position[0], position[1] + 0.01 * size, position[2]]} rotation={[0, 0, 0]}>
-          <cylinderGeometry args={[0.07 * size, 0.07 * size, 0.7 * size, 24, 1, true]} />
-          <meshBasicMaterial color={color} transparent opacity={0.09} />
+        <mesh ref={ring2Ref} position={position} rotation={[-Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[0.32 * size, 0.08 * size, 32, 96]} />
+          <meshBasicMaterial color="#f3f3f3" transparent opacity={0.11} />
         </mesh>
+        <mesh ref={ring3Ref} position={position} rotation={[-Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[0.32 * size, 0.12 * size, 32, 96]} />
+          <meshBasicMaterial color="#f3f3f3" transparent opacity={0.06} />
+        </mesh>
+        {/* Vertical conical wavefront above the sphere */}
+        <mesh ref={wavefrontRef} position={[position[0], position[1] + 0.32 * size, position[2]]} rotation={[0, 0, 0]}>
+          <coneGeometry args={[0.09 * size, 0.4 * size, 32, 1, true]} />
+          <meshBasicMaterial color="#f3f3f3" transparent opacity={0.13} />
+        </mesh>
+        {/* Sparkles around the rings */}
+        <group ref={sparkRef}>
+          {sparklePositions.map((pos, i) => (
+            <mesh key={i} position={[position[0] + pos[0], position[1] + pos[1], position[2] + pos[2]]}>
+              <sphereGeometry args={[0.07 * size, 8, 8]} />
+              <meshBasicMaterial color="#fffbe6" transparent opacity={0.18} />
+            </mesh>
+          ))}
+        </group>
       </group>
     );
   }
@@ -169,13 +240,44 @@ function Avatar({ position, color, isCurrentUser, onDrag, animate, displayName, 
   const bounceTimeout = useRef();
   // Drag state
   const dragActive = useRef(false);
+  // Enhanced drag state
+  const [isActuallyDragging, setIsActuallyDragging] = useState(false);
+  const dragStartPos = useRef(null);
+  const dragThreshold = 0.04; // Minimum movement to start drag
+  const [dragShadow, setDragShadow] = useState(false);
+  const [lerpedPos, setLerpedPos] = useState(position);
+  // Billboard text
+  const textRef = useRef();
+  const { camera } = useThree();
+  useFrame(() => {
+    if (textRef.current) {
+      textRef.current.quaternion.copy(camera.quaternion);
+    }
+    // Smoothly lerp to target position while dragging
+    if (isActuallyDragging && meshRef.current) {
+      const current = lerpedPos;
+      const target = position;
+      const lerped = current.map((v, i) => v + (target[i] - v) * 0.35);
+      setLerpedPos(lerped);
+      meshRef.current.position.set(...lerped);
+    } else if (meshRef.current) {
+      meshRef.current.position.set(...position);
+      setLerpedPos(position);
+    }
+  });
 
-  // Handle pointer events
+  // Enhanced: handle pointer/touch events for both desktop and mobile
   const handlePointerDown = (e) => {
     if (!isCurrentUser) return;
     dragActive.current = true;
+    dragStartPos.current = [e.point.x, e.point.y, e.point.z];
     setDragging && setDragging(true);
     setControlsEnabled && setControlsEnabled(false);
+    setDragShadow(true);
+    // Haptic feedback for mobile
+    if (window.navigator && window.navigator.vibrate) {
+      window.navigator.vibrate(18);
+    }
     e.stopPropagation();
   };
   const handlePointerUp = (e) => {
@@ -183,22 +285,36 @@ function Avatar({ position, color, isCurrentUser, onDrag, animate, displayName, 
     dragActive.current = false;
     setDragging && setDragging(false);
     setControlsEnabled && setControlsEnabled(true);
+    setIsActuallyDragging(false);
+    setDragShadow(false);
+    // Spring-back if out of bounds
+    const min = -3.5, max = 3.5;
+    let [x, y, z] = position;
+    let clamped = [
+      Math.max(min, Math.min(max, x)),
+      y,
+      Math.max(min, Math.min(max, z)),
+    ];
+    if (clamped[0] !== x || clamped[2] !== z) {
+      // Animate spring-back
+      setLerpedPos(clamped);
+      setTimeout(() => {
+        onDrag(clamped);
+      }, 120);
+    }
     e.stopPropagation();
   };
   const handlePointerMove = (e) => {
     if (!isCurrentUser || !dragActive.current || !onDrag) return;
-
     let x = e.point.x, z = e.point.z;
     const min = -3.5, max = 3.5;
     let overshoot = [0, 0, 0];
-
     // Clamp and calculate overshoot for bounce effect
     if (x < min) { overshoot[0] = x - min; x = min; }
     if (x > max) { overshoot[0] = x - max; x = max; }
     if (z < min) { overshoot[2] = z - min; z = min; }
     if (z > max) { overshoot[2] = z - max; z = max; }
-
-    // Enhanced: Add a subtle y-axis bounce if user tries to drag "up" or "down" (simulate a little vertical feedback)
+    // Enhanced: Add a subtle y-axis bounce if user tries to drag "up" or "down"
     let y = 0.3;
     if (e.point.y > 0.5) {
       overshoot[1] = Math.min(e.point.y - 0.5, 0.2);
@@ -207,41 +323,24 @@ function Avatar({ position, color, isCurrentUser, onDrag, animate, displayName, 
       overshoot[1] = Math.max(e.point.y - 0.1, -0.2);
       y += overshoot[1];
     }
-    // Clamp y so the sphere never goes below the floor
     y = Math.max(y, 0.3);
-
     setBounce(overshoot);
-
-    // Enhanced: Add a little "magnetic snap" to grid if close to grid lines
-    const snapThreshold = 0.18;
-    const gridSpacing = 1.0;
-    const snapToGrid = (val) => {
-      const mod = val % gridSpacing;
-      if (Math.abs(mod) < snapThreshold) return val - mod;
-      if (Math.abs(mod - gridSpacing) < snapThreshold) return val + (gridSpacing - mod);
-      return val;
-    };
-    let snappedX = snapToGrid(x);
-    let snappedZ = snapToGrid(z);
-
-    // Only snap if not overshooting
-    if (overshoot[0] === 0) x = snappedX;
-    if (overshoot[2] === 0) z = snappedZ;
-
+    // Only start actual drag if moved enough
+    if (!isActuallyDragging && dragStartPos.current) {
+      const dx = x - dragStartPos.current[0];
+      const dy = y - dragStartPos.current[1];
+      const dz = z - dragStartPos.current[2];
+      if (Math.sqrt(dx*dx + dy*dy + dz*dz) > dragThreshold) {
+        setIsActuallyDragging(true);
+      } else {
+        return;
+      }
+    }
     onDrag([x + overshoot[0], y, z + overshoot[2]]);
-
-    // Enhanced: Make bounce duration depend on overshoot magnitude for a more natural feel
-    if (overshoot.some(v => v !== 0)) {
-      clearTimeout(bounceTimeout.current);
-      const bounceDuration = 100 + 80 * Math.max(Math.abs(overshoot[0]), Math.abs(overshoot[2]), Math.abs(overshoot[1]));
-      bounceTimeout.current = setTimeout(() => setBounce([0, 0, 0]), bounceDuration);
-    }
-
-    // Enhanced: Play a subtle sound or haptic feedback on edge hit (if available)
+    // Haptic feedback for mobile on edge
     if ((overshoot[0] !== 0 || overshoot[2] !== 0) && window.navigator && window.navigator.vibrate) {
-      window.navigator.vibrate(10);
+      window.navigator.vibrate(8);
     }
-
     e.stopPropagation();
   };
 
@@ -265,18 +364,32 @@ function Avatar({ position, color, isCurrentUser, onDrag, animate, displayName, 
     }
   }, [isCurrentUser, hovered, dragging]);
 
+  // Enhanced: add visual feedback while dragging
+  const dragScale = isActuallyDragging ? 1.18 : isCurrentUser ? 1.13 : 1;
+  const dragGlow = isActuallyDragging || dragging || hovered;
+
   return (
     <group>
+      {/* Floating sound wave effect always visible in 3D */}
+      <PulsatingWave mode="3d" position={position} color={color} size={1.1} animate={true} />
+      {/* Enhanced drag shadow for mobile/desktop */}
+      {dragShadow && (
+        <mesh position={[lerpedPos[0], 0.01, lerpedPos[2]]} rotation={[-Math.PI / 2, 0, 0]}>
+          <circleGeometry args={[0.36, 32]} />
+          <meshBasicMaterial color="#000" transparent opacity={0.18} />
+        </mesh>
+      )}
       {/* Glow when dragging or hovered */}
-      {(dragging || hovered) && (
+      {dragGlow && (
         <mesh position={position} rotation={[-Math.PI / 2, 0, 0]}>
-          <torusGeometry args={[0.38, 0.09, 16, 64]} />
-          <meshBasicMaterial color={isCurrentUser ? '#6366f1' : '#fff'} transparent opacity={0.35} />
+          <torusGeometry args={[0.38, 0.13, 16, 64]} />
+          <meshBasicMaterial color={isCurrentUser ? '#6366f1' : '#fff'} transparent opacity={0.45} />
         </mesh>
       )}
       <mesh
         ref={meshRef}
-        position={[position[0] + bounce[0], position[1], position[2] + bounce[2]]}
+        // Use lerped position for smooth dragging
+        position={lerpedPos}
         castShadow
         receiveShadow
         onPointerDown={handlePointerDown}
@@ -284,7 +397,7 @@ function Avatar({ position, color, isCurrentUser, onDrag, animate, displayName, 
         onPointerMove={handlePointerMove}
         onPointerOver={e => { setHovered(true); e.stopPropagation(); }}
         onPointerOut={e => { setHovered(false); e.stopPropagation(); }}
-        scale={isCurrentUser ? [1.3, 1.3, 1.3] : [1, 1, 1]}
+        scale={[dragScale, dragScale, dragScale]}
       >
         <sphereGeometry args={[0.3, 64, 64]} />
         <meshPhysicalMaterial
@@ -303,8 +416,9 @@ function Avatar({ position, color, isCurrentUser, onDrag, animate, displayName, 
           <sphereGeometry args={[0.305, 64, 64]} />
           <meshBasicMaterial color="#6366f1" transparent opacity={0.13} />
         </mesh>
-        {/* 3D initials embedded on the sphere */}
+        {/* 3D initials embedded on the sphere, always facing the camera */}
         <Text
+          ref={textRef}
           position={[0, 0, 0.31]}
           fontSize={0.13}
           color="#18181b"
@@ -596,7 +710,7 @@ function TwoDRoom({ users, userPositions, setUserPosition, clientId, lastMoveTim
             return (
               <g key={cid}>
                 {/* Pulsating wave effect */}
-                <PulsatingWave mode="2d" svgCenter={[cx, cy]} color={isCurrentUser ? '#6366f1' : '#27272a'} />
+                <PulsatingWave mode="2d" svgCenter={[cx, cy]} color={isCurrentUser ? 'rgba(255,255,255,0.3)' : 'rgba(255,255,255,0.5)'} />
                 {/* Drop shadow ellipse */}
                 <ellipse
                   cx={cx}
@@ -805,28 +919,175 @@ function ThreeDRoom({ displayName, clientId, roomName = 'Room', users = [], sock
   return (
     <div style={containerStyle} className={`relative ${isMobile ? 'rounded-t-xl overflow-hidden' : ''}`}>
       {/* Header */}
-      <div className={`flex items-center justify-between px-3 py-2 border-b border-neutral-800 bg-neutral-950/80 ${isMobile ? 'sticky top-0 z-20' : ''}`}>
+      <div
+        className={`flex items-center justify-between px-3 py-2 border-b border-black bg-black ${isMobile ? 'sticky top-0 z-20' : ''}`}
+        style={{
+          background: '#000',
+          borderBottom: '1px solid #000',
+          color: '#fff',
+        }}
+      >
         <div className="flex flex-col gap-0.5">
-          <div className="font-bold text-base">Spatial</div>
-          <div className="text-xs text-neutral-400 truncate max-w-[120px]">Room: {roomName} | Users: {users.length}</div>
+          <div className="font-bold text-base" style={{ color: '#fff' }}>Spatial</div>
+          <div className="text-xs text-neutral-400 truncate max-w-[120px]" style={{ color: '#fff', opacity: 0.7 }}>
+            Room: {roomName} | Users: {users.length}
+          </div>
         </div>
         <div className="flex gap-1">
-          <button className="p-1 rounded bg-neutral-800 hover:bg-neutral-700" title="Reset View" onClick={() => setUserPosition(clientId, [0, 0.3, 0])}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v2m0 16v2m10-10h-2M4 12H2m15.07-7.07l-1.41 1.41M6.34 17.66l-1.41 1.41M17.66 17.66l-1.41-1.41M6.34 6.34L4.93 4.93"/><circle cx="12" cy="12" r="7"/></svg>
+          <button
+            className="p-1 rounded transition-colors duration-200"
+            style={{ background: '#000', color: '#fff' }}
+            title="Reset View"
+            onClick={() => setUserPosition(clientId, [0, 0.3, 0])}
+          >
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="white"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{
+                transition: 'stroke 0.3s, transform 0.3s',
+                willChange: 'stroke, transform',
+              }}
+              className="svg-animated"
+            >
+              <path d="M12 2v2m0 16v2m10-10h-2M4 12H2m15.07-7.07l-1.41 1.41M6.34 17.66l-1.41 1.41M17.66 17.66l-1.41-1.41M6.34 6.34L4.93 4.93"/>
+              <circle
+                cx="12"
+                cy="12"
+                r="7"
+                style={{
+                  transition: 'r 0.3s',
+                }}
+              />
+            </svg>
           </button>
-          <button className="p-1 rounded bg-neutral-800 hover:bg-neutral-700" title="Help" onClick={() => setShowHelp(true)}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 1 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12" y2="17"/></svg>
+          <button
+            className="p-1 rounded transition-colors duration-200"
+            style={{ background: '#000', color: '#fff' }}
+            title="Help"
+            onClick={() => setShowHelp(true)}
+          >
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="white"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              style={{
+                transition: 'stroke 0.3s, transform 0.3s',
+                willChange: 'stroke, transform',
+              }}
+              className="svg-animated"
+            >
+              <circle
+                cx="12"
+                cy="12"
+                r="10"
+                style={{
+                  transition: 'r 0.3s',
+                }}
+              />
+              <path d="M9.09 9a3 3 0 1 1 5.83 1c0 2-3 3-3 3"/>
+              <line x1="12" y1="17" x2="12" y2="17"/>
+            </svg>
           </button>
-          <button className="p-1 rounded bg-neutral-800 hover:bg-neutral-700" onClick={() => setIs3D(v => !v)} title="Toggle 2D/3D">
+          <button
+            className="p-1 rounded transition-colors duration-200"
+            style={{ background: '#000', color: '#fff' }}
+            onClick={() => setIs3D(v => !v)}
+            title="Toggle 2D/3D"
+          >
             {is3D ? (
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="white"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                style={{
+                  transition: 'stroke 0.3s, transform 0.3s',
+                  willChange: 'stroke, transform',
+                }}
+                className="svg-animated"
+              >
+                <rect
+                  x="3"
+                  y="3"
+                  width="18"
+                  height="18"
+                  rx="2"
+                  style={{
+                    transition: 'width 0.3s, height 0.3s',
+                  }}
+                />
+                <path d="M3 9h18"/>
+                <path d="M9 21V9"/>
+              </svg>
             ) : (
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="white"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                style={{
+                  transition: 'stroke 0.3s, transform 0.3s',
+                  willChange: 'stroke, transform',
+                }}
+                className="svg-animated"
+              >
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+                <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+                <line x1="12" y1="22.08" x2="12" y2="12"></line>
+              </svg>
             )}
           </button>
           {isMobile && (
-            <button className="p-1 rounded bg-neutral-800 hover:bg-neutral-700" onClick={() => setLegendOpen(v => !v)} title="Show/Hide Users">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="7" r="4"/><path d="M5.5 21a8.38 8.38 0 0 1 13 0"/></svg>
+            <button
+              className="p-1 rounded transition-colors duration-200"
+              style={{ background: '#000', color: '#fff' }}
+              onClick={() => setLegendOpen(v => !v)}
+              title="Show/Hide Users"
+            >
+              <svg
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="white"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                style={{
+                  transition: 'stroke 0.3s, transform 0.3s',
+                  willChange: 'stroke, transform',
+                }}
+                className="svg-animated"
+              >
+                <circle
+                  cx="12"
+                  cy="7"
+                  r="4"
+                  style={{
+                    transition: 'r 0.3s',
+                  }}
+                />
+                <path d="M5.5 21a8.38 8.38 0 0 1 13 0"/>
+              </svg>
             </button>
           )}
         </div>
@@ -843,22 +1104,47 @@ function ThreeDRoom({ displayName, clientId, roomName = 'Room', users = [], sock
       </div>
       {/* User List as Legend */}
       {(!isMobile || legendOpen) && (
-        <div className="flex flex-wrap gap-3 p-2 border-t border-neutral-800 bg-neutral-950/80" style={{ justifyContent: 'center', maxHeight: isMobile ? 120 : undefined, overflowY: isMobile ? 'auto' : undefined }}>
+        <div
+          className="flex flex-wrap gap-3 p-2 border-t"
+          style={{
+            justifyContent: 'center',
+            maxHeight: isMobile ? 120 : undefined,
+            overflowY: isMobile ? 'auto' : undefined,
+            background: '#000',
+            borderTop: '1px solid #222',
+          }}
+        >
           {users.map(u => {
             const color = stringToColor(cleanClientId(u.clientId) || u.displayName);
+            const isCurrent = cleanClientId(u.clientId) === cleanClientId(clientId);
             return (
-              <div key={cleanClientId(u.clientId)} className="flex items-center gap-2 text-xs text-neutral-300" style={{ minWidth: 80 }}>
-                <span style={{
-                  display: 'inline-block',
-                  width: 18,
-                  height: 18,
-                  borderRadius: '50%',
-                  background: '#fff',
-                  border: cleanClientId(u.clientId) === cleanClientId(clientId) ? '2px solid #6366f1' : '2px solid #27272a',
-                  marginRight: 4,
-                }} />
-                <span style={{ fontWeight: 700, color: '#18181b' }}>{getInitials(u.displayName)}</span>
-                <span style={{ color: '#a3a3a3', marginLeft: 2 }}>{u.displayName}</span>
+              <div
+                key={cleanClientId(u.clientId)}
+                className="flex items-center gap-2 text-xs"
+                style={{
+                  minWidth: 80,
+                  color: '#fff',
+                  fontWeight: isCurrent ? 700 : 400,
+                  background: isCurrent ? '#fff2' : 'transparent',
+                  borderRadius: 8,
+                  padding: '2px 6px',
+                }}
+              >
+                <span
+                  style={{
+                    display: 'inline-block',
+                    width: 18,
+                    height: 18,
+                    borderRadius: '50%',
+                    background: isCurrent ? '#fff' : '#111',
+                    border: isCurrent ? '2px solid #fff' : '2px solid #444',
+                    marginRight: 4,
+                  }}
+                />
+                <span style={{ fontWeight: 700, color: isCurrent ? '#bbb' : '#fff' }}>
+                  {getInitials(u.displayName)}
+                </span>
+                <span style={{ color: '#bbb', marginLeft: 2 }}>{u.displayName}</span>
               </div>
             );
           })}

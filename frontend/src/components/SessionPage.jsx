@@ -24,6 +24,16 @@ import usePeerTimeSync from '../hooks/usePeerTimeSync'
 import useMultiPeerTimeSync from '../hooks/useMultiPeerTimeSync'
 import ThreeDRoom from './ThreeDRoom';
 
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  return isMobile;
+}
+
 function SessionPage({
   currentSessionId,
   setCurrentSessionId,
@@ -91,7 +101,10 @@ function SessionPage({
   const networkLatency = calibrationResults?.networkLatency || undefined;
 
   // Peer-to-peer time sync (declare only once)
-  const peerIds = (clients || []).filter(c => c.clientId !== clientId).map(c => c.clientId);
+  const peerIds = (clients || [])
+    .filter(c => c.clientId !== clientId)
+    .map(c => c.clientId)
+    .sort(); // Ensure stable order for hooks
   const multiPeerSync = useMultiPeerTimeSync(socket, clientId, peerIds);
   const peerSyncs = multiPeerSync.peerSyncs || [];
   // Prefer peer-to-peer median values if available, else fallback to server props
@@ -586,402 +599,463 @@ function SessionPage({
     }
   }, [liveRtt, liveTimeOffset, liveJitter]);
 
-  return (
-    <div className="min-h-screen bg-neutral-950 text-white">
-      {!currentSessionId ? (
-        <SessionForm onJoin={handleJoin} currentSessionId={currentSessionId} />
-      ) : (
-        <>
-          {/* Desktop Layout */}
-          <div className="hidden md:flex flex-col h-screen">
-            {/* Header */}
-            <header className="flex items-center justify-between p-2 border-b border-neutral-800 bg-neutral-900/50 backdrop-blur-sm">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-lg flex items-center justify-center">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white transition-all duration-300 group-hover:scale-110 sm:w-5 sm:h-5">
-                    <path d="M9 18V5l12-2v13"></path>
-                    <circle cx="6" cy="18" r="3"></circle>
-                    <circle cx="18" cy="16" r="3"></circle>
-                  </svg>
-                </div>
-                <div>
-                  <h1 className="text-lg font-semibold text-white">FxSync</h1>
-                  <p className="text-xs text-neutral-400">Room: {currentSessionId}</p>
-                </div>
-              </div>
-              {/* Minimalist, monochrome RTT/Offset display */}
-              <div className="flex-1 flex justify-center">
-                <div className="flex items-center gap-4 px-2 py-1 rounded min-w-[180px] max-w-xs">
-                  {/* RTT */}
-                  <span className="flex items-center gap-1 text-xs text-neutral-200" title="RTT: Round Trip Time (ms)">
-                    <svg width="12" height="12" viewBox="0 0 20 20" fill="none" className="inline-block text-neutral-400"><circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="2"/><path d="M10 6v4l2 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                    <span>{liveRtt !== null && !isNaN(liveRtt) ? liveRtt.toFixed(1) : '--'}</span>
-                    <span className="text-neutral-500">ms</span>
-                  </span>
-                  {/* Divider */}
-                  <span className="w-1 h-1 bg-neutral-700 rounded-full"></span>
-                  {/* Offset */}
-                  <span className="flex items-center gap-1 text-xs text-neutral-200" title="Offset: Clock difference (ms)">
-                    <svg width="12" height="12" viewBox="0 0 20 20" fill="none" className="inline-block text-neutral-400"><rect x="4" y="9" width="12" height="2" rx="1" fill="currentColor"/><rect x="9" y="4" width="2" height="12" rx="1" fill="currentColor"/></svg>
-                    <span>{liveTimeOffset !== null && !isNaN(liveTimeOffset) ? liveTimeOffset.toFixed(1) : '--'}</span>
-                    <span className="ml-2 px-2 py-0.5 rounded-full text-xs font-semibold bg-neutral-800 text-neutral-400 border border-neutral-700" title={hasPeerOffsets ? 'Peer-to-peer sync' : 'Server sync'}>
-                      {hasPeerOffsets ? 'Peer' : 'Server'}
-                    </span>
-                    <span className="text-neutral-500">ms</span>
-                  </span>
-                  {/* Divider */}
-                  <span className="w-1 h-1 bg-neutral-700 rounded-full"></span>
-                  {/* Sync Quality Badge */}
-                  <span className="flex items-center gap-1 text-xs font-semibold text-neutral-300 px-2 py-0.5 rounded " title={syncQuality.tooltip}>
-                    <svg width="10" height="10" viewBox="0 0 20 20" fill="none" className="inline-block text-neutral-400"><circle cx="10" cy="10" r="9" stroke="currentColor" strokeWidth="2" fill="none"/><circle cx="10" cy="10" r="4" fill="currentColor"/></svg>
-                    {syncQuality.label}
-                  </span>
-                </div>
-              </div>
-              <div className="flex items-center gap-4">
+  const isMobile = useIsMobile();
 
-              {isController && (
-                  <span
-                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-neutral-800 border border-white/20 text-white/50 text-xs font-medium tracking-wide shadow-none"
-                    style={{ letterSpacing: '0.04em', backgroundColor: '#23272a' }}
-                    title="You are the controller"
-                  >
-                    <svg width="14" height="14" viewBox="0 0 20 20" fill="none" className="text-white/50">
-                      <circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="2" fill="none"/>
-                      <circle cx="10" cy="10" r="3" fill="currentColor"/>
-                    </svg>
-                    Controller
-                  </span>
-                )}
-                <div className={`flex items-center gap-2 text-sm transition-all duration-300 ${connectionStatus.animationClass}`}>
-                  <div className={`w-2 h-2 rounded-full transition-all duration-300 ${connected ? 'bg-green-500' : 'bg-red-500'}`}></div>
-                  <span className="text-neutral-400">{connected ? 'Connected' : 'Disconnected'}</span>
-                </div>
-                
-
-                
-                <button
-                  onClick={() => {
-                    if (currentSessionId && window.confirm('Clear all saved data for this session?')) {
-                      clearSessionData(currentSessionId)
-                      setMessages([])
-                      setQueue([])
-                    }
-                  }}
-                  className="flex items-center gap-2 px-3 py-1.5 text-xs text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-lg transition-all duration-200 hover:shadow-md"
-                  title="Clear saved data"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M3 6h18"></path>
-                    <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
-                    <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
-                    <line x1="10" y1="11" x2="10" y2="17"></line>
-                    <line x1="14" y1="11" x2="14" y2="17"></line>
-                  </svg>
-                  Clear Data
-                </button>
-                
-                <button
-                  onClick={handleExitRoom}
-                  className="flex items-center gap-2 px-3 py-1.5 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 border border-red-500/30 hover:border-red-500/50 rounded-lg transition-all duration-200 hover:shadow-md"
-                  title="Exit room"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
-                    <polyline points="16,17 21,12 16,7"></polyline>
-                    <line x1="21" y1="12" x2="9" y2="12"></line>
-                  </svg>
-                  Exit Room
-                </button>
+  if (isMobile) {
+    // --- MOBILE LAYOUT ---
+    return (
+      <div className="flex flex-col h-screen md:hidden">
+        {/* Header (reuse, but smaller padding) */}
+        <header className="flex items-center justify-between p-2 border-b border-neutral-800 bg-neutral-900/50 backdrop-blur-sm">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 18V5l12-2v13"></path>
+                <circle cx="6" cy="18" r="3"></circle>
+                <circle cx="18" cy="16" r="3"></circle>
+              </svg>
+            </div>
+            <div>
+              <h1 className="text-lg font-semibold text-white">FxSync</h1>
+              <p className="text-xs text-neutral-400">Room: {currentSessionId}</p>
+            </div>
+          </div>
+          <button
+            onClick={handleExitRoom}
+            className="flex items-center gap-2 px-3 py-1.5 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 border border-red-500/30 hover:border-red-500/50 rounded-lg transition-all duration-200 hover:shadow-md"
+            title="Exit room"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+              <polyline points="16,17 21,12 16,7"></polyline>
+              <line x1="21" y1="12" x2="9" y2="12"></line>
+            </svg>
+            Exit
+          </button>
+        </header>
+        {/* Main Content (tab panel) */}
+        <div className="flex-1 overflow-hidden pb-16">
+          {mobileTab === 0 && (
+            <div className="h-full overflow-y-auto relative">
+              {/* Main content (ControllerRequestManager, DeviceList, etc.) */}
+              <div className="p-2 pb-28"> {/* Add extra bottom padding for floating player */}
+                <ControllerRequestManager
+                  socket={socket}
+                  controllerClientId={controllerClientId}
+                  clientId={clientId}
+                  pendingControllerRequests={pendingControllerRequests}
+                  controllerRequestReceived={controllerRequestReceived}
+                  controllerOfferReceived={controllerOfferReceived}
+                  controllerOfferSent={controllerOfferSent}
+                  controllerOfferAccepted={controllerOfferAccepted}
+                  controllerOfferDeclined={controllerOfferDeclined}
+                />
+                <DeviceList
+                  clients={clients}
+                  controllerClientId={controllerClientId}
+                  clientId={clientId}
+                  socket={socket}
+                  mobile={true}
+                  isAudioTabActive={mobileTab === 0}
+                />
               </div>
-            </header>
-            {/* Main Content */}
-            <div className={`flex-1 overflow-hidden transition-all duration-500 ${mainContent.animationClass}`}>
-              <ResizableLayout
-                leftPanel={
-                  <div className="flex flex-col h-full">
-                    <div className="flex-1 p-4">
-                      <AudioPlayer
-                        disabled={!currentSessionId}
-                        socket={socket}
-                        isSocketConnected={connected}
-                        controllerId={controllerId}
-                        controllerClientId={controllerClientId}
-                        clientId={clientId}
-                        clients={clients}
-                        getServerTime={getServerTime}
-                        currentTrack={currentTrack}
-                        rtt={liveRtt}
-                        timeOffset={liveTimeOffset}
-                        jitter={liveJitter}
-                        peerSyncs={peerSyncs}
-                        sessionSyncState={sessionSyncState}
-                        forceNtpBatchSync={forceNtpBatchSync}
-                        audioLatency={audioLatency}
-                        testLatency={testLatency}
-                        networkLatency={networkLatency}
-                        queue={queue}
-                        selectedTrackIdx={selectedTrackIdx}
-                        onPrevTrack={handlePrevTrack}
-                        onNextTrack={handleNextTrack}
-                      />
-                    </div>
-                    <div className="p-4">
-                      <ControllerRequestManager
-                        socket={socket}
-                        controllerClientId={controllerClientId}
-                        clientId={clientId}
-                        pendingControllerRequests={pendingControllerRequests}
-                        controllerRequestReceived={controllerRequestReceived}
-                        controllerOfferReceived={controllerOfferReceived}
-                        controllerOfferSent={controllerOfferSent}
-                        controllerOfferAccepted={controllerOfferAccepted}
-                        controllerOfferDeclined={controllerOfferDeclined}
-                      />
-                    </div>
-                    <div className="p-4 border-t border-neutral-800">
-                      <DeviceList
-                        clients={clients}
-                        controllerClientId={controllerClientId}
-                        clientId={clientId}
-                        socket={socket}
-                      />
-                    </div>
-                  </div>
-                }
-                middlePanel={
-                  <Playlist
-                    queue={queue}
-                    isController={isController}
-                    socket={socket}
-                    sessionId={currentSessionId}
-                    onSelectTrack={handleSelectTrack}
-                    selectedTrackIdx={selectedTrackIdx}
-                  />
-                }
-                rightPanel={
-                  <div className="flex flex-col h-full" style={{ minHeight: 0 }}>
-                    <div className="flex-1 min-h-0" style={{ height: '50%' }}>
-                      <ThreeDRoom 
-                        displayName={displayName} 
-                        clientId={clientId} 
-                        roomName={currentSessionId} 
-                        users={clients || []} 
-                        socket={socket}
-                        sessionId={currentSessionId}
-                      />
-                    </div>
-                    <div className="flex-1 min-h-0 border-t border-neutral-800 overflow-hidden" style={{ height: '50%' }}>
-                      <ChatBox
-                        socket={socket}
-                        sessionId={currentSessionId}
-                        clientId={clientId}
-                        messages={messages}
-                        onSend={(msg) => {
-                          setMessages((prev) => {
-                            const newMessages = [...prev, msg]
-                            if (currentSessionId) {
-                              saveMessages(currentSessionId, newMessages)
-                            }
-                            return newMessages
-                          })
-                        }}
-                        clients={clients}
-                      />
-                    </div>
-                  </div>
-                }
-                leftMinWidth={200}
-                middleMinWidth={200}
-                rightMinWidth={200}
+              {/* Floating AudioPlayer at bottom */}
+              <div className="fixed left-0 right-0 bottom-20 z-30 flex justify-center pointer-events-none">
+                <div className="w-[95vw] max-w-sm pointer-events-auto">
+                  {isMobile ? (
+                    <AudioPlayer
+                      mobile={true}
+                      disabled={!currentSessionId}
+                      socket={socket}
+                      isSocketConnected={connected}
+                      controllerId={controllerId}
+                      controllerClientId={controllerClientId}
+                      clientId={clientId}
+                      clients={clients}
+                      getServerTime={getServerTime}
+                      currentTrack={currentTrack}
+                      rtt={liveRtt}
+                      timeOffset={liveTimeOffset}
+                      jitter={liveJitter}
+                      peerSyncs={peerSyncs}
+                      sessionSyncState={sessionSyncState}
+                      forceNtpBatchSync={forceNtpBatchSync}
+                      audioLatency={audioLatency}
+                      testLatency={testLatency}
+                      networkLatency={networkLatency}
+                      queue={queue}
+                      selectedTrackIdx={selectedTrackIdx}
+                      onPrevTrack={handlePrevTrack}
+                      onNextTrack={handleNextTrack}
+                    />
+                  ) : (
+                    <AudioPlayer
+                      mobile={false}
+                      disabled={!currentSessionId}
+                      socket={socket}
+                      isSocketConnected={connected}
+                      controllerId={controllerId}
+                      controllerClientId={controllerClientId}
+                      clientId={clientId}
+                      clients={clients}
+                      getServerTime={getServerTime}
+                      currentTrack={currentTrack}
+                      rtt={liveRtt}
+                      timeOffset={liveTimeOffset}
+                      jitter={liveJitter}
+                      peerSyncs={peerSyncs}
+                      sessionSyncState={sessionSyncState}
+                      forceNtpBatchSync={forceNtpBatchSync}
+                      audioLatency={audioLatency}
+                      testLatency={testLatency}
+                      networkLatency={networkLatency}
+                      queue={queue}
+                      selectedTrackIdx={selectedTrackIdx}
+                      onPrevTrack={handlePrevTrack}
+                      onNextTrack={handleNextTrack}
+                    />
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+          {mobileTab === 1 && (
+            <>
+              <Playlist
+                queue={queue}
+                isController={isController}
+                socket={socket}
+                sessionId={currentSessionId}
+                onSelectTrack={handleSelectTrack}
+                selectedTrackIdx={selectedTrackIdx}
+              />
+              {/* Floating AudioPlayer at bottom for Playlist tab */}
+              <div className="fixed left-0 right-0 bottom-20 z-30 flex justify-center pointer-events-none">
+                <div className="w-[95vw] max-w-sm pointer-events-auto">
+                  {isMobile ? (
+                    <AudioPlayer
+                      mobile={true}
+                      disabled={!currentSessionId}
+                      socket={socket}
+                      isSocketConnected={connected}
+                      controllerId={controllerId}
+                      controllerClientId={controllerClientId}
+                      clientId={clientId}
+                      clients={clients}
+                      getServerTime={getServerTime}
+                      currentTrack={currentTrack}
+                      rtt={liveRtt}
+                      timeOffset={liveTimeOffset}
+                      jitter={liveJitter}
+                      peerSyncs={peerSyncs}
+                      sessionSyncState={sessionSyncState}
+                      forceNtpBatchSync={forceNtpBatchSync}
+                      audioLatency={audioLatency}
+                      testLatency={testLatency}
+                      networkLatency={networkLatency}
+                      queue={queue}
+                      selectedTrackIdx={selectedTrackIdx}
+                      onPrevTrack={handlePrevTrack}
+                      onNextTrack={handleNextTrack}
+                    />
+                  ) : (
+                    <AudioPlayer
+                      mobile={false}
+                      disabled={!currentSessionId}
+                      socket={socket}
+                      isSocketConnected={connected}
+                      controllerId={controllerId}
+                      controllerClientId={controllerClientId}
+                      clientId={clientId}
+                      clients={clients}
+                      getServerTime={getServerTime}
+                      currentTrack={currentTrack}
+                      rtt={liveRtt}
+                      timeOffset={liveTimeOffset}
+                      jitter={liveJitter}
+                      peerSyncs={peerSyncs}
+                      sessionSyncState={sessionSyncState}
+                      forceNtpBatchSync={forceNtpBatchSync}
+                      audioLatency={audioLatency}
+                      testLatency={testLatency}
+                      networkLatency={networkLatency}
+                      queue={queue}
+                      selectedTrackIdx={selectedTrackIdx}
+                      onPrevTrack={handlePrevTrack}
+                      onNextTrack={handleNextTrack}
+                    />
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+          {mobileTab === 2 && (
+            <ChatBox
+              socket={socket}
+              sessionId={currentSessionId}
+              clientId={clientId}
+              messages={messages}
+              onSend={(msg) => {
+                setMessages((prev) => {
+                  const newMessages = [...prev, msg]
+                  if (currentSessionId) {
+                    saveMessages(currentSessionId, newMessages)
+                  }
+                  return newMessages
+                })
+              }}
+              clients={clients}
+              mobile={true}
+              isChatTabActive={mobileTab === 2}
+            />
+          )}
+          {/* 3D Spatial Room Section */}
+          {mobileTab === 3 && (
+            <div className="h-full overflow-y-auto relative">
+              <ThreeDRoom
+                displayName={displayName}
+                clientId={clientId}
+                roomName={currentSessionId}
+                users={clients || []}
+                socket={socket}
+                sessionId={currentSessionId}
               />
             </div>
-            {/* Remove this duplicate ThreeDRoom from the left-side desktop layout */}
-          </div>
+          )}
+        </div>
+        {/* Bottom Tab Bar */}
+        <BottomTabBar
+          mobileTab={mobileTab}
+          setMobileTab={setMobileTab}
+          handleExitRoom={handleExitRoom}
+        />
+      </div>
+    );
+  } else {
+    // --- DESKTOP LAYOUT ---
+    return (
+      <div className="min-h-screen bg-neutral-950 text-white">
+        {!currentSessionId ? (
+          <SessionForm onJoin={handleJoin} currentSessionId={currentSessionId} />
+        ) : (
+          <>
+            {/* Desktop Layout */}
+            <div className="hidden md:flex flex-col h-screen">
+              {/* Header */}
+              <header className="flex items-center justify-between p-2 border-b border-neutral-800 bg-neutral-900/50 backdrop-blur-sm">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg flex items-center justify-center">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white transition-all duration-300 group-hover:scale-110 sm:w-5 sm:h-5">
+                      <path d="M9 18V5l12-2v13"></path>
+                      <circle cx="6" cy="18" r="3"></circle>
+                      <circle cx="18" cy="16" r="3"></circle>
+                    </svg>
+                  </div>
+                  <div>
+                    <h1 className="text-lg font-semibold text-white">FxSync</h1>
+                    <p className="text-xs text-neutral-400">Room: {currentSessionId}</p>
+                  </div>
+                </div>
+                {/* Minimalist, monochrome RTT/Offset display */}
+                <div className="flex-1 flex justify-center">
+                  <div className="flex items-center gap-4 px-2 py-1 rounded min-w-[180px] max-w-xs">
+                    {/* RTT */}
+                    <span className="flex items-center gap-1 text-xs text-neutral-200" title="RTT: Round Trip Time (ms)">
+                      <svg width="12" height="12" viewBox="0 0 20 20" fill="none" className="inline-block text-neutral-400"><circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="2"/><path d="M10 6v4l2 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                      <span>{liveRtt !== null && !isNaN(liveRtt) ? liveRtt.toFixed(1) : '--'}</span>
+                      <span className="text-neutral-500">ms</span>
+                    </span>
+                    {/* Divider */}
+                    <span className="w-1 h-1 bg-neutral-700 rounded-full"></span>
+                    {/* Offset */}
+                    <span className="flex items-center gap-1 text-xs text-neutral-200" title="Offset: Clock difference (ms)">
+                      <svg width="12" height="12" viewBox="0 0 20 20" fill="none" className="inline-block text-neutral-400"><rect x="4" y="9" width="12" height="2" rx="1" fill="currentColor"/><rect x="9" y="4" width="2" height="12" rx="1" fill="currentColor"/></svg>
+                      <span>{liveTimeOffset !== null && !isNaN(liveTimeOffset) ? liveTimeOffset.toFixed(1) : '--'}</span>
+                      <span className="ml-2 px-2 py-0.5 rounded-full text-xs font-semibold bg-neutral-800 text-neutral-400 border border-neutral-700" title={hasPeerOffsets ? 'Peer-to-peer sync' : 'Server sync'}>
+                        {hasPeerOffsets ? 'Peer' : 'Server'}
+                      </span>
+                      <span className="text-neutral-500">ms</span>
+                    </span>
+                    {/* Divider */}
+                    <span className="w-1 h-1 bg-neutral-700 rounded-full"></span>
+                    {/* Sync Quality Badge */}
+                    <span className="flex items-center gap-1 text-xs font-semibold text-neutral-300 px-2 py-0.5 rounded " title={syncQuality.tooltip}>
+                      <svg width="10" height="10" viewBox="0 0 20 20" fill="none" className="inline-block text-neutral-400"><circle cx="10" cy="10" r="9" stroke="currentColor" strokeWidth="2" fill="none"/><circle cx="10" cy="10" r="4" fill="currentColor"/></svg>
+                      {syncQuality.label}
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-4">
 
-          {/* Mobile Layout */}
-          <div className="flex flex-col h-screen md:hidden">
-            {/* Header (reuse, but smaller padding) */}
-            <header className="flex items-center justify-between p-2 border-b border-neutral-800 bg-neutral-900/50 backdrop-blur-sm">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M9 18V5l12-2v13"></path>
-                    <circle cx="6" cy="18" r="3"></circle>
-                    <circle cx="18" cy="16" r="3"></circle>
-                  </svg>
-                </div>
-                <div>
-                  <h1 className="text-lg font-semibold text-white">FxSync</h1>
-                  <p className="text-xs text-neutral-400">Room: {currentSessionId}</p>
-                </div>
-              </div>
-              <button
-                onClick={handleExitRoom}
-                className="flex items-center gap-2 px-3 py-1.5 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 border border-red-500/30 hover:border-red-500/50 rounded-lg transition-all duration-200 hover:shadow-md"
-                title="Exit room"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
-                  <polyline points="16,17 21,12 16,7"></polyline>
-                  <line x1="21" y1="12" x2="9" y2="12"></line>
-                </svg>
-                Exit
-              </button>
-            </header>
-            {/* Main Content (tab panel) */}
-            <div className="flex-1 overflow-hidden pb-16">
-              {mobileTab === 0 && (
-                <div className="h-full overflow-y-auto relative">
-                  {/* Main content (ControllerRequestManager, DeviceList, etc.) */}
-                  <div className="p-2 pb-28"> {/* Add extra bottom padding for floating player */}
-                    <ControllerRequestManager
-                      socket={socket}
-                      controllerClientId={controllerClientId}
-                      clientId={clientId}
-                      pendingControllerRequests={pendingControllerRequests}
-                      controllerRequestReceived={controllerRequestReceived}
-                      controllerOfferReceived={controllerOfferReceived}
-                      controllerOfferSent={controllerOfferSent}
-                      controllerOfferAccepted={controllerOfferAccepted}
-                      controllerOfferDeclined={controllerOfferDeclined}
-                    />
-                    <DeviceList
-                      clients={clients}
-                      controllerClientId={controllerClientId}
-                      clientId={clientId}
-                      socket={socket}
-                      mobile={true}
-                      isAudioTabActive={mobileTab === 0}
-                    />
+                {isController && (
+                    <span
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-neutral-800 border border-white/20 text-white/50 text-xs font-medium tracking-wide shadow-none"
+                      style={{ letterSpacing: '0.04em', backgroundColor: '#23272a' }}
+                      title="You are the controller"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 20 20" fill="none" className="text-white/50">
+                        <circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="2" fill="none"/>
+                        <circle cx="10" cy="10" r="3" fill="currentColor"/>
+                      </svg>
+                      Controller
+                    </span>
+                  )}
+                  <div className={`flex items-center gap-2 text-sm transition-all duration-300 ${connectionStatus.animationClass}`}>
+                    <div className={`w-2 h-2 rounded-full transition-all duration-300 ${connected ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                    <span className="text-neutral-400">{connected ? 'Connected' : 'Disconnected'}</span>
                   </div>
-                  {/* Floating AudioPlayer at bottom */}
-                  <div className="fixed left-0 right-0 bottom-20 z-30 flex justify-center pointer-events-none">
-                    <div className="w-[95vw] max-w-sm pointer-events-auto">
-                      <AudioPlayer
-                        disabled={!currentSessionId}
-                        socket={socket}
-                        isSocketConnected={connected}
-                        controllerId={controllerId}
-                        controllerClientId={controllerClientId}
-                        clientId={clientId}
-                        clients={clients}
-                        getServerTime={getServerTime}
-                        mobile={true}
-                        isAudioTabActive={mobileTab === 0}
-                        currentTrack={currentTrack}
-                        rtt={liveRtt}
-                        timeOffset={liveTimeOffset}
-                        jitter={liveJitter}
-                        peerSyncs={peerSyncs}
-                        sessionSyncState={sessionSyncState}
-                        forceNtpBatchSync={forceNtpBatchSync}
-                        audioLatency={audioLatency}
-                        testLatency={testLatency}
-                        networkLatency={networkLatency}
-                        queue={queue}
-                        selectedTrackIdx={selectedTrackIdx}
-                        onPrevTrack={handlePrevTrack}
-                        onNextTrack={handleNextTrack}
-                      />
-                    </div>
-                  </div>
-                </div>
-              )}
-              {mobileTab === 1 && (
-                <>
-                  <Playlist
-                    queue={queue}
-                    isController={isController}
-                    socket={socket}
-                    sessionId={currentSessionId}
-                    onSelectTrack={handleSelectTrack}
-                    selectedTrackIdx={selectedTrackIdx}
-                  />
-                  {/* Floating AudioPlayer at bottom for Playlist tab */}
-                  <div className="fixed left-0 right-0 bottom-20 z-30 flex justify-center pointer-events-none">
-                    <div className="w-[95vw] max-w-sm pointer-events-auto">
-                      <AudioPlayer
-                        disabled={!currentSessionId}
-                        socket={socket}
-                        isSocketConnected={connected}
-                        controllerId={controllerId}
-                        controllerClientId={controllerClientId}
-                        clientId={clientId}
-                        clients={clients}
-                        getServerTime={getServerTime}
-                        mobile={true}
-                        isAudioTabActive={mobileTab === 1}
-                        currentTrack={currentTrack}
-                        rtt={liveRtt}
-                        timeOffset={liveTimeOffset}
-                        jitter={liveJitter}
-                        peerSyncs={peerSyncs}
-                        sessionSyncState={sessionSyncState}
-                        forceNtpBatchSync={forceNtpBatchSync}
-                        audioLatency={audioLatency}
-                        testLatency={testLatency}
-                        networkLatency={networkLatency}
-                        queue={queue}
-                        selectedTrackIdx={selectedTrackIdx}
-                        onPrevTrack={handlePrevTrack}
-                        onNextTrack={handleNextTrack}
-                      />
-                    </div>
-                  </div>
-                </>
-              )}
-              {mobileTab === 2 && (
-                <ChatBox
-                  socket={socket}
-                  sessionId={currentSessionId}
-                  clientId={clientId}
-                  messages={messages}
-                  onSend={(msg) => {
-                    setMessages((prev) => {
-                      const newMessages = [...prev, msg]
-                      if (currentSessionId) {
-                        saveMessages(currentSessionId, newMessages)
+                  
+
+                  
+                  <button
+                    onClick={() => {
+                      if (currentSessionId && window.confirm('Clear all saved data for this session?')) {
+                        clearSessionData(currentSessionId)
+                        setMessages([])
+                        setQueue([])
                       }
-                      return newMessages
-                    })
-                  }}
-                  clients={clients}
-                  mobile={true}
-                  isChatTabActive={mobileTab === 2}
-                />
-              )}
-              {/* 3D Spatial Room Section */}
-              {mobileTab === 3 && (
-                <div className="h-full overflow-y-auto relative">
-                  <ThreeDRoom
-                    displayName={displayName}
-                    clientId={clientId}
-                    roomName={currentSessionId}
-                    users={clients || []}
-                    socket={socket}
-                    sessionId={currentSessionId}
-                  />
+                    }}
+                    className="flex items-center gap-2 px-3 py-1.5 text-xs text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-lg transition-all duration-200 hover:shadow-md"
+                    title="Clear saved data"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M3 6h18"></path>
+                      <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
+                      <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
+                      <line x1="10" y1="11" x2="10" y2="17"></line>
+                      <line x1="14" y1="11" x2="14" y2="17"></line>
+                    </svg>
+                    Clear Data
+                  </button>
+                  
+                  <button
+                    onClick={handleExitRoom}
+                    className="flex items-center gap-2 px-3 py-1.5 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 border border-red-500/30 hover:border-red-500/50 rounded-lg transition-all duration-200 hover:shadow-md"
+                    title="Exit room"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                      <polyline points="16,17 21,12 16,7"></polyline>
+                      <line x1="21" y1="12" x2="9" y2="12"></line>
+                    </svg>
+                    Exit Room
+                  </button>
                 </div>
-              )}
+              </header>
+              {/* Main Content */}
+              <div className={`flex-1 overflow-hidden transition-all duration-500 ${mainContent.animationClass}`}>
+                <ResizableLayout
+                  leftPanel={
+                    <div className="flex flex-col h-full">
+                      <div className="flex-1 p-4">
+                        <AudioPlayer
+                          disabled={!currentSessionId}
+                          socket={socket}
+                          isSocketConnected={connected}
+                          controllerId={controllerId}
+                          controllerClientId={controllerClientId}
+                          clientId={clientId}
+                          clients={clients}
+                          getServerTime={getServerTime}
+                          currentTrack={currentTrack}
+                          rtt={liveRtt}
+                          timeOffset={liveTimeOffset}
+                          jitter={liveJitter}
+                          peerSyncs={peerSyncs}
+                          sessionSyncState={sessionSyncState}
+                          forceNtpBatchSync={forceNtpBatchSync}
+                          audioLatency={audioLatency}
+                          testLatency={testLatency}
+                          networkLatency={networkLatency}
+                          queue={queue}
+                          selectedTrackIdx={selectedTrackIdx}
+                          onPrevTrack={handlePrevTrack}
+                          onNextTrack={handleNextTrack}
+                        />
+                      </div>
+                      <div className="p-4">
+                        <ControllerRequestManager
+                          socket={socket}
+                          controllerClientId={controllerClientId}
+                          clientId={clientId}
+                          pendingControllerRequests={pendingControllerRequests}
+                          controllerRequestReceived={controllerRequestReceived}
+                          controllerOfferReceived={controllerOfferReceived}
+                          controllerOfferSent={controllerOfferSent}
+                          controllerOfferAccepted={controllerOfferAccepted}
+                          controllerOfferDeclined={controllerOfferDeclined}
+                        />
+                      </div>
+                      <div className="p-4 border-t border-neutral-800">
+                        <DeviceList
+                          clients={clients}
+                          controllerClientId={controllerClientId}
+                          clientId={clientId}
+                          socket={socket}
+                        />
+                      </div>
+                    </div>
+                  }
+                  middlePanel={
+                    <Playlist
+                      queue={queue}
+                      isController={isController}
+                      socket={socket}
+                      sessionId={currentSessionId}
+                      onSelectTrack={handleSelectTrack}
+                      selectedTrackIdx={selectedTrackIdx}
+                    />
+                  }
+                  rightPanel={
+                    <div className="flex flex-col h-full" style={{ minHeight: 0 }}>
+                      <div className="flex-1 min-h-0" style={{ height: '50%' }}>
+                        <ThreeDRoom 
+                          displayName={displayName} 
+                          clientId={clientId} 
+                          roomName={currentSessionId} 
+                          users={clients || []} 
+                          socket={socket}
+                          sessionId={currentSessionId}
+                        />
+                      </div>
+                      <div className="flex-1 min-h-0 border-t border-neutral-800 overflow-hidden" style={{ height: '50%' }}>
+                        <ChatBox
+                          socket={socket}
+                          sessionId={currentSessionId}
+                          clientId={clientId}
+                          messages={messages}
+                          onSend={(msg) => {
+                            setMessages((prev) => {
+                              const newMessages = [...prev, msg]
+                              if (currentSessionId) {
+                                saveMessages(currentSessionId, newMessages)
+                              }
+                              return newMessages
+                            })
+                          }}
+                          clients={clients}
+                        />
+                      </div>
+                    </div>
+                  }
+                  leftMinWidth={200}
+                  middleMinWidth={200}
+                  rightMinWidth={200}
+                />
+              </div>
+              {/* Remove this duplicate ThreeDRoom from the left-side desktop layout */}
             </div>
-            {/* Bottom Tab Bar */}
-            <BottomTabBar
-              mobileTab={mobileTab}
-              setMobileTab={setMobileTab}
-              handleExitRoom={handleExitRoom}
-            />
-          </div>
-        </>
-      )}
-      <ExitRoomModal
-        isOpen={showExitModal}
-        onClose={() => setShowExitModal(false)}
-        onConfirm={confirmExitRoom}
-        roomName={currentSessionId}
-      />
-    </div>
-  )
+          </>
+        )}
+        <ExitRoomModal
+          isOpen={showExitModal}
+          onClose={() => setShowExitModal(false)}
+          onConfirm={confirmExitRoom}
+          roomName={currentSessionId}
+        />
+      </div>
+    );
+  }
 }
 
 export default SessionPage 
