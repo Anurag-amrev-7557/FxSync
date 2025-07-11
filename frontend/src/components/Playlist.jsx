@@ -43,6 +43,13 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
     socket.emit('add_to_queue', { sessionId, url: input }, (res) => {
       setLoading(false);
       setInput('');
+      if (res && res.error) {
+        if (res.code === 'DUPLICATE') return;
+        alert('Failed to add track: ' + (res.error || 'Unknown error'));
+        console.warn('[Playlist] add_to_queue error:', res);
+      } else {
+        console.log('[Playlist] add_to_queue success:', res);
+      }
     });
   };
 
@@ -91,7 +98,15 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
               if (xhr.status === 200) {
                 const data = JSON.parse(xhr.responseText);
                 if (data.url) {
-                  socket.emit('add_to_queue', { sessionId, url: backendUrl + data.url, title }, () => {});
+                  socket.emit('add_to_queue', { sessionId, url: backendUrl + data.url, title }, (res) => {
+                    if (res && res.error) {
+                      if (res.code === 'DUPLICATE') return;
+                      alert('Failed to add track: ' + (res.error || 'Unknown error'));
+                      console.warn('[Playlist] add_to_queue error:', res);
+                    } else {
+                      console.log('[Playlist] add_to_queue success:', res);
+                    }
+                  });
                 }
                 setUploading(false);
                 setUploadProgress(0);
@@ -141,7 +156,15 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
               if (xhr.status === 200) {
                 const data = JSON.parse(xhr.responseText);
                 if (data.url) {
-                  socket.emit('add_to_queue', { sessionId, url: backendUrl + data.url, title }, () => {});
+                  socket.emit('add_to_queue', { sessionId, url: backendUrl + data.url, title }, (res) => {
+                    if (res && res.error) {
+                      if (res.code === 'DUPLICATE') return;
+                      alert('Failed to add track: ' + (res.error || 'Unknown error'));
+                      console.warn('[Playlist] add_to_queue error:', res);
+                    } else {
+                      console.log('[Playlist] add_to_queue success:', res);
+                    }
+                  });
                 }
                 setUploading(false);
                 setUploadProgress(0);
@@ -295,9 +318,28 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
                     onSelectTrack && onSelectTrack(existingIdx, track);
                   } else {
                     // Add to queue, then select it after confirmation
-                    socket.emit('add_to_queue', { sessionId, url: track.url, title: track.title }, () => {
-                      // Use the new index (end of queue)
-                      onSelectTrack && onSelectTrack(queue.length, track);
+                    const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
+                    // Ensure full URL for backend validation
+                    let fullUrl = track.url;
+                    if (!/^https?:\/\//i.test(fullUrl)) {
+                      fullUrl = backendUrl + fullUrl;
+                    }
+                    // Ensure valid extension
+                    const validExt = /(\.mp3|\.wav|\.ogg|\.m4a|\.aac|\.flac)(\?.*)?$/i;
+                    if (!validExt.test(fullUrl)) {
+                      alert('Track URL does not have a supported audio extension.');
+                      return;
+                    }
+                    socket.emit('add_to_queue', { sessionId, url: fullUrl, title: track.title }, (res) => {
+                      if (res && res.error) {
+                        if (res.code === 'DUPLICATE') return;
+                        alert('Failed to add track: ' + (res.error || 'Unknown error'));
+                        console.warn('[Playlist] add_to_queue error:', res);
+                      } else {
+                        console.log('[Playlist] add_to_queue success:', res);
+                        // Use the new index (end of queue)
+                        onSelectTrack && onSelectTrack(queue.length, track);
+                      }
                     });
                   }
                 }}

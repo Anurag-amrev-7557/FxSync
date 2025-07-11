@@ -15,27 +15,27 @@ if (typeof window !== 'undefined' && !window._audioPlayerErrorHandlerAdded) {
   window._audioPlayerErrorHandlerAdded = true;
 }
 
-const DRIFT_THRESHOLD = 0.25; // seconds (increased from 0.12)
+const DRIFT_THRESHOLD = 0.8; // seconds (increased from 0.5 to reduce corrections)
 const PLAY_OFFSET = 0.35; // seconds (350ms future offset for play events)
 const DEFAULT_AUDIO_LATENCY = 0.08; // 80ms fallback if not measured
-const MICRO_DRIFT_THRESHOLD = 0.04; // seconds (was 0.08)
-const MICRO_RATE_CAP = 0.015; // max playbackRate delta (was 0.03, reduced for gentler correction)
-const MICRO_CORRECTION_WINDOW = 300; // ms (was 500, shortened for quicker reset)
-const DRIFT_JITTER_BUFFER = 6; // consecutive drift detections before correction (increased from 4)
-const RESYNC_COOLDOWN_MS = 2000; // minimum time between manual resyncs
+const MICRO_DRIFT_THRESHOLD = 0.15; // seconds (increased from 0.08 to reduce micro-corrections)
+const MICRO_RATE_CAP = 0.005; // max playbackRate delta (reduced from 0.008 for gentler correction)
+const MICRO_CORRECTION_WINDOW = 800; // ms (increased from 500 for longer correction window)
+const DRIFT_JITTER_BUFFER = 10; // consecutive drift detections before correction (increased from 8)
+const RESYNC_COOLDOWN_MS = 5000; // minimum time between manual resyncs (increased from 3000)
 const RESYNC_HISTORY_SIZE = 5; // number of recent resyncs to track
-const SMART_RESYNC_THRESHOLD = 0.5; // drift threshold for smart resync suggestion
+const SMART_RESYNC_THRESHOLD = 0.8; // drift threshold for smart resync suggestion
 // Micro drift correction constants
-const MICRO_DRIFT_MIN = 0.01; // 10ms
-const MICRO_DRIFT_MAX = 0.15;  // 150ms (was 0.1, increased to make seeking rarer)
-const MICRO_RATE_CAP_MICRO = 0.003; // max playbackRate delta for micro-correction
-const MIN_BUFFER_AHEAD = 0.5; // seconds, minimum buffer ahead to allow drift correction
+const MICRO_DRIFT_MIN = 0.05; // 50ms (increased from 20ms to reduce corrections)
+const MICRO_DRIFT_MAX = 0.4;  // 400ms (increased from 250ms to reduce seeking)
+const MICRO_RATE_CAP_MICRO = 0.001; // max playbackRate delta for micro-correction (reduced from 0.002)
+const MIN_BUFFER_AHEAD = 2.0; // seconds, minimum buffer ahead to allow drift correction (increased from 1.0)
 
 // Adaptive drift correction constants
-const BASE_DRIFT_THRESHOLD = 0.25; // seconds (baseline)
-const BASE_MICRO_DRIFT_MIN = 0.01; // 10ms baseline
-const BASE_MICRO_DRIFT_MAX = 0.15; // 150ms baseline
-const BASE_MICRO_RATE_CAP = 0.015; // max playbackRate delta baseline
+const BASE_DRIFT_THRESHOLD = 0.8; // seconds (baseline, increased from 0.5)
+const BASE_MICRO_DRIFT_MIN = 0.05; // 50ms baseline (increased from 20ms)
+const BASE_MICRO_DRIFT_MAX = 0.4; // 400ms baseline (increased from 250ms)
+const BASE_MICRO_RATE_CAP = 0.005; // max playbackRate delta baseline (reduced from 0.008)
 
 // Device-specific multipliers
 const DEVICE_MULTIPLIERS = {
@@ -338,6 +338,15 @@ export default function AudioPlayer({
   const lastSyncSeq = useRef(-1);
   const [syncReady, setSyncReady] = useState(false);
   const [isBuffering, setIsBuffering] = useState(false);
+  
+  // Audio state management to prevent conflicts
+  const audioStateRef = useRef({
+    isUpdating: false,
+    lastUpdate: 0,
+    pendingUpdates: [],
+    correctionInProgress: false,
+    lastCorrectionTime: 0
+  });
 
   // Drift correction debug state (move here to ensure defined)
   const [driftCorrectionHistory, setDriftCorrectionHistory] = useState([]);
@@ -419,12 +428,12 @@ function microCorrectDrift(audio, drift, context = {}, updateDebug) {
   const { microDriftMin, microDriftMax, microRateCap } = adaptiveThresholds;
   
   if (Math.abs(drift) > microDriftMin && Math.abs(drift) < microDriftMax) {
-    // Enhanced rate calculation with predictive adjustment
-    const baseRate = 1 + Math.max(-microRateCap, Math.min(microRateCap, drift * 0.5));
+    // Enhanced rate calculation with predictive adjustment (more conservative)
+    const baseRate = 1 + Math.max(-microRateCap, Math.min(microRateCap, drift * 0.2)); // Reduced from 0.3
     
-    // Predictive adjustment based on drift trend
+    // Predictive adjustment based on drift trend (more conservative)
     const driftTrend = context.driftHistory ? calculateDriftTrend(context.driftHistory) : 0;
-    const predictiveAdjustment = Math.max(-0.002, Math.min(0.002, driftTrend * 0.1));
+    const predictiveAdjustment = Math.max(-0.0005, Math.min(0.0005, driftTrend * 0.02)); // Reduced from 0.001 and 0.05
     
     const finalRate = baseRate + predictiveAdjustment;
     
@@ -448,8 +457,8 @@ function microCorrectDrift(audio, drift, context = {}, updateDebug) {
     
     audio.playbackRate = finalRate;
     
-    // Adaptive correction window based on network quality
-    const correctionWindow = adaptiveThresholds.networkQuality === 'poor' ? 500 : 300;
+    // Adaptive correction window based on network quality (longer for stability)
+    const correctionWindow = adaptiveThresholds.networkQuality === 'poor' ? 1200 : 800;
     setTimeout(() => {
       audio.playbackRate = 1.0;
     }, correctionWindow);
@@ -473,16 +482,54 @@ function microCorrectDrift(audio, drift, context = {}, updateDebug) {
   }
 }
 
-// Helper function to calculate drift trend
-function calculateDriftTrend(driftHistory) {
-  if (!driftHistory || driftHistory.length < 3) return 0;
-  
-  const recent = driftHistory.slice(-3);
-  const trend = recent.reduce((sum, drift, i) => {
-    return sum + (drift * (i + 1)); // Weight recent drifts more heavily
-  }, 0) / 6; // Normalize by sum of weights
-  
-  return trend;
+// Enhanced helper function to calculate drift trend with linear regression and outlier filtering
+function calculateDriftTrend(driftHistory, options = {}) {
+  if (!Array.isArray(driftHistory) || driftHistory.length < 3) return 0;
+
+  // Configurable options
+  const {
+    windowSize = 8, // Use up to last 8 drifts for trend
+    outlierTrim = 0.18, // Trim top/bottom 18% as outliers
+    minRequired = 3, // Minimum required after trimming
+    useLinearRegression = true // Use regression for trend
+  } = options;
+
+  // Get recent drifts
+  const recent = driftHistory.slice(-windowSize);
+
+  // Outlier filtering (trim extremes)
+  const sorted = [...recent].sort((a, b) => a - b);
+  const trimCount = Math.floor(sorted.length * outlierTrim);
+  const filtered = sorted.slice(trimCount, sorted.length - trimCount);
+
+  if (filtered.length < minRequired) return 0;
+
+  // If not using regression, fallback to weighted average
+  if (!useLinearRegression || filtered.length < 3) {
+    // Weighted average: weight more recent drifts higher
+    const weights = filtered.map((_, i) => i + 1);
+    const sumWeights = weights.reduce((a, b) => a + b, 0);
+    const weightedSum = filtered.reduce((sum, drift, i) => sum + drift * weights[i], 0);
+    return weightedSum / sumWeights;
+  }
+
+  // Linear regression (least squares) to estimate trend (slope)
+  // x: time index (0 = oldest, N-1 = newest), y: drift value
+  const n = filtered.length;
+  const x = Array.from({ length: n }, (_, i) => i);
+  const y = filtered;
+  const meanX = x.reduce((a, b) => a + b, 0) / n;
+  const meanY = y.reduce((a, b) => a + b, 0) / n;
+  let num = 0, den = 0;
+  for (let i = 0; i < n; i++) {
+    num += (x[i] - meanX) * (y[i] - meanY);
+    den += (x[i] - meanX) ** 2;
+  }
+  const slope = den !== 0 ? num / den : 0;
+
+  // Optionally, scale the slope to match the original trend's magnitude
+  // (e.g., multiply by windowSize/2 to get a comparable value)
+  return slope * (n / 2);
 }
 
 function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
@@ -511,8 +558,21 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
     }
   } catch (e) {}
   
-  // Adaptive buffer threshold based on network quality
-  const adaptiveBufferThreshold = adaptiveThresholds.networkQuality === 'poor' ? 1.0 : 0.5;
+  // Enhanced buffer threshold based on network quality and audio state
+  const adaptiveBufferThreshold = adaptiveThresholds.networkQuality === 'poor' ? 3.0 : 2.0;
+  
+  // Additional check: don't correct if audio is buffering or stalled
+  if (audio.readyState < 3 || audio.networkState === 3) {
+    if (process.env.NODE_ENV !== 'production') {
+      console.log('[DriftCorrection] Skipped: audio not ready', { 
+        readyState: audio.readyState,
+        networkState: audio.networkState,
+        drift
+      });
+    }
+    if (typeof updateDebug === 'function') updateDebug('audio-not-ready', drift, { ...context, bufferAhead, adaptiveThresholds });
+    return;
+  }
   
   if (bufferAhead < adaptiveBufferThreshold) {
     if (process.env.NODE_ENV !== 'production') {
@@ -529,8 +589,8 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
   
   // Enhanced cooldown logic with adaptive timing
   const now = Date.now();
-  const baseCooldown = 1200; // ms
-  const adaptiveCooldown = baseCooldown * (adaptiveThresholds.networkQuality === 'poor' ? 1.5 : 1.0);
+  const baseCooldown = 4000; // ms (increased from 2000ms to reduce corrections)
+  const adaptiveCooldown = baseCooldown * (adaptiveThresholds.networkQuality === 'poor' ? 2.5 : 2.0);
   
   if (lastCorrectionRef.current && now - lastCorrectionRef.current < adaptiveCooldown) {
     if (process.env.NODE_ENV !== 'production') {
@@ -547,8 +607,19 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
   
   // Enhanced correction logic with adaptive thresholds
   if (Math.abs(drift) > microDriftMin && Math.abs(drift) < microDriftMax) {
-    microCorrectDrift(audio, drift, { ...context, driftHistory: window._audioDriftHistory }, updateDebug);
-    lastCorrectionRef.current = now;
+    // Only apply micro-correction if not already correcting
+    if (!audioStateRef.current.correctionInProgress) {
+      audioStateRef.current.correctionInProgress = true;
+      audioStateRef.current.lastCorrectionTime = now;
+      
+      microCorrectDrift(audio, drift, { ...context, driftHistory: window._audioDriftHistory }, updateDebug);
+      lastCorrectionRef.current = now;
+      
+      // Reset correction flag after a delay
+      setTimeout(() => {
+        audioStateRef.current.correctionInProgress = false;
+      }, 1000);
+    }
     return;
   }
   
@@ -820,16 +891,26 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
         setAudioLatency(latency);
         playRequestedAt.current = null;
       }
-      setIsBuffering(false);
+      // Prevent state conflicts during sync operations
+      if (!audioStateRef.current.isUpdating) {
+        setIsPlaying(true);
+        setIsBuffering(false);
+      }
     };
     const handleWaiting = () => {
-      setIsBuffering(true);
+      // Don't set buffering if we're in the middle of a sync operation
+      if (!audioStateRef.current.isUpdating) {
+        setIsBuffering(true);
+      }
       if (process.env.NODE_ENV !== 'production') {
         console.log('[Buffer] Audio waiting event: likely buffer underrun');
       }
     };
     const handleStalled = () => {
-      setIsBuffering(true);
+      // Don't set buffering if we're in the middle of a sync operation
+      if (!audioStateRef.current.isUpdating) {
+        setIsBuffering(true);
+      }
       if (process.env.NODE_ENV !== 'production') {
         console.log('[Buffer] Audio stalled event: network issue or buffer underrun');
       }
@@ -925,6 +1006,23 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
         return;
       }
       if (typeof syncSeq === 'number') lastSyncSeq.current = syncSeq;
+      
+      // Prevent audio state conflicts
+      const now = Date.now();
+      if (audioStateRef.current.isUpdating && now - audioStateRef.current.lastUpdate < 100) {
+        // Queue this update if another is in progress
+        audioStateRef.current.pendingUpdates.push({
+          isPlaying,
+          timestamp,
+          lastUpdated,
+          serverTime,
+          syncSeq
+        });
+        return;
+      }
+      
+      audioStateRef.current.isUpdating = true;
+      audioStateRef.current.lastUpdate = now;
       // Defensive: check for valid timestamp and lastUpdated
       if (
         typeof timestamp !== 'number' ||
@@ -942,12 +1040,12 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
         return;
       }
       // Use serverTime if present, else fallback
-      let now = null;
+      let serverNow = null;
       if (typeof serverTime === 'number' && isFinite(serverTime)) {
-        now = serverTime;
+        serverNow = serverTime;
       } else {
-        now = getNow(getServerTime);
-        console.warn('SYNC_STATE: serverTime missing, using getNow(getServerTime)', { now });
+        serverNow = getNow(getServerTime);
+        console.warn('SYNC_STATE: serverTime missing, using getNow(getServerTime)', { serverNow });
       }
       // Compensate for measured audio latency, test latency, and network latency
       const outputLatency = Math.min(
@@ -956,18 +1054,56 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
       );
       const networkComp = networkLatency ? networkLatency / 2 : 0;
       const rttComp = rtt ? rtt / 2000 : 0; // ms to s, one-way
-      const expected = timestamp
-        + (now - lastUpdated) / 1000
+      let expected = timestamp
+        + (serverNow - lastUpdated) / 1000
         - (isFinite(outputLatency) ? outputLatency : 0)
         - networkComp
         + rttComp
         + smoothedOffset;
+      // Clamp expected to valid range before checking for invalid values
       if (!isFiniteNumber(expected)) {
-        console.warn('SYNC_STATE: expected is not finite', { expected, timestamp, lastUpdated, now });
-        showSyncStatus('Sync failed');
+        console.warn('Invalid expected time (NaN), pausing audio', {
+          expected,
+          state: { isPlaying, timestamp, lastUpdated, ctrlId, trackId, meta, serverTime, syncSeq },
+          now: Date.now(),
+          lastUpdated,
+          timestamp,
+          outputLatency,
+          networkComp,
+          rttComp,
+          smoothedOffset
+        });
+        if (!audio.paused) audio.pause();
+        if (isPlaying) setIsPlaying(false);
+        if (!audio.paused || isPlaying) setLastSync(Date.now());
         return;
       }
-      const drift = Math.abs(audio.currentTime - expected);
+      if (expected < 0) {
+        expected = 0;
+      }
+      if (audio.duration && isFinite(audio.duration)) {
+        expected = Math.max(0, Math.min(expected, audio.duration));
+      }
+      if (expected < 0 || !isFiniteNumber(expected)) {
+        console.warn('Invalid expected time after clamping, pausing audio', {
+          expected,
+          state: { isPlaying, timestamp, lastUpdated, ctrlId, trackId, meta, serverTime, syncSeq },
+          now: Date.now(),
+          lastUpdated,
+          timestamp,
+          outputLatency,
+          networkComp,
+          rttComp,
+          smoothedOffset
+        });
+        if (!audio.paused) audio.pause();
+        if (isPlaying) setIsPlaying(false);
+        if (!audio.paused || isPlaying) setLastSync(Date.now());
+        return;
+      }
+      let safeExpected = expected;
+      // Always use safeExpected for seeking and playback
+      const drift = Math.abs(audio.currentTime - safeExpected);
 
       // Enhanced: keep drift history for analytics (last 20 drifts with correction status)
       if (!window._audioDriftHistory) window._audioDriftHistory = [];
@@ -1026,17 +1162,51 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
 
       setIsPlaying(isPlaying);
 
-      // Only play/pause if state differs
+      // Enhanced play/pause with conflict resolution
       if (isPlaying && audio.paused) {
-        audio.play().catch(e => {
-          console.warn('SYNC_STATE: failed to play audio', e);
-        });
+        // Check if a play request is already in progress
+        const now = Date.now();
+        if (now - playRequestedAt.current < 100) {
+          // Play request was made recently, don't interfere
+          console.debug('SYNC_STATE: Skipping play - recent play request in progress');
+        } else {
+          playRequestedAt.current = now;
+          audio.play().catch(e => {
+            // Suppress AbortError (play() interrupted by pause())
+            if (e && e.name === 'AbortError') {
+              console.debug('SYNC_STATE: Play request aborted (likely by pause)');
+              return;
+            }
+            console.warn('SYNC_STATE: failed to play audio', e);
+          });
+        }
       } else if (!isPlaying && !audio.paused) {
-        audio.pause();
-        // Do not seek to correct drift if paused
+        // Check if we should pause (avoid interrupting recent play requests)
+        const now = Date.now();
+        if (now - playRequestedAt.current < 50) {
+          // Very recent play request, delay pause slightly
+          setTimeout(() => {
+            if (!isPlaying) {
+              audio.pause();
+            }
+          }, 50);
+        } else {
+          audio.pause();
+        }
       }
       setLastSync(Date.now());
       setSyncReady(true);
+      
+      // Process any pending updates
+      setTimeout(() => {
+        audioStateRef.current.isUpdating = false;
+        if (audioStateRef.current.pendingUpdates.length > 0) {
+          const nextUpdate = audioStateRef.current.pendingUpdates.shift();
+          if (nextUpdate) {
+            handleSyncState(nextUpdate);
+          }
+        }
+      }, 50);
     };
 
     // ML-based sync optimization handler
@@ -1240,26 +1410,55 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
         );
         const networkComp = networkLatency ? networkLatency / 2 : 0;
         const rttComp = rtt ? rtt / 2000 : 0; // ms to s, one-way
-        const expected = state.timestamp + (now - state.lastUpdated) / 1000 - (isFinite(outputLatency) ? outputLatency : 0) - networkComp + rttComp + smoothedOffset;
-        if (!isFiniteNumber(expected) || expected < 0) {
-          console.warn('Invalid expected time, pausing audio', { expected, state });
-          audio.pause();
-          setIsPlaying(false);
-          setLastSync(Date.now());
+        let expected = state.timestamp + (now - state.lastUpdated) / 1000 - (isFinite(outputLatency) ? outputLatency : 0) - networkComp + rttComp + smoothedOffset;
+        // Clamp expected to valid range before checking for invalid values
+        if (!isFiniteNumber(expected)) {
+          console.warn('Invalid expected time (NaN), pausing audio', {
+            expected,
+            state: { isPlaying: state.isPlaying, timestamp: state.timestamp, lastUpdated: state.lastUpdated, ctrlId: state.controllerId, trackId: state.trackId, meta: state.meta, serverTime: state.serverTime, syncSeq: state.syncSeq },
+            now: Date.now(),
+            lastUpdated: state.lastUpdated,
+            timestamp: state.timestamp,
+            outputLatency,
+            networkComp,
+            rttComp,
+            smoothedOffset
+          });
+          if (!audio.paused) audio.pause();
+          if (isPlaying) setIsPlaying(false);
+          if (!audio.paused || isPlaying) setLastSync(Date.now());
           return;
         }
+        let safeExpected = expected;
+        if (safeExpected < 0) {
+          safeExpected = 0;
+        }
+        if (audio.duration && isFinite(audio.duration)) {
+          safeExpected = Math.max(0, Math.min(safeExpected, audio.duration));
+        }
+        if (safeExpected < 0 || !isFiniteNumber(safeExpected)) {
+          console.warn('Invalid expected time after clamping, pausing audio', {
+            expected: safeExpected,
+            state: { isPlaying: state.isPlaying, timestamp: state.timestamp, lastUpdated: state.lastUpdated, ctrlId: state.controllerId, trackId: state.trackId, meta: state.meta, serverTime: state.serverTime, syncSeq: state.syncSeq },
+            now: Date.now(),
+            lastUpdated: state.lastUpdated,
+            timestamp: state.timestamp,
+            outputLatency,
+            networkComp,
+            rttComp,
+            smoothedOffset
+          });
+          if (!audio.paused) audio.pause();
+          if (isPlaying) setIsPlaying(false);
+          if (!audio.paused || isPlaying) setLastSync(Date.now());
+          return;
+        }
+        // Always use safeExpected for seeking and playback
+        const drift = Math.abs(audio.currentTime - safeExpected);
 
         // Use advanced time sync
         const syncedNow = getNow(getServerTime);
         const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000 + rttComp + smoothedOffset;
-
-        // Clamp expectedSynced to [0, duration] if possible
-        let safeExpected = expectedSynced;
-        if (audio.duration && isFinite(audio.duration)) {
-          safeExpected = Math.max(0, Math.min(expectedSynced, audio.duration));
-        } else {
-          safeExpected = Math.max(0, expectedSynced);
-        }
 
         console.log('Syncing audio to', {
           expectedSynced,
@@ -1276,12 +1475,29 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
           playRequestedAt.current = Date.now();
           // Defensive: try/catch for play() (may throw in some browsers)
           audio.play().catch((err) => {
+            // Suppress AbortError (play() interrupted by pause())
+            if (err && err.name === 'AbortError') {
+              console.debug('sync_request: Play request aborted (likely by pause)');
+              return;
+            }
             console.warn('audio.play() failed on sync_request', err);
           });
         } else {
-          // Ensure audio is definitely paused and reset to the expected time
-          audio.pause();
-          setCurrentTimeSafely(audio, safeExpected, setCurrentTime);
+          // Check if we should pause (avoid interrupting recent play requests)
+          const now = Date.now();
+          if (now - playRequestedAt.current < 50) {
+            // Very recent play request, delay pause slightly
+            setTimeout(() => {
+              if (!state.isPlaying) {
+                audio.pause();
+                setCurrentTimeSafely(audio, safeExpected, setCurrentTime);
+              }
+            }, 50);
+          } else {
+            // Ensure audio is definitely paused and reset to the expected time
+            audio.pause();
+            setCurrentTimeSafely(audio, safeExpected, setCurrentTime);
+          }
         }
         setLastSync(Date.now());
       } catch (err) {
@@ -1379,7 +1595,10 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
       emitPlay();
     } catch (err) {
       // Suppress AbortError (play() interrupted by pause())
-      if (err && err.name === 'AbortError') return;
+      if (err && err.name === 'AbortError') {
+        console.debug('[AudioPlayer][handlePlay] Play request aborted (likely by pause)');
+        return;
+      }
       setIsPlaying(false);
       if (process.env.NODE_ENV === 'development') {
         // eslint-disable-next-line no-console
@@ -1553,21 +1772,52 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
         );
         const networkComp = networkLatency ? networkLatency / 2 : 0;
         const rttComp = rtt ? rtt / 2000 : 0; // ms to s, one-way
-        const expected = state.timestamp + (now - state.lastUpdated) / 1000 - (isFinite(outputLatency) ? outputLatency : 0) - networkComp + rttComp + smoothedOffset;
-        if (!isFiniteNumber(expected) || expected < 0) {
-          setSyncStatus('Sync failed: Bad expected time');
-          setTimeout(() => setSyncStatus('In Sync'), 1500);
-          setResyncInProgress(false);
-          updateResyncHistory('failed', 0, 'Invalid expected time', syncStateEnd - syncStateStart);
+        let expected = state.timestamp + (now - state.lastUpdated) / 1000 - (isFinite(outputLatency) ? outputLatency : 0) - networkComp + rttComp + smoothedOffset;
+        // Clamp expected to valid range before checking for invalid values
+        if (!isFiniteNumber(expected)) {
+          console.warn('Invalid expected time (NaN), pausing audio', {
+            expected,
+            state: { isPlaying: state.isPlaying, timestamp: state.timestamp, lastUpdated: state.lastUpdated, ctrlId: state.controllerId, trackId: state.trackId, meta: state.meta, serverTime: state.serverTime, syncSeq: state.syncSeq },
+            now: Date.now(),
+            lastUpdated: state.lastUpdated,
+            timestamp: state.timestamp,
+            outputLatency,
+            networkComp,
+            rttComp,
+            smoothedOffset
+          });
+          if (!audio.paused) audio.pause();
+          if (isPlaying) setIsPlaying(false);
+          if (!audio.paused || isPlaying) setLastSync(Date.now());
           return;
         }
-        // Clamp expected to [0, duration] if possible
         let safeExpected = expected;
-        if (audio.duration && isFinite(audio.duration)) {
-          safeExpected = Math.max(0, Math.min(expected, audio.duration));
-        } else {
-          safeExpected = Math.max(0, expected);
+        if (safeExpected < 0) {
+          safeExpected = 0;
         }
+        if (audio.duration && isFinite(audio.duration)) {
+          safeExpected = Math.max(0, Math.min(safeExpected, audio.duration));
+        }
+        if (safeExpected < 0 || !isFiniteNumber(safeExpected)) {
+          console.warn('Invalid expected time after clamping, pausing audio', {
+            expected: safeExpected,
+            state: { isPlaying: state.isPlaying, timestamp: state.timestamp, lastUpdated: state.lastUpdated, ctrlId: state.controllerId, trackId: state.trackId, meta: state.meta, serverTime: state.serverTime, syncSeq: state.syncSeq },
+            now: Date.now(),
+            lastUpdated: state.lastUpdated,
+            timestamp: state.timestamp,
+            outputLatency,
+            networkComp,
+            rttComp,
+            smoothedOffset
+          });
+          if (!audio.paused) audio.pause();
+          if (isPlaying) setIsPlaying(false);
+          if (!audio.paused || isPlaying) setLastSync(Date.now());
+          return;
+        }
+        // Always use safeExpected for seeking and playback
+        const drift = Math.abs(audio.currentTime - safeExpected);
+
         // Log drift before correction
         const driftBefore = Math.abs(audio.currentTime - safeExpected);
         // Seek audio element

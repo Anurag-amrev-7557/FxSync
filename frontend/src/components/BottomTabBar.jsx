@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState } from 'react'
 
 function BottomTabBar({ mobileTab, setMobileTab, handleExitRoom }) {
-  const tabRefs = [useRef(null), useRef(null), useRef(null), useRef(null)] // Add 4th ref for 3D tab
+  const tabRefs = [useRef(null), useRef(null), useRef(null)] // Temporarily removed 4th ref for 3D tab
   const containerRef = useRef(null)
   const [bgStyle, setBgStyle] = useState({ left: 0, width: 0, opacity: 1 })
   const [bgActive, setBgActive] = useState(false)
@@ -114,8 +114,8 @@ function BottomTabBar({ mobileTab, setMobileTab, handleExitRoom }) {
           <div className="absolute inset-0 bg-primary/10 rounded-full animate-pulse pointer-events-none"></div>
         )}
       </button>
-      {/* 3D Room Tab */}
-      <button
+      {/* Temporarily hidden 3D Room Tab */}
+      {/* <button
         ref={tabRefs[3]}
         className={`flex-1 flex flex-row items-center justify-center py-2 px-3 relative z-20 transition-all duration-400 ease-[cubic-bezier(0.22,1,0.36,1)] active:scale-95 active:bg-neutral-800/40 active:shadow-inner focus:outline-none focus:ring-0 hover:bg-neutral-800/20 rounded-full gap-2 ${mobileTab === 3 ? 'scale-105 shadow-lg' : ''} ${mobileTab === 3 ? 'text-black' : 'text-white hover:text-neutral-200'}`}
         style={{ zIndex: 10, transition: 'transform 400ms cubic-bezier(0.22,1,0.36,1), box-shadow 400ms cubic-bezier(0.22,1,0.36,1)' }}
@@ -125,7 +125,6 @@ function BottomTabBar({ mobileTab, setMobileTab, handleExitRoom }) {
           <div className="absolute top-0 left-1/2 transform -translate-x-1/2 w-10 h-0.5 bg-primary rounded-full animate-pulse shadow-lg shadow-primary/50"></div>
         )}
         <div className={`w-5 h-5 flex items-center justify-center`}>
-          {/* 3D cube icon */}
           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={mobileTab === 3 ? 'stroke-black' : 'stroke-white'}>
             <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
             <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
@@ -136,7 +135,7 @@ function BottomTabBar({ mobileTab, setMobileTab, handleExitRoom }) {
         {mobileTab === 3 && (
           <div className="absolute inset-0 bg-primary/10 rounded-full animate-pulse pointer-events-none"></div>
         )}
-      </button>
+      </button> */}
       {/* Exit button for mobile, optional: you can move this to a separate tab if desired */}
       <button
         onClick={handleExitRoom}
