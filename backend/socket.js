@@ -758,6 +758,16 @@ export function setupSocket(io) {
       }
     });
 
+    // NTP-like time sync event for ultra-accurate client-server time alignment
+    socket.on('time:sync', (clientSentAt, callback) => {
+      if (typeof callback === 'function') {
+        callback({
+          serverTime: Date.now(),
+          clientSentAt
+        });
+      }
+    });
+
     // Store per-client drift for diagnostics/adaptive correction
     const clientDriftMap = {};
 
