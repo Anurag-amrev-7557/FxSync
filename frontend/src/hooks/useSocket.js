@@ -5,9 +5,9 @@ import { getClientId } from '../utils/clientId';
 // --- Time Sync Tuning Constants ---
 const TRIM_RATIO = 0.22; // Outlier filtering trim ratio
 const MAX_RTT = 220; // ms, ignore samples above this
-const ADAPTIVE_INTERVAL_BAD = 1500; // ms, unstable network (increased to reduce frequency)
-const ADAPTIVE_INTERVAL_GOOD = 3000; // ms, very stable (increased to reduce frequency)
-const ADAPTIVE_INTERVAL_DEFAULT = 4000; // ms, default (increased to reduce frequency)
+const ADAPTIVE_INTERVAL_BAD = 400; // ms, unstable network
+const ADAPTIVE_INTERVAL_GOOD = 700; // ms, very stable
+const ADAPTIVE_INTERVAL_DEFAULT = 900; // ms, default
 const JITTER_BAD = 15; // ms
 const JITTER_GOOD = 10; // ms
 const AVG_RTT_BAD = 100; // ms
@@ -28,7 +28,6 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
   const [controllerOfferDeclined, setControllerOfferDeclined] = useState(null);
   const [jitter, setJitter] = useState(0); // Track jitter (ms)
   const [drift, setDrift] = useState(0); // Track drift (ms)
-  const [sessionSyncState, setSessionSyncState] = useState(null); // Track session sync state
   const socketRef = useRef(null);
   const clientId = getClientId();
 
@@ -297,12 +296,12 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
     };
   }, [connected]);
 
-      // --- Continuous Adaptive Sync: periodic NTP batch in background ---
+  // --- Continuous Adaptive Sync: periodic NTP batch in background ---
   useEffect(() => {
     if (!socketRef.current || !connected || !sessionId) return;
     let interval = setInterval(() => {
       ntpBatchSync(socketRef.current);
-    }, 60000); // every 60 seconds (increased to reduce frequency)
+    }, 25000); // every 25 seconds
     // Trigger NTP batch sync on tab focus or network reconnect
     function handleVisibilityChange() {
       if (document.visibilityState === 'visible') {
@@ -434,12 +433,6 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
     socket.on('controller_offer_accepted', setControllerOfferAccepted);
     socket.on('controller_offer_declined', setControllerOfferDeclined);
 
-    // Session sync state events
-    socket.on('sync_state', (syncData) => {
-      console.debug(`${logPrefix} Received sync_state:`, syncData);
-      setSessionSyncState(syncData);
-    });
-
     // Session closed by server (e.g., timeout/cleanup)
     socket.on('session_closed', () => {
       console.warn(`${logPrefix} Session closed by server.`);
@@ -453,7 +446,6 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
       setControllerOfferSent(null);
       setControllerOfferAccepted(null);
       setControllerOfferDeclined(null);
-      setSessionSyncState(null);
       // Optionally, notify user or redirect
     });
 
@@ -488,8 +480,6 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
       socket.off('controller_offer_accepted', setControllerOfferAccepted);
       socket.off('controller_offer_declined', setControllerOfferDeclined);
 
-      socket.off('sync_state');
-
       socket.off('session_closed');
       socket.off('force_reload');
       socket.off('backend_version_mismatch');
@@ -505,7 +495,6 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
       setControllerOfferSent(null);
       setControllerOfferAccepted(null);
       setControllerOfferDeclined(null);
-      setSessionSyncState(null);
     };
   }, [sessionId, clientId]);
 
@@ -573,7 +562,6 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
     controllerOfferSent,
     controllerOfferAccepted,
     controllerOfferDeclined,
-    sessionSyncState, // Add session sync state
     // Enhanced: is this client the controller?
     isController: controllerClientId && clientId && controllerClientId === clientId,
     // Utility: reconnect method

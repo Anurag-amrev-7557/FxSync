@@ -43,13 +43,6 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
     socket.emit('add_to_queue', { sessionId, url: input }, (res) => {
       setLoading(false);
       setInput('');
-      if (res && res.error) {
-        if (res.code === 'DUPLICATE') return;
-        alert('Failed to add track: ' + (res.error || 'Unknown error'));
-        console.warn('[Playlist] add_to_queue error:', res);
-      } else {
-        console.log('[Playlist] add_to_queue success:', res);
-      }
     });
   };
 
@@ -98,15 +91,7 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
               if (xhr.status === 200) {
                 const data = JSON.parse(xhr.responseText);
                 if (data.url) {
-                  socket.emit('add_to_queue', { sessionId, url: backendUrl + data.url, title }, (res) => {
-                    if (res && res.error) {
-                      if (res.code === 'DUPLICATE') return;
-                      alert('Failed to add track: ' + (res.error || 'Unknown error'));
-                      console.warn('[Playlist] add_to_queue error:', res);
-                    } else {
-                      console.log('[Playlist] add_to_queue success:', res);
-                    }
-                  });
+                  socket.emit('add_to_queue', { sessionId, url: backendUrl + data.url, title, albumArtUrl: data.albumArtUrl }, () => {});
                 }
                 setUploading(false);
                 setUploadProgress(0);
@@ -156,15 +141,7 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
               if (xhr.status === 200) {
                 const data = JSON.parse(xhr.responseText);
                 if (data.url) {
-                  socket.emit('add_to_queue', { sessionId, url: backendUrl + data.url, title }, (res) => {
-                    if (res && res.error) {
-                      if (res.code === 'DUPLICATE') return;
-                      alert('Failed to add track: ' + (res.error || 'Unknown error'));
-                      console.warn('[Playlist] add_to_queue error:', res);
-                    } else {
-                      console.log('[Playlist] add_to_queue success:', res);
-                    }
-                  });
+                  socket.emit('add_to_queue', { sessionId, url: backendUrl + data.url, title, albumArtUrl: data.albumArtUrl }, () => {});
                 }
                 setUploading(false);
                 setUploadProgress(0);
@@ -318,40 +295,37 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
                     onSelectTrack && onSelectTrack(existingIdx, track);
                   } else {
                     // Add to queue, then select it after confirmation
-                    const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
-                    // Ensure full URL for backend validation
-                    let fullUrl = track.url;
-                    if (!/^https?:\/\//i.test(fullUrl)) {
-                      fullUrl = backendUrl + fullUrl;
-                    }
-                    // Ensure valid extension
-                    const validExt = /(\.mp3|\.wav|\.ogg|\.m4a|\.aac|\.flac)(\?.*)?$/i;
-                    if (!validExt.test(fullUrl)) {
-                      alert('Track URL does not have a supported audio extension.');
-                      return;
-                    }
-                    socket.emit('add_to_queue', { sessionId, url: fullUrl, title: track.title }, (res) => {
-                      if (res && res.error) {
-                        if (res.code === 'DUPLICATE') return;
-                        alert('Failed to add track: ' + (res.error || 'Unknown error'));
-                        console.warn('[Playlist] add_to_queue error:', res);
-                      } else {
-                        console.log('[Playlist] add_to_queue success:', res);
-                        // Use the new index (end of queue)
-                        onSelectTrack && onSelectTrack(queue.length, track);
-                      }
+                    socket.emit('add_to_queue', { sessionId, url: track.url, title: track.title, albumArtUrl: track.albumArtUrl }, () => {
+                      // Use the new index (end of queue)
+                      onSelectTrack && onSelectTrack(queue.length, track);
                     });
                   }
                 }}
                 title={isController ? `Play ${track.title}` : 'Only the controller can add or preview tracks'}
               >
-                <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${track.type === 'sample' ? 'bg-blue-800' : 'bg-neutral-800'}`}> 
-                  {/* Advanced Play icon */}
-                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" className="text-white">
-                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" fill="transparent" />
-                    <polygon points="9 8 17 12 9 16 9 8" fill="currentColor" />
-                    <circle cx="12" cy="12" r="2.5" fill="#fff" opacity="0.7" />
-                  </svg>
+                <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden ${track.type === 'sample' ? 'bg-blue-800' : 'bg-neutral-800'}`}> 
+                  {track.albumArtUrl ? (
+                    (() => {
+                      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
+                      const isAbsolute = /^(https?:)?\/\//i.test(track.albumArtUrl);
+                      const src = isAbsolute ? track.albumArtUrl : backendUrl.replace(/\/$/, '') + track.albumArtUrl;
+                      return (
+                        <img
+                          src={src}
+                          alt="Album Art"
+                          className="w-full h-full object-cover rounded-lg"
+                          style={{ minWidth: 0, minHeight: 0 }}
+                          onError={e => { e.target.style.display = 'none'; }}
+                        />
+                      );
+                    })()
+                  ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" className="text-white">
+                      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" fill="transparent" />
+                      <polygon points="9 8 17 12 9 16 9 8" fill="currentColor" />
+                      <circle cx="12" cy="12" r="2.5" fill="#fff" opacity="0.7" />
+                    </svg>
+                  )}
                 </div>
                 <div className="flex-1 min-w-0">
                   <h4 className="text-white font-medium text-sm truncate">{track.title}</h4>
@@ -437,15 +411,22 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
                 title={selectedTrackIdx === idx ? 'Currently Playing' : isController ? 'Click to play' : 'Only the controller can change tracks'}
               >
                 <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${selectedTrackIdx === idx ? 'bg-primary/80' : 'bg-neutral-800'}`}> 
-                    {selectedTrackIdx === idx ? (
-                      // Equalizer animation for currently playing track
-                      <span className="flex items-end h-6 gap-[2px]">
-                        <span className="bg-white w-[3px] h-3 animate-eqbar1 rounded-sm" />
-                        <span className="bg-white w-[3px] h-5 animate-eqbar2 rounded-sm" />
-                        <span className="bg-white w-[3px] h-4 animate-eqbar3 rounded-sm" />
-                        <span className="bg-white w-[3px] h-2 animate-eqbar4 rounded-sm" />
-                      </span>
+                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden ${selectedTrackIdx === idx ? 'bg-primary/80' : 'bg-neutral-800'}`}> 
+                    {item.albumArtUrl ? (
+                      (() => {
+                        const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
+                        const isAbsolute = /^(https?:)?\/\//i.test(item.albumArtUrl);
+                        const src = isAbsolute ? item.albumArtUrl : backendUrl.replace(/\/$/, '') + item.albumArtUrl;
+                        return (
+                          <img
+                            src={src}
+                            alt="Album Art"
+                            className="w-full h-full object-cover rounded-lg"
+                            style={{ minWidth: 0, minHeight: 0 }}
+                            onError={e => { e.target.style.display = 'none'; }}
+                          />
+                        );
+                      })()
                     ) : (
                       // Advanced Play icon with transparent background
                       <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" className="text-white">
@@ -462,6 +443,15 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
                     </div>
                     <p className="text-neutral-400 text-xs truncate">{item.url}</p>
                   </div>
+                  {/* Animated equalizer for currently playing track, right-aligned */}
+                  {selectedTrackIdx === idx && (
+                    <span className="flex items-end h-6 gap-[2px] ml-4">
+                      <span className="bg-white w-[3px] h-3 animate-eqbar1 rounded-sm" />
+                      <span className="bg-white w-[3px] h-5 animate-eqbar2 rounded-sm" />
+                      <span className="bg-white w-[3px] h-4 animate-eqbar3 rounded-sm" />
+                      <span className="bg-white w-[3px] h-2 animate-eqbar4 rounded-sm" />
+                    </span>
+                  )}
                   {isController && (
                     <button
                       className="opacity-0 group-hover:opacity-100 p-2 text-neutral-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all duration-200"

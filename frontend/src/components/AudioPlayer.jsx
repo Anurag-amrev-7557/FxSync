@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import SyncStatus from './SyncStatus';
 import useSmoothAppearance from '../hooks/useSmoothAppearance';
 import LoadingSpinner from './LoadingSpinner';
@@ -15,92 +15,21 @@ if (typeof window !== 'undefined' && !window._audioPlayerErrorHandlerAdded) {
   window._audioPlayerErrorHandlerAdded = true;
 }
 
-const DRIFT_THRESHOLD = 0.8; // seconds (increased from 0.5 to reduce corrections)
+const DRIFT_THRESHOLD = 0.25; // seconds (increased from 0.12)
 const PLAY_OFFSET = 0.35; // seconds (350ms future offset for play events)
 const DEFAULT_AUDIO_LATENCY = 0.08; // 80ms fallback if not measured
-const MICRO_DRIFT_THRESHOLD = 0.15; // seconds (increased from 0.08 to reduce micro-corrections)
-const MICRO_RATE_CAP = 0.005; // max playbackRate delta (reduced from 0.008 for gentler correction)
-const MICRO_CORRECTION_WINDOW = 800; // ms (increased from 500 for longer correction window)
-const DRIFT_JITTER_BUFFER = 10; // consecutive drift detections before correction (increased from 8)
-const RESYNC_COOLDOWN_MS = 5000; // minimum time between manual resyncs (increased from 3000)
+const MICRO_DRIFT_THRESHOLD = 0.04; // seconds (was 0.08)
+const MICRO_RATE_CAP = 0.015; // max playbackRate delta (was 0.03, reduced for gentler correction)
+const MICRO_CORRECTION_WINDOW = 300; // ms (was 500, shortened for quicker reset)
+const DRIFT_JITTER_BUFFER = 6; // consecutive drift detections before correction (increased from 4)
+const RESYNC_COOLDOWN_MS = 2000; // minimum time between manual resyncs
 const RESYNC_HISTORY_SIZE = 5; // number of recent resyncs to track
-const SMART_RESYNC_THRESHOLD = 0.8; // drift threshold for smart resync suggestion
+const SMART_RESYNC_THRESHOLD = 0.5; // drift threshold for smart resync suggestion
 // Micro drift correction constants
-const MICRO_DRIFT_MIN = 0.05; // 50ms (increased from 20ms to reduce corrections)
-const MICRO_DRIFT_MAX = 0.4;  // 400ms (increased from 250ms to reduce seeking)
-const MICRO_RATE_CAP_MICRO = 0.001; // max playbackRate delta for micro-correction (reduced from 0.002)
-const MIN_BUFFER_AHEAD = 2.0; // seconds, minimum buffer ahead to allow drift correction (increased from 1.0)
-
-// Adaptive drift correction constants
-const BASE_DRIFT_THRESHOLD = 0.8; // seconds (baseline, increased from 0.5)
-const BASE_MICRO_DRIFT_MIN = 0.05; // 50ms baseline (increased from 20ms)
-const BASE_MICRO_DRIFT_MAX = 0.4; // 400ms baseline (increased from 250ms)
-const BASE_MICRO_RATE_CAP = 0.005; // max playbackRate delta baseline (reduced from 0.008)
-
-// Device-specific multipliers
-const DEVICE_MULTIPLIERS = {
-  mobile: { threshold: 1.5, microMin: 1.2, microMax: 1.3, rateCap: 0.8 },
-  tablet: { threshold: 1.3, microMin: 1.1, microMax: 1.2, rateCap: 0.9 },
-  desktop: { threshold: 1.0, microMin: 1.0, microMax: 1.0, rateCap: 1.0 },
-  lowEnd: { threshold: 2.0, microMin: 1.5, microMax: 1.8, rateCap: 0.6 }
-};
-
-// Network condition multipliers
-const NETWORK_MULTIPLIERS = {
-  excellent: { threshold: 0.8, microMin: 0.8, microMax: 0.8, rateCap: 1.2 },
-  good: { threshold: 1.0, microMin: 1.0, microMax: 1.0, rateCap: 1.0 },
-  fair: { threshold: 1.3, microMin: 1.2, microMax: 1.3, rateCap: 0.8 },
-  poor: { threshold: 1.8, microMin: 1.5, microMax: 1.8, rateCap: 0.6 }
-};
-
-// Helper function to detect device type
-function detectDeviceType() {
-  const ua = navigator.userAgent.toLowerCase();
-  const isMobile = /mobile|android|iphone|ipad|ipod|blackberry|windows phone/i.test(ua);
-  const isTablet = /tablet|ipad/i.test(ua);
-  const isLowEnd = navigator.hardwareConcurrency <= 2 || navigator.deviceMemory <= 2;
-  
-  if (isLowEnd) return 'lowEnd';
-  if (isTablet) return 'tablet';
-  if (isMobile) return 'mobile';
-  return 'desktop';
-}
-
-// Helper function to assess network quality
-function assessNetworkQuality(rtt, jitter) {
-  if (rtt < 30 && jitter < 10) return 'excellent';
-  if (rtt < 80 && jitter < 25) return 'good';
-  if (rtt < 150 && jitter < 50) return 'fair';
-  return 'poor';
-}
-
-// Dynamic threshold calculation
-function calculateAdaptiveThresholds(rtt, jitter, audioLatency) {
-  const deviceType = detectDeviceType();
-  const networkQuality = assessNetworkQuality(rtt, jitter);
-  
-  const deviceMultiplier = DEVICE_MULTIPLIERS[deviceType];
-  const networkMultiplier = NETWORK_MULTIPLIERS[networkQuality];
-  
-  // Combine multipliers (geometric mean for better balance)
-  const combinedThreshold = Math.sqrt(deviceMultiplier.threshold * networkMultiplier.threshold);
-  const combinedMicroMin = Math.sqrt(deviceMultiplier.microMin * networkMultiplier.microMin);
-  const combinedMicroMax = Math.sqrt(deviceMultiplier.microMax * networkMultiplier.microMax);
-  const combinedRateCap = Math.sqrt(deviceMultiplier.rateCap * networkMultiplier.rateCap);
-  
-  // Additional latency-based adjustment
-  const latencyAdjustment = audioLatency ? Math.min(2.0, Math.max(0.5, audioLatency / 0.1)) : 1.0;
-  
-  return {
-    driftThreshold: BASE_DRIFT_THRESHOLD * combinedThreshold * latencyAdjustment,
-    microDriftMin: BASE_MICRO_DRIFT_MIN * combinedMicroMin,
-    microDriftMax: BASE_MICRO_DRIFT_MAX * combinedMicroMax,
-    microRateCap: BASE_MICRO_RATE_CAP * combinedRateCap,
-    deviceType,
-    networkQuality,
-    latencyAdjustment
-  };
-}
+const MICRO_DRIFT_MIN = 0.01; // 10ms
+const MICRO_DRIFT_MAX = 0.15;  // 150ms (was 0.1, increased to make seeking rarer)
+const MICRO_RATE_CAP_MICRO = 0.003; // max playbackRate delta for micro-correction
+const MIN_BUFFER_AHEAD = 0.5; // seconds, minimum buffer ahead to allow drift correction
 
 function isFiniteNumber(n) {
   return typeof n === 'number' && isFinite(n);
@@ -338,15 +267,6 @@ export default function AudioPlayer({
   const lastSyncSeq = useRef(-1);
   const [syncReady, setSyncReady] = useState(false);
   const [isBuffering, setIsBuffering] = useState(false);
-  
-  // Audio state management to prevent conflicts
-  const audioStateRef = useRef({
-    isUpdating: false,
-    lastUpdate: 0,
-    pendingUpdates: [],
-    correctionInProgress: false,
-    lastCorrectionTime: 0
-  });
 
   // Drift correction debug state (move here to ensure defined)
   const [driftCorrectionHistory, setDriftCorrectionHistory] = useState([]);
@@ -354,199 +274,47 @@ export default function AudioPlayer({
   const [lastCorrectionType, setLastCorrectionType] = useState('none');
   const [bufferedAhead, setBufferedAhead] = useState(0);
 
-  // Enhanced drift analytics and monitoring
-  const [driftAnalytics, setDriftAnalytics] = useState({
-    totalDrifts: 0,
-    correctedDrifts: 0,
-    averageDrift: 0,
-    maxDrift: 0,
-    deviceType: 'unknown',
-    networkQuality: 'unknown',
-    lastUpdate: Date.now()
-  });
-
-  // Enhanced drift history tracking
-  useEffect(() => {
-    if (!window._audioDriftHistory || window._audioDriftHistory.length === 0) return;
-    
-    const recentDrifts = window._audioDriftHistory.slice(-20);
-    const totalDrifts = recentDrifts.length;
-    const correctedDrifts = recentDrifts.filter(d => d.corrected).length;
-    const averageDrift = recentDrifts.reduce((sum, d) => sum + d.drift, 0) / totalDrifts;
-    const maxDrift = Math.max(...recentDrifts.map(d => d.drift));
-    
-    const currentThresholds = calculateAdaptiveThresholds(rtt || 0, jitter || 0, audioLatency || 0);
-    
-    setDriftAnalytics({
-      totalDrifts,
-      correctedDrifts,
-      averageDrift,
-      maxDrift,
-      deviceType: currentThresholds.deviceType,
-      networkQuality: currentThresholds.networkQuality,
-      lastUpdate: Date.now()
-    });
-  }, [rtt, jitter, audioLatency]);
-
-  // Enhanced drift reporting with analytics
-  const emitEnhancedDriftReport = useCallback((drift, expected, current, extra = {}) => {
-    if (socket && socket.emit && socket.sessionId && typeof drift === 'number') {
-      const currentThresholds = calculateAdaptiveThresholds(rtt || 0, jitter || 0, audioLatency || 0);
-      
-      socket.emit('drift_report', {
-        sessionId: socket.sessionId,
-        drift,
-        expected,
-        current,
-        clientId,
-        timestamp: Date.now(),
-        analytics: {
-          deviceType: currentThresholds.deviceType,
-          networkQuality: currentThresholds.networkQuality,
-          adaptiveThreshold: currentThresholds.driftThreshold,
-          rtt,
-          jitter,
-          audioLatency,
-          driftHistory: window._audioDriftHistory ? window._audioDriftHistory.slice(-5) : []
-        },
-        ...extra,
-      });
-    }
-  }, [socket, rtt, jitter, audioLatency, clientId]);
-
 // --- Drift correction helpers moved inside the component ---
 function microCorrectDrift(audio, drift, context = {}, updateDebug) {
   if (!audio) return;
-  
-  // Calculate adaptive thresholds based on current conditions
-  const adaptiveThresholds = calculateAdaptiveThresholds(
-    context.rtt || 0, 
-    context.jitter || 0, 
-    context.audioLatency || 0
-  );
-  
-  const { microDriftMin, microDriftMax, microRateCap } = adaptiveThresholds;
-  
-  if (Math.abs(drift) > microDriftMin && Math.abs(drift) < microDriftMax) {
-    // Enhanced rate calculation with predictive adjustment (more conservative)
-    const baseRate = 1 + Math.max(-microRateCap, Math.min(microRateCap, drift * 0.2)); // Reduced from 0.3
-    
-    // Predictive adjustment based on drift trend (more conservative)
-    const driftTrend = context.driftHistory ? calculateDriftTrend(context.driftHistory) : 0;
-    const predictiveAdjustment = Math.max(-0.0005, Math.min(0.0005, driftTrend * 0.02)); // Reduced from 0.001 and 0.05
-    
-    const finalRate = baseRate + predictiveAdjustment;
-    
+  if (Math.abs(drift) > MICRO_DRIFT_MIN && Math.abs(drift) < MICRO_DRIFT_MAX) {
+    let rate = 1 + Math.max(-MICRO_RATE_CAP, Math.min(MICRO_RATE_CAP, drift * 0.5));
     if (process.env.NODE_ENV !== 'production') {
-      console.log('[DriftCorrection] Enhanced microCorrectDrift', {
+      console.log('[DriftCorrection] microCorrectDrift', {
         drift,
-        baseRate,
-        predictiveAdjustment,
-        finalRate,
-        deviceType: adaptiveThresholds.deviceType,
-        networkQuality: adaptiveThresholds.networkQuality,
+        playbackRate: rate,
         jitter: context.jitter,
         audioLatency: context.audioLatency,
         rtt: context.rtt,
-        correction: 'enhanced-micro',
+        correction: 'micro',
         ...context
       });
     }
-    
-    if (typeof updateDebug === 'function') updateDebug('enhanced-micro', drift, { ...context, adaptiveThresholds });
-    
-    audio.playbackRate = finalRate;
-    
-    // Adaptive correction window based on network quality (longer for stability)
-    const correctionWindow = adaptiveThresholds.networkQuality === 'poor' ? 1200 : 800;
+    if (typeof updateDebug === 'function') updateDebug('micro', drift, context);
+    audio.playbackRate = rate;
     setTimeout(() => {
       audio.playbackRate = 1.0;
-    }, correctionWindow);
+    }, MICRO_CORRECTION_WINDOW); // use new constant
   } else {
     if (process.env.NODE_ENV !== 'production') {
       console.log('[DriftCorrection] microCorrectDrift skipped', {
         drift,
-        microDriftMin,
-        microDriftMax,
-        deviceType: adaptiveThresholds.deviceType,
-        networkQuality: adaptiveThresholds.networkQuality,
         jitter: context.jitter,
         audioLatency: context.audioLatency,
         rtt: context.rtt,
-        correction: 'enhanced-micro-skip',
+        correction: 'micro-skip',
         ...context
       });
     }
-    if (typeof updateDebug === 'function') updateDebug('enhanced-micro-skip', drift, { ...context, adaptiveThresholds });
+    if (typeof updateDebug === 'function') updateDebug('micro-skip', drift, context);
     audio.playbackRate = 1.0;
   }
 }
 
-// Enhanced helper function to calculate drift trend with linear regression and outlier filtering
-function calculateDriftTrend(driftHistory, options = {}) {
-  if (!Array.isArray(driftHistory) || driftHistory.length < 3) return 0;
-
-  // Configurable options
-  const {
-    windowSize = 8, // Use up to last 8 drifts for trend
-    outlierTrim = 0.18, // Trim top/bottom 18% as outliers
-    minRequired = 3, // Minimum required after trimming
-    useLinearRegression = true // Use regression for trend
-  } = options;
-
-  // Get recent drifts
-  const recent = driftHistory.slice(-windowSize);
-
-  // Outlier filtering (trim extremes)
-  const sorted = [...recent].sort((a, b) => a - b);
-  const trimCount = Math.floor(sorted.length * outlierTrim);
-  const filtered = sorted.slice(trimCount, sorted.length - trimCount);
-
-  if (filtered.length < minRequired) return 0;
-
-  // If not using regression, fallback to weighted average
-  if (!useLinearRegression || filtered.length < 3) {
-    // Weighted average: weight more recent drifts higher
-    const weights = filtered.map((_, i) => i + 1);
-    const sumWeights = weights.reduce((a, b) => a + b, 0);
-    const weightedSum = filtered.reduce((sum, drift, i) => sum + drift * weights[i], 0);
-    return weightedSum / sumWeights;
-  }
-
-  // Linear regression (least squares) to estimate trend (slope)
-  // x: time index (0 = oldest, N-1 = newest), y: drift value
-  const n = filtered.length;
-  const x = Array.from({ length: n }, (_, i) => i);
-  const y = filtered;
-  const meanX = x.reduce((a, b) => a + b, 0) / n;
-  const meanY = y.reduce((a, b) => a + b, 0) / n;
-  let num = 0, den = 0;
-  for (let i = 0; i < n; i++) {
-    num += (x[i] - meanX) * (y[i] - meanY);
-    den += (x[i] - meanX) ** 2;
-  }
-  const slope = den !== 0 ? num / den : 0;
-
-  // Optionally, scale the slope to match the original trend's magnitude
-  // (e.g., multiply by windowSize/2 to get a comparable value)
-  return slope * (n / 2);
-}
-
 function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
   if (!audio) return;
-  
   const drift = audio.currentTime - expected;
-  
-  // Calculate adaptive thresholds
-  const adaptiveThresholds = calculateAdaptiveThresholds(
-    context.rtt || 0, 
-    context.jitter || 0, 
-    context.audioLatency || 0
-  );
-  
-  const { microDriftMin, microDriftMax, driftThreshold } = adaptiveThresholds;
-  
-  // Enhanced buffer ahead calculation with adaptive minimum
+  // Prevent correction if buffer is low
   let bufferAhead = 0;
   try {
     const buf = audio.buffered;
@@ -557,120 +325,44 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
       }
     }
   } catch (e) {}
-  
-  // Enhanced buffer threshold based on network quality and audio state
-  const adaptiveBufferThreshold = adaptiveThresholds.networkQuality === 'poor' ? 3.0 : 2.0;
-  
-  // Additional check: don't correct if audio is buffering or stalled
-  if (audio.readyState < 3 || audio.networkState === 3) {
+  if (bufferAhead < MIN_BUFFER_AHEAD) {
     if (process.env.NODE_ENV !== 'production') {
-      console.log('[DriftCorrection] Skipped: audio not ready', { 
-        readyState: audio.readyState,
-        networkState: audio.networkState,
-        drift
-      });
+      console.log('[DriftCorrection] Skipped: buffer ahead too low', { bufferAhead, drift });
     }
-    if (typeof updateDebug === 'function') updateDebug('audio-not-ready', drift, { ...context, bufferAhead, adaptiveThresholds });
+    if (typeof updateDebug === 'function') updateDebug('buffer-skip', drift, { ...context, bufferAhead });
     return;
   }
-  
-  if (bufferAhead < adaptiveBufferThreshold) {
-    if (process.env.NODE_ENV !== 'production') {
-      console.log('[DriftCorrection] Skipped: buffer ahead too low', { 
-        bufferAhead, 
-        adaptiveBufferThreshold,
-        drift,
-        networkQuality: adaptiveThresholds.networkQuality
-      });
-    }
-    if (typeof updateDebug === 'function') updateDebug('buffer-skip', drift, { ...context, bufferAhead, adaptiveThresholds });
-    return;
-  }
-  
-  // Enhanced cooldown logic with adaptive timing
+  // Add cooldown after correction
   const now = Date.now();
-  const baseCooldown = 4000; // ms (increased from 2000ms to reduce corrections)
-  const adaptiveCooldown = baseCooldown * (adaptiveThresholds.networkQuality === 'poor' ? 2.5 : 2.0);
-  
-  if (lastCorrectionRef.current && now - lastCorrectionRef.current < adaptiveCooldown) {
+  if (lastCorrectionRef.current && now - lastCorrectionRef.current < CORRECTION_COOLDOWN) {
     if (process.env.NODE_ENV !== 'production') {
-      console.log('[DriftCorrection] Skipped: adaptive cooldown active', { 
-        lastCorrection: lastCorrectionRef.current, 
-        now,
-        adaptiveCooldown,
-        networkQuality: adaptiveThresholds.networkQuality
-      });
+      console.log('[DriftCorrection] Skipped: cooldown active', { lastCorrection: lastCorrectionRef.current, now });
     }
-    if (typeof updateDebug === 'function') updateDebug('adaptive-cooldown-skip', drift, { ...context, bufferAhead, adaptiveThresholds });
+    if (typeof updateDebug === 'function') updateDebug('cooldown-skip', drift, { ...context, bufferAhead });
     return;
   }
-  
-  // Enhanced correction logic with adaptive thresholds
-  if (Math.abs(drift) > microDriftMin && Math.abs(drift) < microDriftMax) {
-    // Only apply micro-correction if not already correcting
-    if (!audioStateRef.current.correctionInProgress) {
-      audioStateRef.current.correctionInProgress = true;
-      audioStateRef.current.lastCorrectionTime = now;
-      
-      microCorrectDrift(audio, drift, { ...context, driftHistory: window._audioDriftHistory }, updateDebug);
-      lastCorrectionRef.current = now;
-      
-      // Reset correction flag after a delay
-      setTimeout(() => {
-        audioStateRef.current.correctionInProgress = false;
-      }, 1000);
-    }
+  if (Math.abs(drift) > MICRO_DRIFT_MIN && Math.abs(drift) < MICRO_DRIFT_MAX) {
+    microCorrectDrift(audio, drift, context, updateDebug);
+    lastCorrectionRef.current = now;
     return;
   }
-  
-  if (Math.abs(drift) >= microDriftMax) {
+  if (Math.abs(drift) >= MICRO_DRIFT_MAX) {
     if (process.env.NODE_ENV !== 'production') {
-      console.log('[DriftCorrection] Enhanced hard seek', {
+      console.log('[DriftCorrection] Hard seek', {
         drift,
         expected,
         current: audio.currentTime,
-        deviceType: adaptiveThresholds.deviceType,
-        networkQuality: adaptiveThresholds.networkQuality,
         jitter: context.jitter,
         audioLatency: context.audioLatency,
         rtt: context.rtt,
-        correction: 'enhanced-seek',
+        correction: 'seek',
         ...context
       });
     }
-    if (typeof updateDebug === 'function') updateDebug('enhanced-seek', drift, { ...context, bufferAhead, adaptiveThresholds });
-    
-    // Enhanced seeking with gradual approach for large drifts
-    if (Math.abs(drift) > 1.0) {
-      // For very large drifts, seek gradually to avoid jarring jumps
-      const targetTime = expected;
-      const currentTime = audio.currentTime;
-      const step = (targetTime - currentTime) / 3;
-      
-      setTimeout(() => {
-        setCurrentTimeSafely(audio, currentTime + step, (val) => {
-          audio.currentTime = val;
-        });
-      }, 50);
-      
-      setTimeout(() => {
-        setCurrentTimeSafely(audio, currentTime + step * 2, (val) => {
-          audio.currentTime = val;
-        });
-      }, 100);
-      
-      setTimeout(() => {
-        setCurrentTimeSafely(audio, targetTime, (val) => {
-          audio.currentTime = val;
-        });
-      }, 150);
-    } else {
-      // Direct seek for smaller drifts
-      setCurrentTimeSafely(audio, expected, (val) => {
-        audio.currentTime = val;
-      });
-    }
-    
+    if (typeof updateDebug === 'function') updateDebug('seek', drift, { ...context, bufferAhead });
+    setCurrentTimeSafely(audio, expected, (val) => {
+      audio.currentTime = val;
+    });
     audio.playbackRate = 1.0;
     lastCorrectionRef.current = now;
   } else {
@@ -679,8 +371,6 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
         drift,
         expected,
         current: audio.currentTime,
-        deviceType: adaptiveThresholds.deviceType,
-        networkQuality: adaptiveThresholds.networkQuality,
         jitter: context.jitter,
         audioLatency: context.audioLatency,
         rtt: context.rtt,
@@ -688,7 +378,7 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
         ...context
       });
     }
-    if (typeof updateDebug === 'function') updateDebug('none', drift, { ...context, bufferAhead, adaptiveThresholds });
+    if (typeof updateDebug === 'function') updateDebug('none', drift, { ...context, bufferAhead });
   }
 }
   // Add at the top of the component
@@ -891,26 +581,16 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
         setAudioLatency(latency);
         playRequestedAt.current = null;
       }
-      // Prevent state conflicts during sync operations
-      if (!audioStateRef.current.isUpdating) {
-        setIsPlaying(true);
-        setIsBuffering(false);
-      }
+      setIsBuffering(false);
     };
     const handleWaiting = () => {
-      // Don't set buffering if we're in the middle of a sync operation
-      if (!audioStateRef.current.isUpdating) {
-        setIsBuffering(true);
-      }
+      setIsBuffering(true);
       if (process.env.NODE_ENV !== 'production') {
         console.log('[Buffer] Audio waiting event: likely buffer underrun');
       }
     };
     const handleStalled = () => {
-      // Don't set buffering if we're in the middle of a sync operation
-      if (!audioStateRef.current.isUpdating) {
-        setIsBuffering(true);
-      }
+      setIsBuffering(true);
       if (process.env.NODE_ENV !== 'production') {
         console.log('[Buffer] Audio stalled event: network issue or buffer underrun');
       }
@@ -964,12 +644,9 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
       syncTimeout = setTimeout(() => setSyncStatus('In Sync'), duration);
     };
 
-    // Enhanced drift report with ML context
+    // Helper: emit drift report with more context
     const emitDriftReport = (drift, expected, current, extra = {}) => {
       if (socket && socket.emit && socket.sessionId && typeof drift === 'number') {
-        const deviceType = detectDeviceType();
-        const networkQuality = assessNetworkQuality(rtt || 0, jitter || 0);
-        
         socket.emit('drift_report', {
           sessionId: socket.sessionId,
           drift,
@@ -977,13 +654,6 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
           current,
           clientId,
           timestamp: Date.now(),
-          deviceType,
-          networkQuality,
-          rtt,
-          jitter,
-          audioLatency: measuredAudioLatency,
-          networkLatency: propNetworkLatency,
-          adaptiveThresholds,
           ...extra,
         });
       }
@@ -1006,23 +676,6 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
         return;
       }
       if (typeof syncSeq === 'number') lastSyncSeq.current = syncSeq;
-      
-      // Prevent audio state conflicts
-      const now = Date.now();
-      if (audioStateRef.current.isUpdating && now - audioStateRef.current.lastUpdate < 100) {
-        // Queue this update if another is in progress
-        audioStateRef.current.pendingUpdates.push({
-          isPlaying,
-          timestamp,
-          lastUpdated,
-          serverTime,
-          syncSeq
-        });
-        return;
-      }
-      
-      audioStateRef.current.isUpdating = true;
-      audioStateRef.current.lastUpdate = now;
       // Defensive: check for valid timestamp and lastUpdated
       if (
         typeof timestamp !== 'number' ||
@@ -1040,12 +693,12 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
         return;
       }
       // Use serverTime if present, else fallback
-      let serverNow = null;
+      let now = null;
       if (typeof serverTime === 'number' && isFinite(serverTime)) {
-        serverNow = serverTime;
+        now = serverTime;
       } else {
-        serverNow = getNow(getServerTime);
-        console.warn('SYNC_STATE: serverTime missing, using getNow(getServerTime)', { serverNow });
+        now = getNow(getServerTime);
+        console.warn('SYNC_STATE: serverTime missing, using getNow(getServerTime)', { now });
       }
       // Compensate for measured audio latency, test latency, and network latency
       const outputLatency = Math.min(
@@ -1054,60 +707,22 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
       );
       const networkComp = networkLatency ? networkLatency / 2 : 0;
       const rttComp = rtt ? rtt / 2000 : 0; // ms to s, one-way
-      let expected = timestamp
-        + (serverNow - lastUpdated) / 1000
+      const expected = timestamp
+        + (now - lastUpdated) / 1000
         - (isFinite(outputLatency) ? outputLatency : 0)
         - networkComp
         + rttComp
         + smoothedOffset;
-      // Clamp expected to valid range before checking for invalid values
       if (!isFiniteNumber(expected)) {
-        console.warn('Invalid expected time (NaN), pausing audio', {
-          expected,
-          state: { isPlaying, timestamp, lastUpdated, ctrlId, trackId, meta, serverTime, syncSeq },
-          now: Date.now(),
-          lastUpdated,
-          timestamp,
-          outputLatency,
-          networkComp,
-          rttComp,
-          smoothedOffset
-        });
-        if (!audio.paused) audio.pause();
-        if (isPlaying) setIsPlaying(false);
-        if (!audio.paused || isPlaying) setLastSync(Date.now());
+        console.warn('SYNC_STATE: expected is not finite', { expected, timestamp, lastUpdated, now });
+        showSyncStatus('Sync failed');
         return;
       }
-      if (expected < 0) {
-        expected = 0;
-      }
-      if (audio.duration && isFinite(audio.duration)) {
-        expected = Math.max(0, Math.min(expected, audio.duration));
-      }
-      if (expected < 0 || !isFiniteNumber(expected)) {
-        console.warn('Invalid expected time after clamping, pausing audio', {
-          expected,
-          state: { isPlaying, timestamp, lastUpdated, ctrlId, trackId, meta, serverTime, syncSeq },
-          now: Date.now(),
-          lastUpdated,
-          timestamp,
-          outputLatency,
-          networkComp,
-          rttComp,
-          smoothedOffset
-        });
-        if (!audio.paused) audio.pause();
-        if (isPlaying) setIsPlaying(false);
-        if (!audio.paused || isPlaying) setLastSync(Date.now());
-        return;
-      }
-      let safeExpected = expected;
-      // Always use safeExpected for seeking and playback
-      const drift = Math.abs(audio.currentTime - safeExpected);
+      const drift = Math.abs(audio.currentTime - expected);
 
-      // Enhanced: keep drift history for analytics (last 20 drifts with correction status)
+      // Enhanced: keep drift history for analytics (last 10 drifts)
       if (!window._audioDriftHistory) window._audioDriftHistory = [];
-      const driftEntry = {
+      window._audioDriftHistory.push({
         drift,
         current: audio.currentTime,
         expected,
@@ -1115,34 +730,22 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
         isPlaying,
         ctrlId,
         trackId,
-        corrected: false, // Will be set to true if correction is applied
-        threshold: adaptiveThreshold,
-        deviceType: adaptiveThresholds.deviceType,
-        networkQuality: adaptiveThresholds.networkQuality
-      };
-      window._audioDriftHistory.push(driftEntry);
-      if (window._audioDriftHistory.length > 20) window._audioDriftHistory.shift();
+      });
+      if (window._audioDriftHistory.length > 10) window._audioDriftHistory.shift();
 
-      // Enhanced: show drift in UI if large (using adaptive threshold)
-      if (drift > adaptiveThreshold) {
+      // Enhanced: show drift in UI if large
+      if (drift > DRIFT_THRESHOLD) {
         driftCountRef.current += 1;
         if (driftCountRef.current >= DRIFT_JITTER_BUFFER) {
           showSyncStatus('Drifted', 1000);
           maybeCorrectDrift(
             audio,
             expected,
-            { jitter, audioLatency, rtt, drift, adaptiveThresholds },
+            { jitter, audioLatency, rtt, drift },
             (type, driftVal, ctx) => {
               setDriftCorrectionCount(c => c + 1);
               setLastCorrectionType(type);
               setDriftCorrectionHistory(h => [{ type, drift: driftVal, ctx, ts: Date.now() }, ...h.slice(0, 9)]);
-              
-              // Mark the most recent drift entry as corrected
-              if (window._audioDriftHistory && window._audioDriftHistory.length > 0) {
-                const lastEntry = window._audioDriftHistory[window._audioDriftHistory.length - 1];
-                lastEntry.corrected = true;
-                lastEntry.correctionType = type;
-              }
             }
           );
           setSyncStatus('Re-syncing...');
@@ -1152,7 +755,7 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
           if (typeof socket?.forceTimeSync === 'function') {
             socket.forceTimeSync();
           }
-          emitEnhancedDriftReport(drift, expected, audio.currentTime, { ctrlId, trackId, meta });
+          emitDriftReport(drift, expected, audio.currentTime, { ctrlId, trackId, meta });
           driftCountRef.current = 0;
         }
       } else {
@@ -1162,107 +765,30 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
 
       setIsPlaying(isPlaying);
 
-      // Enhanced play/pause with conflict resolution
+      // Only play/pause if state differs
       if (isPlaying && audio.paused) {
-        // Check if a play request is already in progress
-        const now = Date.now();
-        if (now - playRequestedAt.current < 100) {
-          // Play request was made recently, don't interfere
-          console.debug('SYNC_STATE: Skipping play - recent play request in progress');
-        } else {
-          playRequestedAt.current = now;
-          audio.play().catch(e => {
-            // Suppress AbortError (play() interrupted by pause())
-            if (e && e.name === 'AbortError') {
-              console.debug('SYNC_STATE: Play request aborted (likely by pause)');
-              return;
-            }
-            console.warn('SYNC_STATE: failed to play audio', e);
-          });
-        }
+        audio.play().catch(e => {
+          console.warn('SYNC_STATE: failed to play audio', e);
+        });
       } else if (!isPlaying && !audio.paused) {
-        // Check if we should pause (avoid interrupting recent play requests)
-        const now = Date.now();
-        if (now - playRequestedAt.current < 50) {
-          // Very recent play request, delay pause slightly
-          setTimeout(() => {
-            if (!isPlaying) {
-              audio.pause();
-            }
-          }, 50);
-        } else {
-          audio.pause();
-        }
+        audio.pause();
+        // Do not seek to correct drift if paused
       }
       setLastSync(Date.now());
       setSyncReady(true);
-      
-      // Process any pending updates
-      setTimeout(() => {
-        audioStateRef.current.isUpdating = false;
-        if (audioStateRef.current.pendingUpdates.length > 0) {
-          const nextUpdate = audioStateRef.current.pendingUpdates.shift();
-          if (nextUpdate) {
-            handleSyncState(nextUpdate);
-          }
-        }
-      }, 50);
-    };
-
-    // ML-based sync optimization handler
-    const handleSyncOptimization = (optimization) => {
-      if (!optimization || !optimization.sessionId) return;
-      
-      const { optimalIntervals, driftPatterns, mlInsights } = optimization;
-      
-      // Store optimization data for local use
-      if (!window._mlSyncOptimization) {
-        window._mlSyncOptimization = {};
-      }
-      window._mlSyncOptimization[optimization.sessionId] = optimization;
-      
-      // Log ML insights in development
-      if (process.env.NODE_ENV === 'development') {
-        console.log('[ML] Sync optimization received:', {
-          sessionId: optimization.sessionId,
-          optimalIntervals,
-          driftPatterns,
-          mlInsights
-        });
-      }
-      
-      // Update local sync behavior based on ML insights
-      if (mlInsights && mlInsights.avgConfidence > 0.7) {
-        // High confidence predictions - adjust local thresholds
-        const clientInterval = optimalIntervals[clientId];
-        if (clientInterval && clientInterval < BASE_SYNC_INTERVAL) {
-          // More aggressive sync for this client
-          setAdaptiveThresholds(prev => ({
-            ...prev,
-            driftThreshold: prev.driftThreshold * 0.8,
-            microDriftMax: prev.microDriftMax * 0.8
-          }));
-        }
-      }
     };
 
     socket.on('sync_state', handleSyncState);
-    socket.on('sync_optimization', handleSyncOptimization);
 
     return () => {
       socket.off('sync_state', handleSyncState);
-      socket.off('sync_optimization', handleSyncOptimization);
       if (syncTimeout) clearTimeout(syncTimeout);
       if (resyncTimeout) clearTimeout(resyncTimeout);
     };
   }, [socket, audioLatency, getServerTime, clientId, rtt, smoothedOffset, testLatency, networkLatency]);
 
-  // --- Enhanced Adaptive Drift Threshold ---
-  const adaptiveThresholds = useMemo(() => 
-    calculateAdaptiveThresholds(rtt || 0, jitter || 0, audioLatency || 0), 
-    [rtt, jitter, audioLatency]
-  );
-  const adaptiveThreshold = adaptiveThresholds.driftThreshold;
+  // --- Adaptive Drift Threshold ---
+  const adaptiveThreshold = Math.max(0.12, (jitter || 0) * 2, (audioLatency || 0) * 2);
 
   // Enhanced periodic drift check (for followers)
   useEffect(() => {
@@ -1410,55 +936,26 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
         );
         const networkComp = networkLatency ? networkLatency / 2 : 0;
         const rttComp = rtt ? rtt / 2000 : 0; // ms to s, one-way
-        let expected = state.timestamp + (now - state.lastUpdated) / 1000 - (isFinite(outputLatency) ? outputLatency : 0) - networkComp + rttComp + smoothedOffset;
-        // Clamp expected to valid range before checking for invalid values
-        if (!isFiniteNumber(expected)) {
-          console.warn('Invalid expected time (NaN), pausing audio', {
-            expected,
-            state: { isPlaying: state.isPlaying, timestamp: state.timestamp, lastUpdated: state.lastUpdated, ctrlId: state.controllerId, trackId: state.trackId, meta: state.meta, serverTime: state.serverTime, syncSeq: state.syncSeq },
-            now: Date.now(),
-            lastUpdated: state.lastUpdated,
-            timestamp: state.timestamp,
-            outputLatency,
-            networkComp,
-            rttComp,
-            smoothedOffset
-          });
-          if (!audio.paused) audio.pause();
-          if (isPlaying) setIsPlaying(false);
-          if (!audio.paused || isPlaying) setLastSync(Date.now());
+        const expected = state.timestamp + (now - state.lastUpdated) / 1000 - (isFinite(outputLatency) ? outputLatency : 0) - networkComp + rttComp + smoothedOffset;
+        if (!isFiniteNumber(expected) || expected < 0) {
+          console.warn('Invalid expected time, pausing audio', { expected, state });
+          audio.pause();
+          setIsPlaying(false);
+          setLastSync(Date.now());
           return;
         }
-        let safeExpected = expected;
-        if (safeExpected < 0) {
-          safeExpected = 0;
-        }
-        if (audio.duration && isFinite(audio.duration)) {
-          safeExpected = Math.max(0, Math.min(safeExpected, audio.duration));
-        }
-        if (safeExpected < 0 || !isFiniteNumber(safeExpected)) {
-          console.warn('Invalid expected time after clamping, pausing audio', {
-            expected: safeExpected,
-            state: { isPlaying: state.isPlaying, timestamp: state.timestamp, lastUpdated: state.lastUpdated, ctrlId: state.controllerId, trackId: state.trackId, meta: state.meta, serverTime: state.serverTime, syncSeq: state.syncSeq },
-            now: Date.now(),
-            lastUpdated: state.lastUpdated,
-            timestamp: state.timestamp,
-            outputLatency,
-            networkComp,
-            rttComp,
-            smoothedOffset
-          });
-          if (!audio.paused) audio.pause();
-          if (isPlaying) setIsPlaying(false);
-          if (!audio.paused || isPlaying) setLastSync(Date.now());
-          return;
-        }
-        // Always use safeExpected for seeking and playback
-        const drift = Math.abs(audio.currentTime - safeExpected);
 
         // Use advanced time sync
         const syncedNow = getNow(getServerTime);
         const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000 + rttComp + smoothedOffset;
+
+        // Clamp expectedSynced to [0, duration] if possible
+        let safeExpected = expectedSynced;
+        if (audio.duration && isFinite(audio.duration)) {
+          safeExpected = Math.max(0, Math.min(expectedSynced, audio.duration));
+        } else {
+          safeExpected = Math.max(0, expectedSynced);
+        }
 
         console.log('Syncing audio to', {
           expectedSynced,
@@ -1475,29 +972,12 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
           playRequestedAt.current = Date.now();
           // Defensive: try/catch for play() (may throw in some browsers)
           audio.play().catch((err) => {
-            // Suppress AbortError (play() interrupted by pause())
-            if (err && err.name === 'AbortError') {
-              console.debug('sync_request: Play request aborted (likely by pause)');
-              return;
-            }
             console.warn('audio.play() failed on sync_request', err);
           });
         } else {
-          // Check if we should pause (avoid interrupting recent play requests)
-          const now = Date.now();
-          if (now - playRequestedAt.current < 50) {
-            // Very recent play request, delay pause slightly
-            setTimeout(() => {
-              if (!state.isPlaying) {
-                audio.pause();
-                setCurrentTimeSafely(audio, safeExpected, setCurrentTime);
-              }
-            }, 50);
-          } else {
-            // Ensure audio is definitely paused and reset to the expected time
-            audio.pause();
-            setCurrentTimeSafely(audio, safeExpected, setCurrentTime);
-          }
+          // Ensure audio is definitely paused and reset to the expected time
+          audio.pause();
+          setCurrentTimeSafely(audio, safeExpected, setCurrentTime);
         }
         setLastSync(Date.now());
       } catch (err) {
@@ -1595,10 +1075,7 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
       emitPlay();
     } catch (err) {
       // Suppress AbortError (play() interrupted by pause())
-      if (err && err.name === 'AbortError') {
-        console.debug('[AudioPlayer][handlePlay] Play request aborted (likely by pause)');
-        return;
-      }
+      if (err && err.name === 'AbortError') return;
       setIsPlaying(false);
       if (process.env.NODE_ENV === 'development') {
         // eslint-disable-next-line no-console
@@ -1772,52 +1249,21 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
         );
         const networkComp = networkLatency ? networkLatency / 2 : 0;
         const rttComp = rtt ? rtt / 2000 : 0; // ms to s, one-way
-        let expected = state.timestamp + (now - state.lastUpdated) / 1000 - (isFinite(outputLatency) ? outputLatency : 0) - networkComp + rttComp + smoothedOffset;
-        // Clamp expected to valid range before checking for invalid values
-        if (!isFiniteNumber(expected)) {
-          console.warn('Invalid expected time (NaN), pausing audio', {
-            expected,
-            state: { isPlaying: state.isPlaying, timestamp: state.timestamp, lastUpdated: state.lastUpdated, ctrlId: state.controllerId, trackId: state.trackId, meta: state.meta, serverTime: state.serverTime, syncSeq: state.syncSeq },
-            now: Date.now(),
-            lastUpdated: state.lastUpdated,
-            timestamp: state.timestamp,
-            outputLatency,
-            networkComp,
-            rttComp,
-            smoothedOffset
-          });
-          if (!audio.paused) audio.pause();
-          if (isPlaying) setIsPlaying(false);
-          if (!audio.paused || isPlaying) setLastSync(Date.now());
+        const expected = state.timestamp + (now - state.lastUpdated) / 1000 - (isFinite(outputLatency) ? outputLatency : 0) - networkComp + rttComp + smoothedOffset;
+        if (!isFiniteNumber(expected) || expected < 0) {
+          setSyncStatus('Sync failed: Bad expected time');
+          setTimeout(() => setSyncStatus('In Sync'), 1500);
+          setResyncInProgress(false);
+          updateResyncHistory('failed', 0, 'Invalid expected time', syncStateEnd - syncStateStart);
           return;
         }
+        // Clamp expected to [0, duration] if possible
         let safeExpected = expected;
-        if (safeExpected < 0) {
-          safeExpected = 0;
-        }
         if (audio.duration && isFinite(audio.duration)) {
-          safeExpected = Math.max(0, Math.min(safeExpected, audio.duration));
+          safeExpected = Math.max(0, Math.min(expected, audio.duration));
+        } else {
+          safeExpected = Math.max(0, expected);
         }
-        if (safeExpected < 0 || !isFiniteNumber(safeExpected)) {
-          console.warn('Invalid expected time after clamping, pausing audio', {
-            expected: safeExpected,
-            state: { isPlaying: state.isPlaying, timestamp: state.timestamp, lastUpdated: state.lastUpdated, ctrlId: state.controllerId, trackId: state.trackId, meta: state.meta, serverTime: state.serverTime, syncSeq: state.syncSeq },
-            now: Date.now(),
-            lastUpdated: state.lastUpdated,
-            timestamp: state.timestamp,
-            outputLatency,
-            networkComp,
-            rttComp,
-            smoothedOffset
-          });
-          if (!audio.paused) audio.pause();
-          if (isPlaying) setIsPlaying(false);
-          if (!audio.paused || isPlaying) setLastSync(Date.now());
-          return;
-        }
-        // Always use safeExpected for seeking and playback
-        const drift = Math.abs(audio.currentTime - safeExpected);
-
         // Log drift before correction
         const driftBefore = Math.abs(audio.currentTime - safeExpected);
         // Seek audio element
@@ -1971,30 +1417,13 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
     }
   }, []);
 
-  // Animation ref to prevent multiple animation loops
-  const animationRef = useRef(null);
-  const isAnimatingRef = useRef(false);
-
   // Smoothly animate displayedCurrentTime toward audio.currentTime
   useEffect(() => {
-    // Cancel any existing animation
-    if (animationRef.current) {
-      cancelAnimationFrame(animationRef.current);
-      animationRef.current = null;
-    }
-    
     setDisplayedCurrentTime(0); // Immediately reset timer visually on track change
-    isAnimatingRef.current = true;
-    
+    let raf;
     const animate = () => {
-      if (!isAnimatingRef.current) return;
-      
       const audio = audioRef.current;
-      if (!audio) {
-        isAnimatingRef.current = false;
-        return;
-      }
-      
+      if (!audio) return;
       const actual = audio.currentTime;
       setDisplayedCurrentTime(prev => {
         // If the difference is extremely tiny, snap to actual
@@ -2002,19 +1431,10 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
         // Ultra-smooth lerp (smaller factor)
         return prev + (actual - prev) * 0.10;
       });
-      
-      animationRef.current = requestAnimationFrame(animate);
+      raf = requestAnimationFrame(animate);
     };
-    
-    animationRef.current = requestAnimationFrame(animate);
-    
-    return () => {
-      isAnimatingRef.current = false;
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
-        animationRef.current = null;
-      }
-    };
+    raf = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(raf);
   }, [audioUrl, currentTrack?.url]);
 
   // Reset playback position to start when track changes
@@ -2115,71 +1535,55 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
   const [lastAutoResyncTime, setLastAutoResyncTime] = useState(0);
   const persistentDriftCountRef = useRef(0);
 
-  // Use a ref to track the last drift check to prevent excessive updates
-  const lastDriftCheckRef = useRef(0);
-  const DRIFT_CHECK_INTERVAL = 100; // ms, minimum time between drift checks
-
   useEffect(() => {
-    const now = Date.now();
-    if (now - lastDriftCheckRef.current < DRIFT_CHECK_INTERVAL) return;
-    lastDriftCheckRef.current = now;
-    
     if (typeof displayedCurrentTime !== 'number' || typeof currentTime !== 'number') return;
     const drift = Math.abs(displayedCurrentTime - currentTime);
-    
     setDriftHistory(prev => {
       const newHistory = [...prev, drift].slice(-PERSISTENT_DRIFT_WINDOW);
-      
-      // Outlier filtering for persistent drift (using the new history)
-      const med = median(newHistory);
-      const deviation = mad(newHistory, med);
-      const filteredDrifts = newHistory.filter(d => Math.abs(d - med) <= 2 * deviation);
-      
-      if (drift > adaptiveThreshold) {
-        persistentDriftCountRef.current += 1;
-        if (
-          persistentDriftCountRef.current >= PERSISTENT_DRIFT_LIMIT &&
-          !autoResyncTriggered &&
-          now - lastAutoResyncTime > AUTO_RESYNC_COOLDOWN &&
-          filteredDrifts.filter(d => d > adaptiveThreshold).length >= Math.floor(PERSISTENT_DRIFT_WINDOW * 0.7)
-        ) {
-          // Use setTimeout to avoid state updates during render
-          setTimeout(() => {
-            setSyncStatus('Auto-resyncing...');
-            setAutoResyncTriggered(true);
-            setLastAutoResyncTime(Date.now());
-            if (typeof socket?.triggerResync === 'function') {
-              socket.triggerResync();
-            }
-            // Enhanced logging for persistent drift
-            if (process.env.NODE_ENV === 'production') {
-              fetch('/log/drift', {
-                method: 'POST',
-                body: JSON.stringify({
-                  clientId,
-                  drift,
-                  driftHistory: filteredDrifts.slice(),
-                  type: 'persistent',
-                  timestamp: Date.now(),
-                  threshold: adaptiveThreshold,
-                  autoResync: true
-                }),
-                headers: { 'Content-Type': 'application/json' }
-              }).catch(() => {});
-            }
-            persistentDriftCountRef.current = 0;
-          }, 0);
-        }
-      } else {
-        persistentDriftCountRef.current = 0;
-        if (autoResyncTriggered) {
-          setTimeout(() => setAutoResyncTriggered(false), 0);
-        }
-      }
-      
       return newHistory;
     });
-  }, [displayedCurrentTime, currentTime, adaptiveThreshold, socket, clientId, autoResyncTriggered, lastAutoResyncTime]);
+    // Outlier filtering for persistent drift
+    const med = median(driftHistory);
+    const deviation = mad(driftHistory, med);
+    const filteredDrifts = driftHistory.filter(d => Math.abs(d - med) <= 2 * deviation);
+    const now = Date.now();
+    if (drift > adaptiveThreshold) {
+      persistentDriftCountRef.current += 1;
+      if (
+        persistentDriftCountRef.current >= PERSISTENT_DRIFT_LIMIT &&
+        !autoResyncTriggered &&
+        now - lastAutoResyncTime > AUTO_RESYNC_COOLDOWN &&
+        filteredDrifts.filter(d => d > adaptiveThreshold).length >= Math.floor(PERSISTENT_DRIFT_WINDOW * 0.7)
+      ) {
+        setSyncStatus('Auto-resyncing...');
+        setAutoResyncTriggered(true);
+        setLastAutoResyncTime(now);
+        if (typeof socket?.triggerResync === 'function') {
+          socket.triggerResync();
+        }
+        // Enhanced logging for persistent drift
+        if (process.env.NODE_ENV === 'production') {
+          fetch('/log/drift', {
+            method: 'POST',
+            body: JSON.stringify({
+              clientId,
+              drift,
+              driftHistory: filteredDrifts.slice(),
+              type: 'persistent',
+              timestamp: now,
+              threshold: adaptiveThreshold,
+              autoResync: true
+            }),
+            headers: { 'Content-Type': 'application/json' }
+          }).catch(() => {});
+        }
+        persistentDriftCountRef.current = 0;
+      }
+    } else {
+      persistentDriftCountRef.current = 0;
+      setAutoResyncTriggered(false);
+    }
+  }, [displayedCurrentTime, currentTime, adaptiveThreshold, socket, clientId]);
 
   // --- Debug panel for latency, offset, RTT, drift (dev only) ---
   const debugPanel = process.env.NODE_ENV !== 'production' ? (
@@ -2249,6 +1653,31 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
         </div>
       );
     }
+    // Album art logic (same as desktop)
+    let albumArt = currentTrack?.albumArtUrl;
+    const isAbsoluteUrl = (url) => /^https?:\/\//i.test(url) || url?.startsWith('data:');
+    const defaultAlbumArtSvg = encodeURIComponent(`
+      <svg width="128" height="128" xmlns="http://www.w3.org/2000/svg">
+        <rect width="100%" height="100%" rx="24" fill="#27272a"/>
+        <g>
+          <circle cx="64" cy="64" r="40" fill="#52525b"/>
+          <circle cx="64" cy="64" r="24" fill="#a3a3a3"/>
+          <rect x="54" y="44" width="20" height="40" rx="6" fill="#27272a"/>
+        </g>
+      </svg>
+    `);
+    const defaultAlbumArt = `data:image/svg+xml,${defaultAlbumArtSvg}`;
+    if (albumArt) {
+      if (albumArt.startsWith('/audio/')) {
+        const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
+        albumArt = backendUrl.replace(/\/$/, '') + albumArt;
+      } else if (!isAbsoluteUrl(albumArt)) {
+        const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
+        albumArt = backendUrl.replace(/\/$/, '') + '/' + albumArt.replace(/^\//, '');
+      }
+    } else {
+      albumArt = defaultAlbumArt;
+    }
     return (
       <div className="fixed bottom-20 left-1/2 w-[95vw] max-w-sm z-40 pointer-events-auto -translate-x-1/2">
         {socketDisconnected && (
@@ -2258,283 +1687,312 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
         )}
         <div className={`${shouldAnimate ? 'animate-slide-up-from-bottom' : 'opacity-0 translate-y-full'}`}>
           <div className="bg-neutral-900/90 backdrop-blur-lg rounded-2xl shadow-2xl p-3 flex flex-col gap-2 border border-neutral-800">
-          {/* Audio element (hidden) */}
-          {audioUrl && (
-            <audio
-              ref={audioRef}
-              src={audioUrl}
-              preload="auto"
-              style={{ display: 'none' }}
-              onLoadedMetadata={() => {
-                const audio = audioRef.current;
-                if (audio && !isController && !isPlaying) {
-                  audio.pause();
-                  setCurrentTime(0);
-                }
-              }}
-            />
-          )}
-          {/* Top: Track info and sync status - Enhanced for Mobile */}
-          <div className="flex items-center justify-between mb-1 px-1">
-            {/* Left: SyncStatus and status text */}
-            <div className="flex items-center gap-2 w-fit min-w-0" style={{ minHeight: 28, height: 28, maxWidth: '100%' }}>
-              <SyncStatus 
-                status={syncStatus} 
-                mlInsights={window._mlSyncOptimization?.[socket?.sessionId]?.mlInsights}
+            {/* Audio element (hidden) */}
+            {audioUrl && (
+              <audio
+                ref={audioRef}
+                src={audioUrl}
+                preload="auto"
+                style={{ display: 'none' }}
+                onLoadedMetadata={() => {
+                  const audio = audioRef.current;
+                  if (audio && !isController && !isPlaying) {
+                    audio.pause();
+                    setCurrentTime(0);
+                  }
+                }}
               />
-            </div>
-            <button
-              className={`text-[11px] font-mono rounded px-1.5 py-0.5 flex items-center justify-center transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed
-                ${resyncInProgress
-                  ? 'bg-white-600 text-white border-blue-700 animate-pulse'
-                  : smartResyncSuggestion
-                    ? 'bg-orange-600 hover:bg-orange-700 text-white border-orange-700 animate-bounce'
-                    : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-300 border border-neutral-700'}
-              `}
-              style={{ minHeight: 24, minWidth: 90, display: 'inline-flex', borderRadius: 6, height: '100%', alignItems: 'center', justifyContent: 'center' }}
-              onClick={handleResync}
-              disabled={disabled || !audioUrl || resyncInProgress || socketDisconnected}
-              aria-label="Re-sync"
-              title={
-                resyncInProgress
-                  ? 'Syncing with server...'
-                  : smartResyncSuggestion
-                    ? 'High drift detected! Recommended to sync now.'
-                    : 'Re-sync audio with server'
-              }
-            >
-              {resyncInProgress ? (
-                <>
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin mr-2">
-                    <path d="M21 12a9 9 0 11-6.219-8.56"></path>
-                  </svg>
-                  <span>Syncing...</span>
-                </>
-              ) : (
-                <>
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2">
-                    <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
-                    <path d="M21 3v5h-5"></path>
-                    <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
-                    <path d="M3 21v-5h5"></path>
-                  </svg>
-                  <span>{smartResyncSuggestion ? 'Re-sync*' : 'Re-sync'}</span>
-                </>
-              )}
-            </button>
-          </div>
-          {/* Track Title */}
-          <div className="mb-2 text-center min-h-[1.5em] relative flex items-center justify-center" style={{height: '1.5em'}}>
-            <span
-              className={`inline-block mt-6 text-md font-semibold text-white transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]
-                ${animating && direction === 'up' ? 'opacity-0 translate-x-6 scale-95' : ''}
-                ${animating && direction === 'down' ? 'opacity-0 -translate-x-6 scale-95' : ''}
-                ${!animating ? 'opacity-100 translate-x-0 scale-100' : ''}
-              `}
-              style={{
-                willChange: 'opacity, transform',
-                transitionProperty: 'opacity, transform',
-              }}
-            >
-              {displayedTitle || 'Unknown Track'}
-            </span>
-          </div>
-          {/* Progress bar */}
-          <div className="flex items-center gap-2 w-full">
-            <span className="text-[11px] text-neutral-400 w-8 text-left font-mono">{formatTime(displayedCurrentTime)}</span>
-            {(loading || !syncReady) && (
-              <div className="flex-1 flex items-center justify-center h-3">
-                <LoadingSpinner size="xs" text="Loading..." />
+            )}
+            {/* Top: Track info and sync status - Enhanced for Mobile */}
+            <div className="flex items-center justify-between mb-1 px-1">
+              {/* Left: SyncStatus and status text */}
+              <div className="flex items-center gap-2 w-fit min-w-0" style={{ minHeight: 28, height: 28, maxWidth: '100%' }}>
+                <SyncStatus status={syncStatus} />
               </div>
-            )}
-            {!loading && syncReady && (
-              <input
-                type="range"
-                min={0}
-                max={isFinite(duration) ? duration : 0}
-                step={0.01}
-                value={isFinite(displayedCurrentTime) ? displayedCurrentTime : 0}
-                onChange={handleSeek}
-                className="flex-1 w-full h-3 bg-neutral-800 rounded-full appearance-none cursor-pointer audio-progress-bar"
-                style={{ WebkitAppearance: 'none', appearance: 'none' }}
-                disabled={disabled || !audioUrl || !syncReady || socketDisconnected}
-              />
-            )}
-            <span className="text-[11px] text-neutral-400 w-8 text-right font-mono">{formatTime(duration)}</span>
-          </div>
-          {/* Controls row */}
-          <div className="flex items-center justify-center mt-1 gap-8">
-            <button
-              className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 focus:outline-none shadow-lg bg-neutral-800 text-white hover:bg-white hover:text-black focus:bg-white focus:text-black active:bg-white active:text-black disabled:opacity-50 disabled:cursor-not-allowed`}
-              onClick={onPrevTrack}
-              disabled={disabled || !isController || !audioUrl || !syncReady || socketDisconnected || selectedTrackIdx === 0}
-              aria-label="Previous Track"
-              title="Previous Track"
-              style={{
-                backgroundColor: undefined, // let Tailwind handle default
-                transition: 'background 0.2s, color 0.2s',
-              }}
-              onMouseDown={e => {
-                e.currentTarget.style.backgroundColor = '#fff';
-                e.currentTarget.style.color = '#000';
-              }}
-              onMouseUp={e => {
-                e.currentTarget.style.backgroundColor = '';
-                e.currentTarget.style.color = '';
-              }}
-              onMouseLeave={e => {
-                e.currentTarget.style.backgroundColor = '';
-                e.currentTarget.style.color = '';
-              }}
-              onMouseOver={e => {
-                if (!e.currentTarget.disabled) {
-                  e.currentTarget.style.backgroundColor = '#fff';
-                  e.currentTarget.style.color = '#000';
+              <button
+                className={`text-[11px] font-mono rounded px-1.5 py-0.5 flex items-center justify-center transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed
+                  ${resyncInProgress
+                    ? 'bg-white-600 text-white border-blue-700 animate-pulse'
+                    : smartResyncSuggestion
+                      ? 'bg-orange-600 hover:bg-orange-700 text-white border-orange-700 animate-bounce'
+                      : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-300 border border-neutral-700'}
+                `}
+                style={{ minHeight: 24, minWidth: 90, display: 'inline-flex', borderRadius: 6, height: '100%', alignItems: 'center', justifyContent: 'center' }}
+                onClick={handleResync}
+                disabled={disabled || !audioUrl || resyncInProgress || socketDisconnected}
+                aria-label="Re-sync"
+                title={
+                  resyncInProgress
+                    ? 'Syncing with server...'
+                    : smartResyncSuggestion
+                      ? 'High drift detected! Recommended to sync now.'
+                      : 'Re-sync audio with server'
                 }
-              }}
-              onFocus={e => {
-                if (!e.currentTarget.disabled) {
-                  e.currentTarget.style.backgroundColor = '#fff';
-                  e.currentTarget.style.color = '#000';
-                }
-              }}
-              onBlur={e => {
-                e.currentTarget.style.backgroundColor = '';
-                e.currentTarget.style.color = '';
-              }}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5"/></svg>
-            </button>
-            <button
-              className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-300 focus:outline-none shadow-lg
-                ${isPlaying 
-                  ? 'bg-white hover:bg-neutral-100 text-black scale-105' 
-                  : 'bg-primary hover:bg-primary/90 text-white scale-100'
-                } disabled:opacity-50 disabled:cursor-not-allowed`}
-              onClick={isPlaying ? handlePause : handlePlay}
-              disabled={disabled || !isController || !audioUrl || !syncReady || socketDisconnected}
-              style={{ transition: 'background 0.3s, color 0.3s, transform 0.3s cubic-bezier(0.4,0,0.2,1)' }}
-              aria-label={isPlaying ? 'Pause' : 'Play'}
-            >
-              <span className="relative w-6 h-6 flex items-center justify-center">
-                {/* Animated icon morph: Play <-> Pause */}
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width="22"
-                  height="22"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="absolute left-0 top-0 w-full h-full"
-                  style={{
-                    transition: 'opacity 0.5s, transform 0.5s cubic-bezier(0.4,0,0.2,1)',
-                    opacity: isPlaying ? 1 : 0,
-                    transform: isPlaying ? 'scale(1) rotate(0deg)' : 'scale(0.85) rotate(-15deg)',
-                    zIndex: isPlaying ? 2 : 1,
-                  }}
-                >
-                  {/* Pause icon */}
-                  <rect
-                    x="6"
-                    y="4"
-                    width="4"
-                    height="16"
-                    rx="1"
+              >
+                {resyncInProgress ? (
+                  <>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin mr-2">
+                      <path d="M21 12a9 9 0 11-6.219-8.56"></path>
+                    </svg>
+                    <span>Syncing...</span>
+                  </>
+                ) : (
+                  <>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2">
+                      <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
+                      <path d="M21 3v5h-5"></path>
+                      <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
+                      <path d="M3 21v-5h5"></path>
+                    </svg>
+                    <span>{smartResyncSuggestion ? 'Re-sync*' : 'Re-sync'}</span>
+                  </>
+                )}
+              </button>
+            </div>
+            {/* Album Art and Title for Mobile (side by side) */}
+            <div className="flex items-center mb-2 mt-1 gap-3">
+              {/* Smoothly transitioning album art */}
+              <span
+                className="relative w-12 h-12 rounded-lg flex-shrink-0 block"
+                style={{ minWidth: 0, minHeight: 0 }}
+              >
+                {albumArt ? (
+                  <img
+                    key={albumArt}
+                    src={albumArt}
+                    alt="Album Art"
+                    className={`w-12 h-12 rounded-lg object-cover shadow border border-neutral-800 bg-neutral-800 absolute inset-0 transition-opacity duration-400 ease-[cubic-bezier(0.22,1,0.36,1)] ${animating ? 'opacity-0' : 'opacity-100'}`}
                     style={{
-                      transition: 'all 0.5s cubic-bezier(0.4,0,0.2,1)',
-                      transform: isPlaying ? 'scaleY(1)' : 'scaleY(0.7) translateY(4px)',
-                      opacity: isPlaying ? 1 : 0.5,
+                      minWidth: 0,
+                      minHeight: 0,
+                      zIndex: 2,
                     }}
+                    onError={e => { e.target.style.display = 'none'; }}
                   />
-                  <rect
-                    x="14"
-                    y="4"
-                    width="4"
-                    height="16"
-                    rx="1"
-                    style={{
-                      transition: 'all 0.5s cubic-bezier(0.4,0,0.2,1)',
-                      transform: isPlaying ? 'scaleY(1)' : 'scaleY(0.7) translateY(4px)',
-                      opacity: isPlaying ? 1 : 0.5,
-                    }}
-                  />
-                </svg>
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width="22"
-                  height="22"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="absolute left-0 top-0 w-full h-full"
-                  style={{
-                    transition: 'opacity 0.5s, transform 0.5s cubic-bezier(0.4,0,0.2,1)',
-                    opacity: !isPlaying ? 1 : 0,
-                    transform: !isPlaying ? 'scale(1) rotate(0deg)' : 'scale(0.85) rotate(15deg)',
-                    zIndex: !isPlaying ? 2 : 1,
-                  }}
-                >
-                  {/* Play icon */}
-                  <polygon
-                    points="5 3 19 12 5 21 5 3"
-                    style={{
-                      transition: 'all 0.5s cubic-bezier(0.4,0,0.2,1)',
-                      transform: !isPlaying ? 'scale(1)' : 'scale(0.7) translateX(4px)',
-                      opacity: !isPlaying ? 1 : 0.5,
-                    }}
-                  />
-                </svg>
+                ) : (
+                  <div className="w-12 h-12 rounded-lg bg-neutral-800 flex items-center justify-center absolute inset-0 z-2">
+                    {/* Fallback icon if no album art */}
+                    <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none">
+                      <circle cx="12" cy="12" r="10" stroke="#52525b" strokeWidth="2" fill="transparent" />
+                      <polygon points="9 8 17 12 9 16 9 8" fill="#a3a3a3" />
+                      <circle cx="12" cy="12" r="2.5" fill="#fff" opacity="0.7" />
+                    </svg>
+                  </div>
+                )}
               </span>
-            </button>
-            <button
-              className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 focus:outline-none shadow-lg bg-neutral-800 text-white hover:bg-white hover:text-black focus:bg-white focus:text-black active:bg-white active:text-black disabled:opacity-50 disabled:cursor-not-allowed`}
-              onClick={onNextTrack}
-              disabled={disabled || !isController || !audioUrl || !syncReady || socketDisconnected || selectedTrackIdx === queue.length - 1}
-              aria-label="Next Track"
-              title="Next Track"
-              style={{
-                backgroundColor: undefined, // let Tailwind handle default
-                transition: 'background 0.2s, color 0.2s',
-              }}
-              onMouseDown={e => {
-                e.currentTarget.style.backgroundColor = '#fff';
-                e.currentTarget.style.color = '#000';
-              }}
-              onMouseUp={e => {
-                e.currentTarget.style.backgroundColor = '';
-                e.currentTarget.style.color = '';
-              }}
-              onMouseLeave={e => {
-                e.currentTarget.style.backgroundColor = '';
-                e.currentTarget.style.color = '';
-              }}
-              onMouseOver={e => {
-                if (!e.currentTarget.disabled) {
+              <span
+                className={`inline-block text-md font-semibold text-white transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]
+                  ${animating && direction === 'up' ? 'opacity-0 translate-x-6 scale-95' : ''}
+                  ${animating && direction === 'down' ? 'opacity-0 -translate-x-6 scale-95' : ''}
+                  ${!animating ? 'opacity-100 translate-x-0 scale-100' : ''}
+                `}
+                style={{
+                  willChange: 'opacity, transform',
+                  transitionProperty: 'opacity, transform',
+                  minHeight: '3em',
+                  display: 'flex',
+                  alignItems: 'center',
+                }}
+              >
+                {displayedTitle || 'Unknown Track'}
+              </span>
+            </div>
+            {/* Progress bar */}
+            <div className="flex items-center gap-2 w-full">
+              <span className="text-[11px] text-neutral-400 w-8 text-left font-mono">{formatTime(displayedCurrentTime)}</span>
+              {(loading || !syncReady) && (
+                <div className="flex-1 flex items-center justify-center h-3">
+                  <LoadingSpinner size="xs" text="Loading..." />
+                </div>
+              )}
+              {!loading && syncReady && (
+                <input
+                  type="range"
+                  min={0}
+                  max={isFinite(duration) ? duration : 0}
+                  step={0.01}
+                  value={isFinite(displayedCurrentTime) ? displayedCurrentTime : 0}
+                  onChange={handleSeek}
+                  className="flex-1 w-full h-3 bg-neutral-800 rounded-full appearance-none cursor-pointer audio-progress-bar"
+                  style={{ WebkitAppearance: 'none', appearance: 'none' }}
+                  disabled={disabled || !audioUrl || !syncReady || socketDisconnected}
+                />
+              )}
+              <span className="text-[11px] text-neutral-400 w-8 text-right font-mono">{formatTime(duration)}</span>
+            </div>
+            {/* Controls row */}
+            <div className="flex items-center justify-center mt-1 gap-8">
+              <button
+                className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 focus:outline-none shadow-lg bg-neutral-800 text-white hover:bg-white hover:text-black focus:bg-white focus:text-black active:bg-white active:text-black disabled:opacity-50 disabled:cursor-not-allowed`}
+                onClick={onPrevTrack}
+                disabled={disabled || !isController || !audioUrl || !syncReady || socketDisconnected || selectedTrackIdx === 0}
+                aria-label="Previous Track"
+                title="Previous Track"
+                style={{
+                  backgroundColor: undefined, // let Tailwind handle default
+                  transition: 'background 0.2s, color 0.2s',
+                }}
+                onMouseDown={e => {
                   e.currentTarget.style.backgroundColor = '#fff';
                   e.currentTarget.style.color = '#000';
-                }
-              }}
-              onFocus={e => {
-                if (!e.currentTarget.disabled) {
+                }}
+                onMouseUp={e => {
+                  e.currentTarget.style.backgroundColor = '';
+                  e.currentTarget.style.color = '';
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.backgroundColor = '';
+                  e.currentTarget.style.color = '';
+                }}
+                onMouseOver={e => {
+                  if (!e.currentTarget.disabled) {
+                    e.currentTarget.style.backgroundColor = '#fff';
+                    e.currentTarget.style.color = '#000';
+                  }
+                }}
+                onFocus={e => {
+                  if (!e.currentTarget.disabled) {
+                    e.currentTarget.style.backgroundColor = '#fff';
+                    e.currentTarget.style.color = '#000';
+                  }
+                }}
+                onBlur={e => {
+                  e.currentTarget.style.backgroundColor = '';
+                  e.currentTarget.style.color = '';
+                }}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5"/></svg>
+              </button>
+              <button
+                className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-300 focus:outline-none shadow-lg
+                  ${isPlaying 
+                    ? 'bg-white hover:bg-neutral-100 text-black scale-105' 
+                    : 'bg-primary hover:bg-primary/90 text-white scale-100'
+                  } disabled:opacity-50 disabled:cursor-not-allowed`}
+                onClick={isPlaying ? handlePause : handlePlay}
+                disabled={disabled || !isController || !audioUrl || !syncReady || socketDisconnected}
+                style={{ transition: 'background 0.3s, color 0.3s, transform 0.3s cubic-bezier(0.4,0,0.2,1)' }}
+                aria-label={isPlaying ? 'Pause' : 'Play'}
+              >
+                <span className="relative w-6 h-6 flex items-center justify-center">
+                  {/* Animated icon morph: Play <-> Pause */}
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="22"
+                    height="22"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="absolute left-0 top-0 w-full h-full"
+                    style={{
+                      transition: 'opacity 0.5s, transform 0.5s cubic-bezier(0.4,0,0.2,1)',
+                      opacity: isPlaying ? 1 : 0,
+                      transform: isPlaying ? 'scale(1) rotate(0deg)' : 'scale(0.85) rotate(-15deg)',
+                      zIndex: isPlaying ? 2 : 1,
+                    }}
+                  >
+                    {/* Pause icon */}
+                    <rect
+                      x="6"
+                      y="4"
+                      width="4"
+                      height="16"
+                      rx="1"
+                      style={{
+                        transition: 'all 0.5s cubic-bezier(0.4,0,0.2,1)',
+                        transform: isPlaying ? 'scaleY(1)' : 'scaleY(0.7) translateY(4px)',
+                        opacity: isPlaying ? 1 : 0.5,
+                      }}
+                    />
+                    <rect
+                      x="14"
+                      y="4"
+                      width="4"
+                      height="16"
+                      rx="1"
+                      style={{
+                        transition: 'all 0.5s cubic-bezier(0.4,0,0.2,1)',
+                        transform: isPlaying ? 'scaleY(1)' : 'scaleY(0.7) translateY(4px)',
+                        opacity: isPlaying ? 1 : 0.5,
+                      }}
+                    />
+                  </svg>
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="22"
+                    height="22"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="absolute left-0 top-0 w-full h-full"
+                    style={{
+                      transition: 'opacity 0.5s, transform 0.5s cubic-bezier(0.4,0,0.2,1)',
+                      opacity: !isPlaying ? 1 : 0,
+                      transform: !isPlaying ? 'scale(1) rotate(0deg)' : 'scale(0.85) rotate(15deg)',
+                      zIndex: !isPlaying ? 2 : 1,
+                    }}
+                  >
+                    {/* Play icon */}
+                    <polygon
+                      points="5 3 19 12 5 21 5 3"
+                      style={{
+                        transition: 'all 0.5s cubic-bezier(0.4,0,0.2,1)',
+                        transform: !isPlaying ? 'scale(1)' : 'scale(0.7) translateX(4px)',
+                        opacity: !isPlaying ? 1 : 0.5,
+                      }}
+                    />
+                  </svg>
+                </span>
+              </button>
+              <button
+                className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 focus:outline-none shadow-lg bg-neutral-800 text-white hover:bg-white hover:text-black focus:bg-white focus:text-black active:bg-white active:text-black disabled:opacity-50 disabled:cursor-not-allowed`}
+                onClick={onNextTrack}
+                disabled={disabled || !isController || !audioUrl || !syncReady || socketDisconnected || selectedTrackIdx === queue.length - 1}
+                aria-label="Next Track"
+                title="Next Track"
+                style={{
+                  backgroundColor: undefined, // let Tailwind handle default
+                  transition: 'background 0.2s, color 0.2s',
+                }}
+                onMouseDown={e => {
                   e.currentTarget.style.backgroundColor = '#fff';
                   e.currentTarget.style.color = '#000';
-                }
-              }}
-              onBlur={e => {
-                e.currentTarget.style.backgroundColor = '';
-                e.currentTarget.style.color = '';
-              }}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>
-            </button>
+                }}
+                onMouseUp={e => {
+                  e.currentTarget.style.backgroundColor = '';
+                  e.currentTarget.style.color = '';
+                }}
+                onMouseLeave={e => {
+                  e.currentTarget.style.backgroundColor = '';
+                  e.currentTarget.style.color = '';
+                }}
+                onMouseOver={e => {
+                  if (!e.currentTarget.disabled) {
+                    e.currentTarget.style.backgroundColor = '#fff';
+                    e.currentTarget.style.color = '#000';
+                  }
+                }}
+                onFocus={e => {
+                  if (!e.currentTarget.disabled) {
+                    e.currentTarget.style.backgroundColor = '#fff';
+                    e.currentTarget.style.color = '#000';
+                  }
+                }}
+                onBlur={e => {
+                  e.currentTarget.style.backgroundColor = '';
+                  e.currentTarget.style.color = '';
+                }}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>
+              </button>
+            </div>
           </div>
-        </div>
         </div>
       </div>
     );
@@ -2606,23 +2064,12 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
     </div>
   )}
 
-
-
   return (
     <>
       {!mobile && (
         <div className="flex items-center justify-between mb-3 px-2">
           <div className="flex items-center">
-            <SyncStatus 
-              status={syncStatus} 
-              showSmartSuggestion={smartResyncSuggestion}
-              rtt={rtt}
-              jitter={jitter}
-              drift={typeof displayedCurrentTime === 'number' && typeof currentTime === 'number' ? (displayedCurrentTime - currentTime) * 1000 : null}
-              deviceType={adaptiveThresholds?.deviceType}
-              networkQuality={adaptiveThresholds?.networkQuality}
-              showMetrics={process.env.NODE_ENV === 'development'}
-            />
+            <SyncStatus status={syncStatus} showSmartSuggestion={smartResyncSuggestion} />
           </div>
           <div className="flex items-center">
             <button

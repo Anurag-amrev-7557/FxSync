@@ -1,9 +1,9 @@
 import { getSession } from './sessionManager.js';
 
-export function addToQueue(sessionId, url, title) {
+export function addToQueue(sessionId, url, title, meta = {}) {
   const session = getSession(sessionId);
   if (!session) return false;
-  session.queue.push({ url, title: title || url });
+  session.queue.push({ url, title: title || url, ...meta });
   return true;
 }
 

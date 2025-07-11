@@ -22,7 +22,7 @@ import {
 } from '../utils/persistence'
 import usePeerTimeSync from '../hooks/usePeerTimeSync'
 import useMultiPeerTimeSync from '../hooks/useMultiPeerTimeSync'
-// import ThreeDRoom from './ThreeDRoom';
+import ThreeDRoom from './ThreeDRoom';
 
 function SessionPage({
   currentSessionId,
@@ -234,18 +234,33 @@ function SessionPage({
     }
   }, [socket, currentSessionId])
 
-  // Add this handler for queue_update
   useEffect(() => {
     if (!socket) return;
-    const handleQueueUpdate = (newQueue) => {
-      console.log('[SessionPage] queue_update received:', newQueue);
-      setQueue(Array.isArray(newQueue) ? newQueue : []);
+    const handleQueueUpdate = (q) => {
+      // Merge albumArtUrl from allTracks if missing
+      const mergedQueue = q.map(track => {
+        if (track.albumArtUrl) return track;
+        const match = allTracks.find(t => t.url === track.url);
+        return match ? { ...track, albumArtUrl: match.albumArtUrl } : track;
+      });
+      setQueue(mergedQueue);
+      // If a track_change was received before the queue, apply it now
+      if (pendingTrackIdx.current !== null) {
+        if (pendingTrackIdx.currentTrack) {
+          setCurrentTrackOverride(pendingTrackIdx.currentTrack);
+        } else {
+          setCurrentTrackOverride(null);
+        }
+        setSelectedTrackIdx(pendingTrackIdx.current);
+        pendingTrackIdx.current = null;
+        pendingTrackIdx.currentTrack = null;
+      }
     };
     socket.on('queue_update', handleQueueUpdate);
     return () => {
       socket.off('queue_update', handleQueueUpdate);
     };
-  }, [socket]);
+  }, [socket, allTracks]);
 
   useEffect(() => {
     if (!socket) return;
@@ -746,8 +761,7 @@ function SessionPage({
                 }
                 rightPanel={
                   <div className="flex flex-col h-full" style={{ minHeight: 0 }}>
-                    {/* Temporarily hidden 3D view */}
-                    {/* <div className="flex-1 min-h-0" style={{ height: '50%' }}>
+                    <div className="flex-1 min-h-0" style={{ height: '50%' }}>
                       <ThreeDRoom 
                         displayName={displayName} 
                         clientId={clientId} 
@@ -756,8 +770,8 @@ function SessionPage({
                         socket={socket}
                         sessionId={currentSessionId}
                       />
-                    </div> */}
-                    <div className="flex-1 min-h-0 overflow-hidden" style={{ height: '100%' }}>
+                    </div>
+                    <div className="flex-1 min-h-0 border-t border-neutral-800 overflow-hidden" style={{ height: '50%' }}>
                       <ChatBox
                         socket={socket}
                         sessionId={currentSessionId}
@@ -937,8 +951,8 @@ function SessionPage({
                   isChatTabActive={mobileTab === 2}
                 />
               )}
-              {/* Temporarily hidden 3D Spatial Room Section */}
-              {/* {mobileTab === 3 && (
+              {/* 3D Spatial Room Section */}
+              {mobileTab === 3 && (
                 <div className="h-full overflow-y-auto relative">
                   <ThreeDRoom
                     displayName={displayName}
@@ -949,7 +963,7 @@ function SessionPage({
                     sessionId={currentSessionId}
                   />
                 </div>
-              )} */}
+              )}
             </div>
             {/* Bottom Tab Bar */}
             <BottomTabBar
