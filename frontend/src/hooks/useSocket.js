@@ -235,7 +235,10 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
 
           // Adaptive interval: shorter if unstable, longer if stable
           if (calcJitterVal > 20 || Math.abs(driftVal) > 20) {
-            adaptiveInterval = ADAPTIVE_INTERVAL_BAD;
+            adaptiveInterval = ADAPTIVE_INTERVAL_BAD; // Unstable, sync more often
+            if (process.env.NODE_ENV !== 'production') {
+              console.warn('[TimeSync] High jitter or drift detected:', { jitter: calcJitterVal, drift: driftVal });
+            }
           } else if (calcJitterVal < JITTER_GOOD && Math.abs(driftVal) < 5 && avgRtt < AVG_RTT_GOOD) {
             adaptiveInterval = ADAPTIVE_INTERVAL_GOOD; // Very stable, sync less often
           } else {
@@ -371,6 +374,7 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
 
     // --- Event Handlers ---
     const handleConnect = async () => {
+      console.info(`${logPrefix} Socket connected`);
       setConnected(true);
       reconnectAttempts = 0;
       // --- Perform NTP-like batch sync before joining session ---
@@ -498,6 +502,16 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
     };
   }, [sessionId, clientId]);
 
+  useEffect(() => {
+    console.log('useSocket: State update:', {
+      controllerClientId,
+      clientId,
+      isController: controllerClientId && clientId && controllerClientId === clientId,
+      socketExists: !!socketRef.current,
+      connected
+    });
+  }, [controllerClientId, clientId, connected]);
+
   // Expose a method to force immediate time sync (for use on drift)
   function forceTimeSync() {
     if (typeof window !== 'undefined' && window.__forceTimeSync) {
@@ -547,7 +561,6 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
   // Enhanced return object with more diagnostics, utility methods, and controller status
   return {
     socket: socketRef.current,
-    socketRef, // add this for stable reference
     connected,
     controllerId,
     controllerClientId,
@@ -557,7 +570,6 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
     rtt,
     getServerTime,
     forceTimeSync, // for immediate sync
-    forceNtpBatchSync, // <-- add this
     pendingControllerRequests,
     controllerRequestReceived,
     controllerOfferReceived,
@@ -609,7 +621,7 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
         socketRef.current.off(event, handler);
       }
     },
-    // Expose a method to trigger resync
+    forceNtpBatchSync,
     triggerResync,
   };
 } 

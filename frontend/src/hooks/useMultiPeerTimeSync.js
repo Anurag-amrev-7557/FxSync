@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback } from 'react';
+import { useMemo } from 'react';
 import usePeerTimeSync from './usePeerTimeSync';
 
 // Max number of peers to support for stable hook order
@@ -12,45 +12,30 @@ const MAX_PEERS = 5;
  * - Returns both per-peer and aggregate sync stats.
  */
 export default function useMultiPeerTimeSync(socket, clientId, peerIds) {
-  // Always call hooks in the same order
-  const paddedPeerIds = [...peerIds.slice(0, MAX_PEERS)];
-  while (paddedPeerIds.length < MAX_PEERS) paddedPeerIds.push(null);
+  // Pad peerIds to always call hooks in the same order
+  const paddedPeerIds = useMemo(() => {
+    const arr = [...peerIds.slice(0, MAX_PEERS)];
+    while (arr.length < MAX_PEERS) arr.push(null);
+    return arr;
+  }, [peerIds]);
 
-  // Add forceUpdate state to trigger re-renders
-  const [, setForceUpdate] = useState(0);
-  const forceUpdate = useCallback(() => setForceUpdate(f => f + 1), []);
-
-  // Call usePeerTimeSync for each peer, passing forceUpdate as onUpdate
+  // Call usePeerTimeSync for each peer (null if no peer)
   const peerSyncs = paddedPeerIds.map(peerId =>
-    usePeerTimeSync(socket, clientId, peerId, forceUpdate)
+    peerId ? usePeerTimeSync(socket, clientId, peerId) : null
   );
 
   // Aggregate stats for better global sync
   const aggregate = useMemo(() => {
-    // Outlier detection thresholds
-    const MAX_ACCEPTABLE_RTT = 250; // ms
-    const MAX_ACCEPTABLE_JITTER = 60; // ms
-
-    // Mark outliers and filter them
-    const peerDiagnostics = peerSyncs.map(sync => {
-      const isOutlier =
-        (sync && (sync.peerRtt > MAX_ACCEPTABLE_RTT || sync.jitter > MAX_ACCEPTABLE_JITTER));
-      return {
-        ...sync,
-        isOutlier,
-      };
-    });
-
-    const validOffsets = peerDiagnostics
-      .filter(sync => !sync.isOutlier && typeof sync.peerOffset === 'number' && isFinite(sync.peerOffset))
-      .map(sync => sync.peerOffset);
-    const validRtts = peerDiagnostics
-      .filter(sync => !sync.isOutlier && typeof sync.peerRtt === 'number' && isFinite(sync.peerRtt))
-      .map(sync => sync.peerRtt);
-    const validJitters = peerDiagnostics
-      .filter(sync => !sync.isOutlier && typeof sync.jitter === 'number' && isFinite(sync.jitter))
-      .map(sync => sync.jitter);
-    const connectionStates = peerDiagnostics.map(sync => sync ? sync.connectionState : 'disconnected');
+    const validOffsets = peerSyncs
+      .map(sync => sync && typeof sync.peerOffset === 'number' ? sync.peerOffset : null)
+      .filter(v => v !== null && isFinite(v));
+    const validRtts = peerSyncs
+      .map(sync => sync && typeof sync.peerRtt === 'number' ? sync.peerRtt : null)
+      .filter(v => v !== null && isFinite(v));
+    const validJitters = peerSyncs
+      .map(sync => sync && typeof sync.jitter === 'number' ? sync.jitter : null)
+      .filter(v => v !== null && isFinite(v));
+    const connectionStates = peerSyncs.map(sync => sync ? sync.connectionState : 'disconnected');
 
     // Robust median/trimmed mean for offset
     let globalOffset = 0;
@@ -71,30 +56,17 @@ export default function useMultiPeerTimeSync(socket, clientId, peerIds) {
       return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
     };
 
-    const medianJitter = median(validJitters);
-
-    const aggregateStats = {
+    return {
       globalOffset,
       medianRtt: median(validRtts),
-      medianJitter,
+      medianJitter: median(validJitters),
       connectionStates,
       peerCount: validOffsets.length,
-      peerDiagnostics,
     };
-    // Add logging for diagnosis
-    if (typeof window !== 'undefined') {
-      console.log('[useMultiPeerTimeSync] Aggregate stats updated:', aggregateStats);
-    }
-    return aggregateStats;
-  }, [
-    ...peerSyncs.map(sync => sync?.peerOffset),
-    ...peerSyncs.map(sync => sync?.peerRtt),
-    ...peerSyncs.map(sync => sync?.jitter),
-    ...peerSyncs.map(sync => sync?.connectionState),
-  ]);
+  }, [peerSyncs]);
 
   return {
-    peerSyncs: aggregate.peerDiagnostics,
+    peerSyncs,
     ...aggregate,
   };
 }

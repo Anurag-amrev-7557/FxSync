@@ -8,9 +8,6 @@ import path from 'path';
 import dotenv from 'dotenv';
 dotenv.config();
 
-const sessionSyncIntervals = {};
-const sessionReadiness = {};
-
 // Helper to build full session sync state for advanced sync
 function buildSessionSyncState(session) {
   const queue = Array.isArray(session.queue) ? session.queue : [];
@@ -84,62 +81,7 @@ export function setupSocket(io) {
         io.to(sessionId).emit('controller_client_change', clientId);
       }
       log('Client joined session', sessionId, 'Current queue:', getQueue(sessionId));
-
-      // Start periodic sync_state emission for this session if not already started
-      if (!sessionSyncIntervals[sessionId]) {
-        sessionSyncIntervals[sessionId] = setInterval(() => {
-          const session = getSession(sessionId);
-          if (!session) return;
-          if (!session.isPlaying) return; // Only emit if playing
-          session.syncSeq = (session.syncSeq || 0) + 1; // Increment syncSeq
-          io.to(sessionId).emit('sync_state', {
-            isPlaying: session.isPlaying,
-            timestamp: session.timestamp,
-            lastUpdated: session.lastUpdated,
-            controllerId: session.controllerId,
-            serverTime: Date.now(),
-            syncSeq: session.syncSeq
-          });
-        }, 2000); // every 2 seconds
-        // --- Heartbeat emission for drift correction ---
-        sessionSyncIntervals[`${sessionId}_heartbeat`] = setInterval(() => {
-          const session = getSession(sessionId);
-          if (!session) return;
-          if (!session.isPlaying) return;
-          io.to(sessionId).emit('playback_heartbeat', {
-            isPlaying: session.isPlaying,
-            timestamp: session.timestamp,
-            lastUpdated: session.lastUpdated,
-            controllerId: session.controllerId,
-            serverTime: Date.now(),
-            syncSeq: session.syncSeq || 0
-          });
-        }, 1000); // every 1 second
-      }
     });
-
-    // --- CLIENT READY HANDLING ---
-    socket.on('client_ready', ({ sessionId, clientId }) => {
-      if (!sessionId || !clientId) return;
-      if (!sessionReadiness[sessionId]) sessionReadiness[sessionId] = {};
-      sessionReadiness[sessionId][clientId] = true;
-      // Check if all clients are ready
-      const session = getSession(sessionId);
-      if (!session) return;
-      const clients = getClients(sessionId);
-      const allReady = clients.every(c => sessionReadiness[sessionId][c.clientId]);
-      io.to(sessionId).emit('all_clients_ready', { allReady });
-    });
-
-    // --- RESET READINESS ON TRACK CHANGE, SEEK, PAUSE ---
-    function resetReadiness(sessionId) {
-      if (sessionReadiness[sessionId]) {
-        Object.keys(sessionReadiness[sessionId]).forEach(cid => {
-          sessionReadiness[sessionId][cid] = false;
-        });
-        io.to(sessionId).emit('all_clients_ready', { allReady: false });
-      }
-    }
 
     socket.on('play', ({ sessionId, timestamp } = {}) => {
       if (!sessionId || typeof timestamp !== 'number') return;
@@ -148,7 +90,6 @@ export function setupSocket(io) {
       const clientId = getClientIdBySocket(sessionId, socket.id);
       if (session.controllerClientId !== clientId) return;
       updatePlayback(sessionId, { isPlaying: true, timestamp, controllerId: socket.id });
-      session.syncSeq = (session.syncSeq || 0) + 1; // Increment syncSeq
       log('Play in session', sessionId, 'at', timestamp);
       console.log('Emitting sync_state to session', sessionId, 'clients:', Array.from(session.clients.keys()));
       io.to(sessionId).emit('sync_state', {
@@ -156,8 +97,7 @@ export function setupSocket(io) {
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
         controllerId: socket.id,
-        serverTime: Date.now(),
-        syncSeq: session.syncSeq
+        serverTime: Date.now()
       });
     });
 
@@ -168,7 +108,6 @@ export function setupSocket(io) {
       const clientId = getClientIdBySocket(sessionId, socket.id);
       if (session.controllerClientId !== clientId) return;
       updatePlayback(sessionId, { isPlaying: false, timestamp, controllerId: socket.id });
-      session.syncSeq = (session.syncSeq || 0) + 1; // Increment syncSeq
       log('Pause in session', sessionId, 'at', timestamp);
       console.log('Emitting sync_state to session', sessionId, 'clients:', Array.from(session.clients.keys()));
       io.to(sessionId).emit('sync_state', {
@@ -176,10 +115,8 @@ export function setupSocket(io) {
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
         controllerId: socket.id,
-        serverTime: Date.now(),
-        syncSeq: session.syncSeq
+        serverTime: Date.now()
       });
-      resetReadiness(sessionId);
     });
 
     socket.on('seek', ({ sessionId, timestamp } = {}) => {
@@ -189,7 +126,6 @@ export function setupSocket(io) {
       const clientId = getClientIdBySocket(sessionId, socket.id);
       if (session.controllerClientId !== clientId) return;
       updateTimestamp(sessionId, timestamp, socket.id);
-      session.syncSeq = (session.syncSeq || 0) + 1; // Increment syncSeq
       log('Seek in session', sessionId, 'to', timestamp);
       console.log('Emitting sync_state to session', sessionId, 'clients:', Array.from(session.clients.keys()));
       io.to(sessionId).emit('sync_state', {
@@ -197,10 +133,8 @@ export function setupSocket(io) {
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
         controllerId: socket.id,
-        serverTime: Date.now(),
-        syncSeq: session.syncSeq
+        serverTime: Date.now()
       });
-      resetReadiness(sessionId);
     });
 
     socket.on('sync_request', async ({ sessionId } = {}, callback) => {
@@ -307,8 +241,7 @@ export function setupSocket(io) {
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
         controllerId: getSocketIdByClientId(sessionId, requesterClientId),
-        serverTime: Date.now(),
-        syncSeq: session.syncSeq
+        serverTime: Date.now()
       });
       
       typeof callback === "function" && callback({ success: true });
@@ -456,8 +389,7 @@ export function setupSocket(io) {
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
         controllerId: getSocketIdByClientId(sessionId, accepterClientId),
-        serverTime: Date.now(),
-        syncSeq: session.syncSeq
+        serverTime: Date.now()
       });
       
       typeof callback === "function" && callback({ success: true });
@@ -539,7 +471,7 @@ export function setupSocket(io) {
      * - Returns detailed result in callback.
      */
     socket.on('add_to_queue', (data = {}, callback) => {
-      const { sessionId, url, title, albumArtUrl, ...meta } = data || {};
+      const { sessionId, url, title, ...meta } = data || {};
       if (!sessionId || typeof sessionId !== 'string' || !url || typeof url !== 'string') {
         return typeof callback === "function" && callback({ error: 'Missing or invalid sessionId or url' });
       }
@@ -560,7 +492,7 @@ export function setupSocket(io) {
       const safeTitle = typeof title === 'string' ? title : '';
 
       // Enhanced: Support extra metadata (artist, duration, etc)
-      addToQueue(sessionId, url, safeTitle, { albumArtUrl, ...meta });
+      addToQueue(sessionId, url, safeTitle, meta);
 
       const updatedQueue = getQueue(sessionId);
 
@@ -729,12 +661,6 @@ export function setupSocket(io) {
         session.selectedTrackIdx = 0;
       }
 
-      // --- Set playback state for new track to autoplay ---
-      session.timestamp = 0;
-      session.isPlaying = true;
-      session.lastUpdated = Date.now();
-      session.syncSeq = (session.syncSeq || 0) + 1;
-
       // Optionally support autoAdvance (e.g., for next/prev track)
       let autoAdvanceInfo = {};
       if (autoAdvance) {
@@ -773,7 +699,6 @@ export function setupSocket(io) {
       });
 
       if (typeof callback === "function") callback({ success: true, ...payload });
-      resetReadiness(sessionId);
     });
 
     // --- Robust NTP-like time sync event for clients ---
@@ -841,14 +766,6 @@ export function setupSocket(io) {
       // (Optional) Adaptive correction logic can be added here
     });
 
-    // Avatar position update: ultra-low-latency broadcast to all other clients in the session
-    // Use volatile emit for best-effort, lightning-fast delivery (okay to drop if network congested)
-    socket.on('avatar_position_update', ({ sessionId, clientId, position }) => {
-      if (!sessionId || !clientId || !Array.isArray(position)) return;
-      // Use .volatile to minimize latency (does not queue if client is not ready)
-      socket.volatile.to(sessionId).emit('avatar_position_update', { clientId, position });
-    });
-
     socket.on('disconnect', () => {
       for (const [sessionId, session] of Object.entries(getAllSessions())) {
         const clientId = getClientIdBySocket(sessionId, socket.id);
@@ -892,14 +809,6 @@ export function setupSocket(io) {
         }
         io.to(sessionId).emit('clients_update', getClients(sessionId));
         io.to(sessionId).emit('controller_requests_update', getPendingControllerRequests(sessionId));
-      }
-      // Clean up periodic sync_state interval if no clients remain in the session
-      for (const sessionId in sessionSyncIntervals) {
-        const session = getSession(sessionId);
-        if (!session || !session.clients || session.clients.size === 0) {
-          clearInterval(sessionSyncIntervals[sessionId]);
-          delete sessionSyncIntervals[sessionId];
-        }
       }
       log('Socket disconnected:', socket.id);
     });
