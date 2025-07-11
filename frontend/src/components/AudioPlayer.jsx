@@ -32,16 +32,16 @@ if (typeof window !== 'undefined' && !window._audioPlayerErrorHandlerAdded) {
 const DRIFT_THRESHOLD = 0.12; // seconds (was 0.3)
 const PLAY_OFFSET = 0.35; // seconds (350ms future offset for play events)
 const DEFAULT_AUDIO_LATENCY = 0.08; // 80ms fallback if not measured
-const MICRO_DRIFT_THRESHOLD = 0.04; // seconds (was 0.08)
-const MICRO_RATE_CAP = 0.03; // max playbackRate delta (was 0.07)
-const MICRO_CORRECTION_WINDOW = 250; // ms (was 420)
+const MICRO_DRIFT_THRESHOLD = 0.15; // seconds (was 0.04) - Only seek if drift > 150ms
+const MICRO_RATE_CAP = 0.02; // max playbackRate delta (was 0.03)
+const MICRO_CORRECTION_WINDOW = 400; // ms (was 250)
 const DRIFT_JITTER_BUFFER = 2; // consecutive drift detections before correction
 const RESYNC_COOLDOWN_MS = 2000; // minimum time between manual resyncs
 const RESYNC_HISTORY_SIZE = 5; // number of recent resyncs to track
 const SMART_RESYNC_THRESHOLD = 0.5; // drift threshold for smart resync suggestion
 const MICRO_DRIFT_MIN = 0.01; // 10ms
 const MICRO_DRIFT_MAX = 0.1;  // 100ms
-const MICRO_RATE_CAP_MICRO = 0.003; // max playbackRate delta for micro-correction
+const MICRO_RATE_CAP_MICRO = 0.002; // max playbackRate delta for micro-correction (was 0.003)
 
 function isFiniteNumber(n) {
   return typeof n === 'number' && isFinite(n);
@@ -1314,9 +1314,10 @@ export default function AudioPlayer({
         setTimeout(() => {
           audio.playbackRate = 1;
           correctionInProgressRef.current = false;
-        }, MICRO_CORRECTION_WINDOW); // ultra-micro correction window
+        }, MICRO_CORRECTION_WINDOW); // ultra-micro correction window (longer for smoothness)
         return { corrected: true, micro: true, before, after: expected, drift, rate };
       } else {
+        // Only seek if drift is very large (> 150ms)
         setCurrentTimeSafely(audio, expected, setCurrentTime);
         lastCorrectionRef.current = now;
         // Enhanced: fire a custom event for debugging/analytics
@@ -1396,7 +1397,7 @@ export default function AudioPlayer({
             console.log('[MicroDrift] Adjusting playbackRate to', rateAdj.toFixed(5), 'for drift', drift.toFixed(4));
           }
         }
-        // Always reset playbackRate after a short window
+        // Always reset playbackRate after a longer window for smoothness
         setTimeout(() => {
           if (audio.playbackRate !== 1) audio.playbackRate = 1;
         }, MICRO_CORRECTION_WINDOW + 50);

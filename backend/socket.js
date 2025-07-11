@@ -912,8 +912,9 @@ export function setupSocket(io) {
   }, 60 * 1000);
 
   // --- Adaptive sync_state broadcast ---
-  const BASE_SYNC_INTERVAL = 300; // ms (was 500)
-  const HIGH_DRIFT_SYNC_INTERVAL = 100; // ms (was 200)
+  // Increased intervals for smoother frontend corrections
+  const BASE_SYNC_INTERVAL = 400; // ms (was 300)
+  const HIGH_DRIFT_SYNC_INTERVAL = 200; // ms (was 100)
   const DRIFT_THRESHOLD = 0.2; // seconds
   const DRIFT_WINDOW = 10000; // ms (10s)
   const clientDriftMap = {}; // sessionId -> { clientId: { drift, timestamp } }
