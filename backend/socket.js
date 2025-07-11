@@ -701,19 +701,59 @@ export function setupSocket(io) {
       if (typeof callback === "function") callback({ success: true, ...payload });
     });
 
-    // --- Robust NTP-like time sync event for clients ---
-    socket.on('time_sync', (data = {}, callback) => {
+    /**
+     * Ultra-accurate time_sync event for robust client-server time synchronization.
+     * Responds with:
+     *   - serverTime: current server timestamp (ms, when received)
+     *   - clientSent: original client timestamp (ms, as sent by client)
+     *   - serverReceived: when server received the request (ms)
+     *   - serverProcessed: when server sent the response (ms)
+     *   - serverUptime: process uptime in ms (for drift diagnostics)
+     *   - serverTimezoneOffset: server's timezone offset in minutes
+     *   - serverIso: ISO string of server time (for debugging)
+     *   - serverInfo: basic server info (for diagnostics)
+     *   - roundTripEstimate: estimated round-trip time in ms (if client provides a callback timestamp)
+     */
+    socket.on('time_sync', (clientSent, callback) => {
       const serverReceived = Date.now();
-      // Optionally, do any processing or logging here
-      const serverProcessed = Date.now();
-      if (typeof callback === 'function') {
-        callback({
-          serverReceived,
-          serverProcessed,
-          serverTime: serverProcessed, // Use processed time for best accuracy
-          clientSent: data.clientSent,
-          // Optionally: serverIso: new Date(serverProcessed).toISOString(),
-          // Optionally: serverUptime: process.uptime(),
+      const parsedClientSent = typeof clientSent === 'number' ? clientSent : Number(clientSent) || null;
+
+      // Optionally, allow client to send an object with more info (future-proofing)
+      let clientExtra = {};
+      if (clientSent && typeof clientSent === 'object' && clientSent !== null) {
+        clientExtra = { ...clientSent };
+        if ('clientSent' in clientSent) {
+          clientExtra.clientSent = typeof clientSent.clientSent === 'number'
+            ? clientSent.clientSent
+            : Number(clientSent.clientSent) || null;
+        }
+      }
+
+      if (typeof callback === "function") {
+        // Simulate minimal processing delay for realism
+        setImmediate(() => {
+          const serverProcessed = Date.now();
+          // Optionally estimate round-trip if client sent a callback timestamp
+          let roundTripEstimate = null;
+          if (clientExtra && typeof clientExtra.clientCallbackReceived === 'number') {
+            roundTripEstimate = serverProcessed - clientExtra.clientCallbackReceived;
+          }
+          callback({
+            serverTime: serverReceived,
+            clientSent: parsedClientSent,
+            serverReceived, // Always include when request was received
+            serverProcessed, // Always include when response is sent
+            serverUptime: Math.round(process.uptime() * 1000),
+            serverTimezoneOffset: new Date().getTimezoneOffset(),
+            serverIso: new Date(serverReceived).toISOString(),
+            serverInfo: {
+              nodeVersion: process.version,
+              platform: process.platform,
+              pid: process.pid
+            },
+            roundTripEstimate,
+            ...clientExtra // echo back any extra client info for advanced sync
+          });
         });
       }
     });
@@ -830,13 +870,6 @@ export function setupSocket(io) {
       const targetSocket = Array.from(io.sockets.sockets.values()).find(s => s.clientId === to || s.id === to);
       if (targetSocket) {
         targetSocket.emit('peer-ice-candidate', { from, candidate });
-      }
-    });
-
-    // --- Heartbeat/Ping event for client connectivity checks ---
-    socket.on('ping', (data, callback) => {
-      if (typeof callback === 'function') {
-        callback({ serverTime: Date.now() });
       }
     });
   });

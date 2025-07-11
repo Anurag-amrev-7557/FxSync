@@ -21,7 +21,6 @@ import {
   cleanupOldSessions 
 } from '../utils/persistence'
 import usePeerTimeSync from '../hooks/usePeerTimeSync'
-import useMultiPeerTimeSync from '../hooks/useMultiPeerTimeSync'
 
 function SessionPage({
   currentSessionId,
@@ -47,8 +46,7 @@ function SessionPage({
   timeOffset,
   jitter,
   drift,
-  forceNtpBatchSync,
-  calibrationResults
+  forceNtpBatchSync
 }) {
   const { sessionId: urlSessionId } = useParams()
   const [messages, setMessages] = useState([])
@@ -59,16 +57,7 @@ function SessionPage({
   const [selectedTrackIdx, setSelectedTrackIdx] = useState(0);
   const [currentTrackOverride, setCurrentTrackOverride] = useState(null);
   const pendingTrackIdx = useRef(null); // Buffer for track_change before queue is set
-
-  // Pass calibration results to AudioPlayer
-  const audioLatency = calibrationResults?.audioLatency || undefined;
-  const testLatency = calibrationResults?.testLatency || undefined;
-  const networkLatency = calibrationResults?.networkLatency || undefined;
-
-  // Peer-to-peer time sync (declare only once)
-  const peerIds = (clients || []).filter(c => c.clientId !== clientId).map(c => c.clientId);
-  let peerSyncs = useMultiPeerTimeSync(socket, clientId, peerIds);
-  if (!Array.isArray(peerSyncs)) peerSyncs = [];
+  const [peerIds, setPeerIds] = useState([]);
 
   // Clean up old sessions on component mount
   useEffect(() => {
@@ -568,11 +557,11 @@ function SessionPage({
     if (!socket) return;
     const handleClientsUpdate = (clients) => {
       // Exclude self
-      // No need to update peerIds here, as peerIds is already defined
+      setPeerIds(clients.filter(c => c.clientId && c.clientId !== clientId).map(c => c.clientId));
     };
     socket.on('clients_update', handleClientsUpdate);
     return () => socket.off('clients_update', handleClientsUpdate);
-  }, [socket]);
+  }, [socket, clientId]);
 
   // --- Peer-to-Peer Time Sync (Fixed Hooks) ---
   const MAX_PEERS = 5;
@@ -584,6 +573,7 @@ function SessionPage({
   const peerSyncC = usePeerTimeSync(socket, clientId, paddedPeerIds[2]);
   const peerSyncD = usePeerTimeSync(socket, clientId, paddedPeerIds[3]);
   const peerSyncE = usePeerTimeSync(socket, clientId, paddedPeerIds[4]);
+  const peerSyncs = [peerSyncA, peerSyncB, peerSyncC, peerSyncD, peerSyncE];
 
   // --- Combine Peer and Server Sync ---
   const allOffsets = [
@@ -711,10 +701,6 @@ function SessionPage({
                         rtt={rtt}
                         sessionSyncState={sessionSyncState}
                         forceNtpBatchSync={forceNtpBatchSync}
-                        audioLatency={audioLatency}
-                        testLatency={testLatency}
-                        networkLatency={networkLatency}
-                        peerSyncs={peerSyncs}
                       />
                     </div>
                     <div className="p-4">
@@ -849,10 +835,6 @@ function SessionPage({
                         rtt={rtt}
                         sessionSyncState={sessionSyncState}
                         forceNtpBatchSync={forceNtpBatchSync}
-                        audioLatency={audioLatency}
-                        testLatency={testLatency}
-                        networkLatency={networkLatency}
-                        peerSyncs={peerSyncs}
                       />
                     </div>
                   </div>
@@ -886,10 +868,6 @@ function SessionPage({
                         rtt={rtt}
                         sessionSyncState={sessionSyncState}
                         forceNtpBatchSync={forceNtpBatchSync}
-                        audioLatency={audioLatency}
-                        testLatency={testLatency}
-                        networkLatency={networkLatency}
-                        peerSyncs={peerSyncs}
                       />
                     </div>
                   </div>

@@ -1,29 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
 
 /**
- * usePeerTimeSync - Enhanced React hook for WebRTC peer-to-peer time sync with signaling via socket.io
+ * usePeerTimeSync - React hook for WebRTC peer-to-peer time sync with signaling via socket.io
  * @param {object} socket - The socket.io client instance
  * @param {string} localId - This client's unique ID
  * @param {string} peerId - The peer's unique ID to connect to
- * @returns {object} { peerOffset, peerRtt, connectionState, jitter }
+ * @returns {object} { peerOffset, peerRtt, connectionState }
  */
 export default function usePeerTimeSync(socket, localId, peerId) {
-  // --- Tuning constants for better sync ---
-  const SYNC_INTERVAL = 900; // ms, adaptive in future
-  const SYNC_BATCH = 6; // Number of samples per round
-  const TRIM_RATIO = 0.22; // Outlier filtering
-  const MAX_RTT = 220; // ms, ignore samples above this
-
   const [peerOffset, setPeerOffset] = useState(0);
   const [peerRtt, setPeerRtt] = useState(null);
   const [connectionState, setConnectionState] = useState('disconnected');
-  const [jitter, setJitter] = useState(0);
-
   const pcRef = useRef(null);
   const dcRef = useRef(null);
   const intervalRef = useRef(null);
-  const syncSamplesRef = useRef([]);
-  const lastRttRef = useRef(null);
 
   useEffect(() => {
     if (!socket || !localId || !peerId || localId === peerId) return;
@@ -85,17 +75,16 @@ export default function usePeerTimeSync(socket, localId, peerId) {
       }
     });
 
-    // --- 5. DataChannel Logic with enhanced time sync ---
+    // --- 5. DataChannel Logic ---
     function setupDataChannel(dataChannel) {
       dcRef.current = dataChannel;
       dataChannel.onopen = () => {
         setConnectionState('connected');
-        // Start periodic batch sync
+        // Periodically send time sync messages
         intervalRef.current = setInterval(() => {
-          performBatchSync(dataChannel);
-        }, SYNC_INTERVAL);
-        // Initial batch immediately
-        performBatchSync(dataChannel);
+          const now = Date.now();
+          dataChannel.send(JSON.stringify({ type: 'timeSync', clientSent: now }));
+        }, 2000);
       };
       dataChannel.onclose = () => {
         setConnectionState('disconnected');
@@ -108,61 +97,16 @@ export default function usePeerTimeSync(socket, localId, peerId) {
       dataChannel.onmessage = (event) => {
         const msg = JSON.parse(event.data);
         if (msg.type === 'timeSync') {
-          // Respond with local time
+          // Respond with server time
           dataChannel.send(JSON.stringify({ type: 'timeSyncReply', clientSent: msg.clientSent, serverTime: Date.now() }));
         } else if (msg.type === 'timeSyncReply') {
-          handleTimeSyncReply(msg);
+          const clientReceived = Date.now();
+          const rtt = clientReceived - msg.clientSent;
+          const offset = msg.serverTime + rtt / 2 - clientReceived;
+          setPeerOffset(offset);
+          setPeerRtt(rtt);
         }
       };
-    }
-
-    // --- Enhanced: Batch time sync for better accuracy ---
-    function performBatchSync(dataChannel) {
-      syncSamplesRef.current = [];
-      let sent = 0;
-      let completed = 0;
-
-      function sendSync() {
-        if (sent >= SYNC_BATCH) return;
-        const now = Date.now();
-        dataChannel.send(JSON.stringify({ type: 'timeSync', clientSent: now }));
-        sent++;
-      }
-
-      // Send all SYNC_BATCH requests quickly
-      for (let i = 0; i < SYNC_BATCH; i++) {
-        setTimeout(sendSync, i * 8); // slight stagger to avoid clumping
-      }
-
-      // After a short delay, process the batch
-      setTimeout(() => {
-        const samples = syncSamplesRef.current.filter(s => s.rtt < MAX_RTT);
-        if (samples.length === 0) return;
-
-        // Sort by RTT, trim outliers
-        samples.sort((a, b) => a.rtt - b.rtt);
-        const trim = Math.floor(samples.length * TRIM_RATIO);
-        const trimmed = samples.slice(trim, samples.length - trim);
-
-        // Calculate average offset and RTT
-        const avgOffset = trimmed.reduce((sum, s) => sum + s.offset, 0) / trimmed.length;
-        const avgRtt = trimmed.reduce((sum, s) => sum + s.rtt, 0) / trimmed.length;
-
-        // Calculate jitter (mean deviation from avg RTT)
-        const jitterVal = trimmed.reduce((sum, s) => sum + Math.abs(s.rtt - avgRtt), 0) / trimmed.length;
-
-        setPeerOffset(avgOffset);
-        setPeerRtt(avgRtt);
-        setJitter(jitterVal);
-        lastRttRef.current = avgRtt;
-      }, 120 + SYNC_BATCH * 10);
-    }
-
-    function handleTimeSyncReply(msg) {
-      const clientReceived = Date.now();
-      const rtt = clientReceived - msg.clientSent;
-      const offset = msg.serverTime + rtt / 2 - clientReceived;
-      syncSamplesRef.current.push({ offset, rtt });
     }
 
     // --- 6. Start signaling if initiator ---
@@ -179,5 +123,5 @@ export default function usePeerTimeSync(socket, localId, peerId) {
     };
   }, [socket, localId, peerId]);
 
-  return { peerOffset, peerRtt, connectionState, jitter };
+  return { peerOffset, peerRtt, connectionState };
 } 
