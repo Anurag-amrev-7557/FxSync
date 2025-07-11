@@ -79,6 +79,11 @@ export function setupSocket(io) {
       if (becameController) {
         io.to(sessionId).emit('controller_change', socket.id);
         io.to(sessionId).emit('controller_client_change', clientId);
+        io.to(sessionId).emit('controller_handover', {
+          newControllerClientId: session.controllerClientId,
+          newControllerSocketId: session.controllerId,
+          timestamp: Date.now()
+        });
       }
       log('Client joined session', sessionId, 'Current queue:', getQueue(sessionId));
     });
@@ -756,6 +761,23 @@ export function setupSocket(io) {
           });
         });
       }
+    });
+
+    // Time sync: client sends 'time_ping', server replies with 'time_pong'
+    socket.on('time_ping', (clientSent, callback) => {
+      const serverReceived = Date.now();
+      if (typeof callback === "function") {
+        callback({
+          clientSent,
+          serverReceived,
+          serverSent: Date.now()
+        });
+      }
+    });
+
+    // Analytics: log drift corrections from clients
+    socket.on('drift_correction', (data) => {
+      console.log('Drift correction:', data);
     });
 
     // Store per-client drift for diagnostics/adaptive correction

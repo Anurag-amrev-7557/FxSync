@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import useSmoothAppearance from '../hooks/useSmoothAppearance';
+import useServerTimeSync from '../hooks/useServerTimeSync';
 
 export default function ControllerRequestManager({
   socket,
@@ -15,7 +16,8 @@ export default function ControllerRequestManager({
   const [requestStatus, setRequestStatus] = useState(null);
   const [showRequestReceived, setShowRequestReceived] = useState(false);
   const [requestStartTime, setRequestStartTime] = useState(null);
-  const [currentTime, setCurrentTime] = useState(Date.now());
+  const { getServerTime } = useServerTimeSync(socket);
+  const [currentTime, setCurrentTime] = useState(getServerTime());
   const [requestResult, setRequestResult] = useState(null); // 'approved' | 'denied' | null
   const [wasController, setWasController] = useState(false);
   const [showControllerOffer, setShowControllerOffer] = useState(false);
@@ -74,11 +76,11 @@ export default function ControllerRequestManager({
   useEffect(() => {
     if (requestStatus === 'sent' && requestStartTime) {
       const interval = setInterval(() => {
-        setCurrentTime(Date.now());
+        setCurrentTime(getServerTime());
       }, 1000);
       return () => clearInterval(interval);
     }
-  }, [requestStatus, requestStartTime]);
+  }, [requestStatus, requestStartTime, getServerTime]);
 
 
   
@@ -108,7 +110,7 @@ export default function ControllerRequestManager({
     if (!socket || hasPendingRequest) return;
     
     setRequestStatus('pending');
-    setRequestStartTime(Date.now());
+    setRequestStartTime(getServerTime());
     socket.emit('request_controller', { sessionId: socket.sessionId }, (res) => {
       if (res && res.success) {
         setRequestStatus('sent');
@@ -196,15 +198,13 @@ export default function ControllerRequestManager({
   };
   
   const formatTimeAgo = (timestamp) => {
-    const now = Date.now();
+    const now = getServerTime();
     const diff = now - timestamp;
-    const minutes = Math.floor(diff / 60000);
-    const seconds = Math.floor((diff % 60000) / 1000);
-    
-    if (minutes > 0) {
-      return `${minutes}m ${seconds}s ago`;
-    }
-    return `${seconds}s ago`;
+    const seconds = Math.floor(diff / 1000);
+    const minutes = Math.floor(seconds / 60);
+    if (seconds < 60) return `${seconds}s ago`;
+    if (minutes < 60) return `${minutes}m ago`;
+    return `${Math.floor(minutes / 60)}h ago`;
   };
   
   // Enhanced smooth appearance for notifications with staggered animations

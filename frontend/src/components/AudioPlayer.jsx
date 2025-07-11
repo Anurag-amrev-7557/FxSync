@@ -3,6 +3,7 @@ import SyncStatus from './SyncStatus';
 import useSmoothAppearance from '../hooks/useSmoothAppearance';
 import LoadingSpinner from './LoadingSpinner';
 import ResyncAnalytics from './ResyncAnalytics';
+import useServerTimeSync from '../hooks/useServerTimeSync';
 
 // Add global error handlers
 if (typeof window !== 'undefined' && !window._audioPlayerErrorHandlerAdded) {
@@ -215,7 +216,6 @@ export default function AudioPlayer({
   controllerClientId,
   clientId,
   clients = [],
-  getServerTime,
   mobile = false,
   isAudioTabActive = false,
   currentTrack = null,
@@ -225,6 +225,8 @@ export default function AudioPlayer({
   sessionSyncState = null,
   forceNtpBatchSync,
 }) {
+  // Always call useServerTimeSync at the top so getServerTime is defined
+  const { getServerTime, rtt: syncedRtt } = useServerTimeSync(socket);
   const [audioUrl, setAudioUrl] = useState(null);
   const [loading, setLoading] = useState(true);
   const [audioError, setAudioError] = useState(null);
@@ -375,8 +377,7 @@ export default function AudioPlayer({
     const backendUrl = import.meta.env.VITE_BACKEND_URL;
     if (!backendUrl) {
       setAudioError(
-        <>
-          <span className="inline-flex items-center gap-2">
+        <span className="inline-flex items-center gap-2">
             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-red-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
               <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v4.5a.75.75 0 001.5 0v-4.5zm-.75 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
             </svg>
@@ -386,7 +387,6 @@ export default function AudioPlayer({
               Please set <span className="font-mono bg-neutral-800 px-1 rounded">VITE_BACKEND_URL</span> in your environment.
             </span>
           </span>
-        </>
       );
       setLoading(false);
       return;
@@ -419,7 +419,7 @@ export default function AudioPlayer({
     const setDur = () => setDuration(audio.duration || 0);
     const handlePlaying = () => {
       if (playRequestedAt.current) {
-        const latency = (Date.now() - playRequestedAt.current) / 1000;
+        const latency = (getNow(getServerTime) - playRequestedAt.current) / 1000;
         setAudioLatency(latency);
         playRequestedAt.current = null;
       }
@@ -479,7 +479,7 @@ export default function AudioPlayer({
           expected,
           current,
           clientId,
-          timestamp: Date.now(),
+          timestamp: getNow(getServerTime),
           ...extra,
         });
       }
@@ -535,7 +535,7 @@ export default function AudioPlayer({
         drift,
         current: audio.currentTime,
         expected,
-        timestamp: Date.now(),
+        timestamp: getNow(getServerTime),
         isPlaying,
         ctrlId,
         trackId,
@@ -584,7 +584,7 @@ export default function AudioPlayer({
         audio.pause();
         // Do not seek to correct drift if paused
       }
-      setLastSync(Date.now());
+      setLastSync(getNow(getServerTime));
     };
 
     socket.on('sync_state', handleSyncState);
@@ -659,7 +659,7 @@ export default function AudioPlayer({
         }
 
         // Only correct if not in cooldown
-        const nowMs = Date.now();
+        const nowMs = getNow(getServerTime);
         const canCorrect = nowMs - lastCorrection > correctionCooldown;
 
         if (drift > DRIFT_THRESHOLD) {
@@ -743,7 +743,7 @@ export default function AudioPlayer({
           audio.pause();
           setCurrentTimeSafely(audio, 0, setCurrentTime);
           setIsPlaying(false);
-          setLastSync(Date.now());
+          setLastSync(getNow(getServerTime));
           return;
         }
 
@@ -753,7 +753,7 @@ export default function AudioPlayer({
           audio.pause();
           setCurrentTimeSafely(audio, 0, setCurrentTime);
           setIsPlaying(false);
-          setLastSync(Date.now());
+          setLastSync(getNow(getServerTime));
           return;
         }
 
@@ -765,7 +765,7 @@ export default function AudioPlayer({
           warn('Invalid expected time, pausing audio', { expected, state });
           audio.pause();
           setIsPlaying(false);
-          setLastSync(Date.now());
+          setLastSync(getNow(getServerTime));
           return;
         }
 
@@ -793,7 +793,7 @@ export default function AudioPlayer({
         setIsPlaying(state.isPlaying);
 
         if (state.isPlaying) {
-          playRequestedAt.current = Date.now();
+          playRequestedAt.current = getNow(getServerTime);
           // Defensive: try/catch for play() (may throw in some browsers)
           audio.play().catch((err) => {
             warn('audio.play() failed on sync_request', err);
@@ -803,7 +803,7 @@ export default function AudioPlayer({
           audio.pause();
           setCurrentTimeSafely(audio, safeExpected, setCurrentTime);
         }
-        setLastSync(Date.now());
+        setLastSync(getNow(getServerTime));
       } catch (err) {
         warn('Exception in sync_request callback', err);
       }
@@ -896,7 +896,7 @@ export default function AudioPlayer({
       }
       return;
     }
-    playRequestedAt.current = Date.now();
+    playRequestedAt.current = getNow(getServerTime);
     try {
       const playPromise = audio.play();
       if (playPromise && typeof playPromise.then === 'function') {
@@ -993,7 +993,7 @@ export default function AudioPlayer({
 
   // Enhanced Manual re-sync with improved logging, error handling, user feedback, and analytics
   const handleResync = async () => {
-    const now = Date.now();
+    const now = getNow(getServerTime);
     if (resyncInProgress) {
       setSyncStatus('Resync already in progress.');
       setTimeout(() => setSyncStatus('In Sync'), 1500);
@@ -1044,7 +1044,7 @@ export default function AudioPlayer({
   // Helper function to update resync history and stats
   const updateResyncHistory = (result, drift, message, duration) => {
     const resyncEntry = {
-      timestamp: Date.now(),
+      timestamp: getNow(getServerTime),
       result,
       drift: parseFloat(drift.toFixed(3)),
       message,
@@ -1174,7 +1174,7 @@ export default function AudioPlayer({
       }
       return { corrected: false, reason: 'in_progress' };
     }
-    const now = Date.now();
+    const now = getNow(getServerTime);
     if (now - lastCorrectionRef.current < CORRECTION_COOLDOWN) {
       if (process.env.NODE_ENV === 'development') {
         // eslint-disable-next-line no-console
