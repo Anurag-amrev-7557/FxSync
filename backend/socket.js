@@ -90,6 +90,7 @@ export function setupSocket(io) {
         sessionSyncIntervals[sessionId] = setInterval(() => {
           const session = getSession(sessionId);
           if (!session) return;
+          if (!session.isPlaying) return; // Only emit if playing
           session.syncSeq = (session.syncSeq || 0) + 1; // Increment syncSeq
           io.to(sessionId).emit('sync_state', {
             isPlaying: session.isPlaying,
