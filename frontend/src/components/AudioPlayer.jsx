@@ -15,21 +15,36 @@ if (typeof window !== 'undefined' && !window._audioPlayerErrorHandlerAdded) {
   window._audioPlayerErrorHandlerAdded = true;
 }
 
-const DRIFT_THRESHOLD = 0.25; // seconds (increased from 0.12)
+const DRIFT_THRESHOLD = 0.15; // seconds (was 0.25)
 const PLAY_OFFSET = 0.35; // seconds (350ms future offset for play events)
 const DEFAULT_AUDIO_LATENCY = 0.08; // 80ms fallback if not measured
 const MICRO_DRIFT_THRESHOLD = 0.04; // seconds (was 0.08)
 const MICRO_RATE_CAP = 0.015; // max playbackRate delta (was 0.03, reduced for gentler correction)
-const MICRO_CORRECTION_WINDOW = 300; // ms (was 500, shortened for quicker reset)
+const MICRO_CORRECTION_WINDOW = 400; // ms (was 300)
 const DRIFT_JITTER_BUFFER = 6; // consecutive drift detections before correction (increased from 4)
 const RESYNC_COOLDOWN_MS = 2000; // minimum time between manual resyncs
 const RESYNC_HISTORY_SIZE = 5; // number of recent resyncs to track
-const SMART_RESYNC_THRESHOLD = 0.5; // drift threshold for smart resync suggestion
+const SMART_RESYNC_THRESHOLD = 0.3; // drift threshold for smart resync suggestion (was 0.5)
 // Micro drift correction constants
-const MICRO_DRIFT_MIN = 0.01; // 10ms
-const MICRO_DRIFT_MAX = 0.15;  // 150ms (was 0.1, increased to make seeking rarer)
+const MICRO_DRIFT_MIN = 0.005; // 5ms (was 0.01)
+const MICRO_DRIFT_MAX = 0.08;  // 80ms (was 0.15)
 const MICRO_RATE_CAP_MICRO = 0.003; // max playbackRate delta for micro-correction
 const MIN_BUFFER_AHEAD = 0.5; // seconds, minimum buffer ahead to allow drift correction
+const CORRECTION_COOLDOWN = 800; // ms, allow more frequent corrections
+// Add at the top, after imports
+const BASE_BUFFER_AHEAD = 3; // seconds
+const HIGH_LATENCY_BUFFER_AHEAD = 5; // seconds
+const HIGH_LATENCY_RTT = 250; // ms
+const HIGH_LATENCY_JITTER = 60; // ms
+
+// Add at the top, after imports
+let globalAudioContext;
+function getAudioContext() {
+  if (!globalAudioContext) {
+    globalAudioContext = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+  }
+  return globalAudioContext;
+}
 
 function isFiniteNumber(n) {
   return typeof n === 'number' && isFinite(n);
@@ -219,6 +234,7 @@ function mad(arr, med) {
 export default function AudioPlayer({
   disabled = false,
   socket,
+  socketRef,
   isSocketConnected,
   controllerId,
   controllerClientId,
@@ -261,7 +277,6 @@ export default function AudioPlayer({
   const networkLatency = typeof propNetworkLatency === 'number' ? propNetworkLatency : undefined;
   const playRequestedAt = useRef(null);
   const lastCorrectionRef = useRef(0);
-  const CORRECTION_COOLDOWN = 1500; // ms
   const correctionInProgressRef = useRef(false);
   const [displayedCurrentTime, setDisplayedCurrentTime] = useState(0);
   const lastSyncSeq = useRef(-1);
@@ -273,6 +288,14 @@ export default function AudioPlayer({
   const [driftCorrectionCount, setDriftCorrectionCount] = useState(0);
   const [lastCorrectionType, setLastCorrectionType] = useState('none');
   const [bufferedAhead, setBufferedAhead] = useState(0);
+
+  const lastSyncStateTimeRef = useRef(Date.now());
+  const lastDriftRef = useRef(0);
+
+  // In the AudioPlayer component, after useState and useRef declarations
+  const [bufferReady, setBufferReady] = useState(false);
+  const [allClientsReady, setAllClientsReady] = useState(false);
+  const [clientReadySent, setClientReadySent] = useState(false);
 
 // --- Drift correction helpers moved inside the component ---
 function microCorrectDrift(audio, drift, context = {}, updateDebug) {
@@ -476,6 +499,68 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
     }
   }, [mobile, loading, audioError]);
 
+    // Buffer monitoring effect
+    useEffect(() => {
+      const audio = audioRef.current;
+      if (!audio || !audio.src) return;
+      const checkBuffer = () => {
+        const buf = audio.buffered;
+        const current = audio.currentTime;
+        let bufferAhead = 0;
+        for (let i = 0; i < buf.length; i++) {
+          if (buf.start(i) <= current && buf.end(i) > current) {
+            bufferAhead = buf.end(i) - current;
+            break;
+          }
+        }
+        const required = getRequiredBufferAhead();
+        if (bufferAhead >= required) {
+          setBufferReady(true);
+        } else {
+          setBufferReady(false);
+        }
+      };
+      audio.addEventListener('progress', checkBuffer);
+      audio.addEventListener('timeupdate', checkBuffer);
+      // Initial check
+      checkBuffer();
+      return () => {
+        audio.removeEventListener('progress', checkBuffer);
+        audio.removeEventListener('timeupdate', checkBuffer);
+      };
+    }, [audioRef, rtt, jitter]);
+  
+    // Readiness signaling effect
+    useEffect(() => {
+      if (bufferReady && !clientReadySent && socket && socket.emit && socket.sessionId) {
+        socket.emit('client_ready', { sessionId: socket.sessionId, clientId });
+        setClientReadySent(true);
+      }
+      if (!bufferReady) {
+        setClientReadySent(false);
+      }
+    }, [bufferReady, clientReadySent, socket, clientId]);
+  
+    // Listen for all_clients_ready event from server
+    useEffect(() => {
+      if (!socket) return;
+      const handler = (data) => {
+        setAllClientsReady(!!data?.allReady);
+      };
+      socket.on('all_clients_ready', handler);
+      return () => {
+        socket.off('all_clients_ready', handler);
+      };
+    }, [socket]);
+  
+    // Only allow playback to start if allClientsReady is true
+    // (You may need to gate play/pause/seek UI and auto-play logic with allClientsReady)
+    // Example: in handlePlay or auto-play logic, add:
+    // if (!allClientsReady) {
+    //   setSyncStatus('Waiting for all clients to buffer...');
+    //   return;
+    // }
+
   // Trigger animation when audio tab becomes active
   useEffect(() => {
     if (mobile && isAudioTabActive && !loading && !audioError) {
@@ -554,6 +639,26 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
       });
   }, [currentTrack]);
 
+  useEffect(() => {
+    const stableSocket = socketRef?.current || socket;
+    if (!stableSocket || !clientId) return;
+    const interval = setInterval(() => {
+      // If drift is too high, request sync
+      if (typeof lastDriftRef.current === 'number' && lastDriftRef.current > DRIFT_THRESHOLD) {
+        if (stableSocket.emit) {
+          stableSocket.emit('sync_request', { sessionId: stableSocket.sessionId }, () => {});
+        }
+      }
+      // If no sync_state received for 4 seconds, request sync
+      if (Date.now() - lastSyncStateTimeRef.current > 4000) {
+        if (stableSocket.emit) {
+          stableSocket.emit('sync_request', { sessionId: stableSocket.sessionId }, () => {});
+        }
+      }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [socketRef, clientId]);
+
   // Audio event listeners and initialization
   useEffect(() => {
     const audio = audioRef.current;
@@ -577,7 +682,7 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
     const setDur = () => setDuration(audio.duration || 0);
     const handlePlaying = () => {
       if (playRequestedAt.current) {
-        const latency = (Date.now() - playRequestedAt.current) / 1000;
+        const latency = (getAudioContext().currentTime * 1000 - playRequestedAt.current) / 1000;
         setAudioLatency(latency);
         playRequestedAt.current = null;
       }
@@ -745,7 +850,7 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
             (type, driftVal, ctx) => {
               setDriftCorrectionCount(c => c + 1);
               setLastCorrectionType(type);
-              setDriftCorrectionHistory(h => [{ type, drift: driftVal, ctx, ts: Date.now() }, ...h.slice(0, 9)]);
+              setDriftCorrectionHistory(h => [{ type, drift: driftVal, ctx, ts: getAudioContext().currentTime * 1000 }, ...h.slice(0, 9)]);
             }
           );
           setSyncStatus('Re-syncing...');
@@ -776,6 +881,8 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
       }
       setLastSync(Date.now());
       setSyncReady(true);
+      lastSyncStateTimeRef.current = Date.now();
+      lastDriftRef.current = drift;
     };
 
     socket.on('sync_state', handleSyncState);
@@ -792,20 +899,14 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
 
   // Enhanced periodic drift check (for followers)
   useEffect(() => {
-    if (!socket || isController) return;
+    if (!socket || isController || !socket.sessionId) return;
 
+    const audioContext = getAudioContext();
     let lastDrift = 0;
     let lastCorrection = 0;
     let correctionCooldown = 1200; // ms, minimum time between corrections
 
     const interval = setInterval(() => {
-      // Defensive check: only emit if sessionId is set
-      if (!socket.sessionId) {
-        if (process.env.NODE_ENV === 'development') {
-          console.warn('[DriftCheck] No sessionId set on socket, skipping sync_request');
-        }
-        return;
-      }
       socket.emit('sync_request', { sessionId: socket.sessionId }, (state) => {
         // Validate state
         if (
@@ -825,7 +926,8 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
         const audio = audioRef.current;
         if (!audio) return;
 
-        const now = getNow(getServerTime);
+        // Use AudioContext clock for precise timing
+        const now = audioContext.currentTime * 1000; // ms
         const rttComp = rtt ? rtt / 2000 : 0; // ms to s, one-way
         const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency + rttComp + smoothedOffset;
         if (!isFiniteNumber(expected)) {
@@ -835,7 +937,7 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
           return;
         }
 
-        const syncedNow = getNow(getServerTime);
+        const syncedNow = audioContext.currentTime * 1000; // ms
         const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000 + rttComp + smoothedOffset;
         const drift = Math.abs(audio.currentTime - expectedSynced);
 
@@ -856,7 +958,7 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
               (type, driftVal, ctx) => {
                 setDriftCorrectionCount(c => c + 1);
                 setLastCorrectionType(type);
-                setDriftCorrectionHistory(h => [{ type, drift: driftVal, ctx, ts: Date.now() }, ...h.slice(0, 9)]);
+                setDriftCorrectionHistory(h => [{ type, drift: driftVal, ctx, ts: getAudioContext().currentTime * 1000 }, ...h.slice(0, 9)]);
               }
             );
             setSyncStatus('Re-syncing...');
@@ -886,7 +988,7 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
     }, 1200);
 
     return () => clearInterval(interval);
-  }, [socket, isController, getServerTime, audioLatency, clientId, rtt, smoothedOffset, adaptiveThreshold]);
+  }, [socket, isController, getServerTime, audioLatency, clientId, rtt, smoothedOffset, adaptiveThreshold, socket?.sessionId]);
 
   // Enhanced: On mount, immediately request sync state on join, with improved error handling, logging, and edge case resilience
   useEffect(() => {
@@ -969,7 +1071,7 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
         setIsPlaying(state.isPlaying);
 
         if (state.isPlaying) {
-          playRequestedAt.current = Date.now();
+          playRequestedAt.current = getAudioContext().currentTime * 1000;
           // Defensive: try/catch for play() (may throw in some browsers)
           audio.play().catch((err) => {
             console.warn('audio.play() failed on sync_request', err);
@@ -1065,7 +1167,7 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
       }
       return;
     }
-    playRequestedAt.current = Date.now();
+    playRequestedAt.current = getAudioContext().currentTime * 1000;
     try {
       const playPromise = audio.play();
       if (playPromise && typeof playPromise.then === 'function') {
@@ -1184,7 +1286,7 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
     setResyncInProgress(true);
     setLastResyncTime(now);
     setSyncStatus('Syncing...');
-    let ntpStart = Date.now();
+    let ntpStart = getAudioContext().currentTime * 1000;
     let ntpEnd = ntpStart;
     let ntpSuccess = false;
     // --- Use NTP batch sync for manual resync if available ---
@@ -1194,14 +1296,14 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
         if (result && typeof result.then === 'function') {
           await result;
         }
-        ntpEnd = Date.now();
+        ntpEnd = getAudioContext().currentTime * 1000;
         ntpSuccess = true;
         setSyncStatus('NTP synced. Fetching state...');
       } catch (e) {
         setSyncStatus('NTP sync failed.');
         setTimeout(() => setSyncStatus('In Sync'), 1500);
         setResyncInProgress(false);
-        updateResyncHistory('failed', 0, 'NTP batch sync failed', Date.now() - ntpStart);
+        updateResyncHistory('failed', 0, 'NTP batch sync failed', getAudioContext().currentTime * 1000 - ntpStart);
         return;
       }
     } else {
@@ -1213,12 +1315,12 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
       setSyncStatus('Audio not ready');
       setTimeout(() => setSyncStatus('In Sync'), 1200);
       setResyncInProgress(false);
-      updateResyncHistory('failed', 0, 'Audio not ready', Date.now() - ntpStart);
+      updateResyncHistory('failed', 0, 'Audio not ready', getAudioContext().currentTime * 1000 - ntpStart);
       return;
     }
-    let syncStateStart = Date.now();
+    let syncStateStart = getAudioContext().currentTime * 1000;
     socket.emit('sync_request', { sessionId: socket.sessionId, reason: 'manual_resync' }, (state) => {
-      let syncStateEnd = Date.now();
+      let syncStateEnd = getAudioContext().currentTime * 1000;
       try {
         if (
           !state ||
@@ -1271,7 +1373,7 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
         // Update play/pause state
         setIsPlaying(state.isPlaying);
         if (state.isPlaying) {
-          playRequestedAt.current = Date.now();
+          playRequestedAt.current = getAudioContext().currentTime * 1000;
           audio.play().catch(() => {});
         } else {
           audio.pause();
@@ -1707,7 +1809,7 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
             <div className="flex items-center justify-between mb-1 px-1">
               {/* Left: SyncStatus and status text */}
               <div className="flex items-center gap-2 w-fit min-w-0" style={{ minHeight: 28, height: 28, maxWidth: '100%' }}>
-                <SyncStatus status={syncStatus} />
+                <SyncStatus status={syncStatus + (typeof lastDriftRef.current === 'number' ? ` (drift: ${lastDriftRef.current.toFixed(3)}s)` : '')} showIcon={true} />
               </div>
               <button
                 className={`text-[11px] font-mono rounded px-1.5 py-0.5 flex items-center justify-center transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed
@@ -2064,12 +2166,20 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
     </div>
   )}
 
+  // Helper to determine required buffer ahead
+  function getRequiredBufferAhead() {
+    if ((rtt && rtt > HIGH_LATENCY_RTT) || (jitter && jitter > HIGH_LATENCY_JITTER)) {
+      return HIGH_LATENCY_BUFFER_AHEAD;
+    }
+    return BASE_BUFFER_AHEAD;
+  }
+
   return (
     <>
       {!mobile && (
         <div className="flex items-center justify-between mb-3 px-2">
           <div className="flex items-center">
-            <SyncStatus status={syncStatus} showSmartSuggestion={smartResyncSuggestion} />
+            <SyncStatus status={syncStatus + (typeof lastDriftRef.current === 'number' ? ` (drift: ${lastDriftRef.current.toFixed(3)}s)` : '')} showIcon={true} />
           </div>
           <div className="flex items-center">
             <button

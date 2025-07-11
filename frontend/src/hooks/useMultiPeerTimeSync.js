@@ -27,16 +27,30 @@ export default function useMultiPeerTimeSync(socket, clientId, peerIds) {
 
   // Aggregate stats for better global sync
   const aggregate = useMemo(() => {
-    const validOffsets = peerSyncs
-      .map(sync => sync && typeof sync.peerOffset === 'number' ? sync.peerOffset : null)
-      .filter(v => v !== null && isFinite(v));
-    const validRtts = peerSyncs
-      .map(sync => sync && typeof sync.peerRtt === 'number' ? sync.peerRtt : null)
-      .filter(v => v !== null && isFinite(v));
-    const validJitters = peerSyncs
-      .map(sync => sync && typeof sync.jitter === 'number' ? sync.jitter : null)
-      .filter(v => v !== null && isFinite(v));
-    const connectionStates = peerSyncs.map(sync => sync ? sync.connectionState : 'disconnected');
+    // Outlier detection thresholds
+    const MAX_ACCEPTABLE_RTT = 250; // ms
+    const MAX_ACCEPTABLE_JITTER = 60; // ms
+
+    // Mark outliers and filter them
+    const peerDiagnostics = peerSyncs.map(sync => {
+      const isOutlier =
+        (sync && (sync.peerRtt > MAX_ACCEPTABLE_RTT || sync.jitter > MAX_ACCEPTABLE_JITTER));
+      return {
+        ...sync,
+        isOutlier,
+      };
+    });
+
+    const validOffsets = peerDiagnostics
+      .filter(sync => !sync.isOutlier && typeof sync.peerOffset === 'number' && isFinite(sync.peerOffset))
+      .map(sync => sync.peerOffset);
+    const validRtts = peerDiagnostics
+      .filter(sync => !sync.isOutlier && typeof sync.peerRtt === 'number' && isFinite(sync.peerRtt))
+      .map(sync => sync.peerRtt);
+    const validJitters = peerDiagnostics
+      .filter(sync => !sync.isOutlier && typeof sync.jitter === 'number' && isFinite(sync.jitter))
+      .map(sync => sync.jitter);
+    const connectionStates = peerDiagnostics.map(sync => sync ? sync.connectionState : 'disconnected');
 
     // Robust median/trimmed mean for offset
     let globalOffset = 0;
@@ -65,6 +79,7 @@ export default function useMultiPeerTimeSync(socket, clientId, peerIds) {
       medianJitter,
       connectionStates,
       peerCount: validOffsets.length,
+      peerDiagnostics,
     };
     // Add logging for diagnosis
     if (typeof window !== 'undefined') {
@@ -79,7 +94,7 @@ export default function useMultiPeerTimeSync(socket, clientId, peerIds) {
   ]);
 
   return {
-    peerSyncs,
+    peerSyncs: aggregate.peerDiagnostics,
     ...aggregate,
   };
 }

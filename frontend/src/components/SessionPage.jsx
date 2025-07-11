@@ -453,20 +453,44 @@ function SessionPage({
   }
 
   const confirmExitRoom = () => {
-    // Clear session data
+
+    // Clear session data robustly
     if (currentSessionId) {
-      clearSessionData(currentSessionId)
+      try {
+        clearSessionData(currentSessionId);
+      } catch (e) {
+        if (process.env.NODE_ENV === 'development') {
+          // eslint-disable-next-line no-console
+          console.warn('[SessionPage][confirmExitRoom] Failed to clear session data', e);
+        }
+      }
     }
-    
-    // Call the parent's leave session handler
-    if (onLeaveSession) {
-      onLeaveSession()
+
+    // Optionally: Clear local UI state for extra safety
+    setMessages([]);
+    setQueue([]);
+    setCurrentTrackOverride(null);
+    setSelectedTrackIdx(0);
+
+    // Call the parent's leave session handler, with error handling
+    try {
+      if (onLeaveSession) {
+        onLeaveSession();
+      }
+    } catch (e) {
+      if (process.env.NODE_ENV === 'development') {
+        // eslint-disable-next-line no-console
+        console.warn('[SessionPage][confirmExitRoom] onLeaveSession threw error', e);
+      }
     }
-    
+
     // Close modal
-    setShowExitModal(false)
-    // Navigate to home
-    navigate('/');
+    setShowExitModal(false);
+
+    // Enhanced: Add a slight delay before navigating to ensure state is cleared
+    setTimeout(() => {
+      navigate('/');
+    }, 100);
   }
 
   // Enhanced handler for Playlist selection with improved robustness, logging, and user experience
@@ -704,6 +728,7 @@ function SessionPage({
                       <AudioPlayer
                         disabled={!currentSessionId}
                         socket={socket}
+                        socketRef={socket}
                         isSocketConnected={connected}
                         controllerId={controllerId}
                         controllerClientId={controllerClientId}
@@ -861,6 +886,7 @@ function SessionPage({
                       <AudioPlayer
                         disabled={!currentSessionId}
                         socket={socket}
+                        socketRef={socket}
                         isSocketConnected={connected}
                         controllerId={controllerId}
                         controllerClientId={controllerClientId}
@@ -904,6 +930,7 @@ function SessionPage({
                       <AudioPlayer
                         disabled={!currentSessionId}
                         socket={socket}
+                        socketRef={socket}
                         isSocketConnected={connected}
                         controllerId={controllerId}
                         controllerClientId={controllerClientId}

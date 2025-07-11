@@ -9,8 +9,8 @@ import { useEffect, useRef, useState } from 'react';
  */
 export default function usePeerTimeSync(socket, localId, peerId, onUpdate) {
   // --- Tuning constants for better sync ---
-  const SYNC_INTERVAL = 900; // ms, adaptive in future
-  const SYNC_BATCH = 6; // Number of samples per round
+  const SYNC_INTERVAL = 500; // ms, was 900
+  const SYNC_BATCH = 10; // Number of samples per round, was 6
   const TRIM_RATIO = 0.22; // Outlier filtering
   const MAX_RTT = 220; // ms, ignore samples above this
 
@@ -113,8 +113,12 @@ export default function usePeerTimeSync(socket, localId, peerId, onUpdate) {
       };
       dataChannel.onmessage = (event) => {
         const msg = JSON.parse(event.data);
-        if (msg.type === 'timeSync') {
-          // Respond with local time
+        if (msg.type === 'ntpSync') {
+          handleNtpSync(msg, dataChannel);
+        } else if (msg.type === 'ntpSyncReply') {
+          handleNtpSyncReply(msg);
+        } else if (msg.type === 'timeSync') {
+          // Legacy fallback: Respond with local time
           dataChannel.send(JSON.stringify({ type: 'timeSyncReply', clientSent: msg.clientSent, serverTime: Date.now() }));
         } else if (msg.type === 'timeSyncReply') {
           handleTimeSyncReply(msg);
@@ -122,16 +126,15 @@ export default function usePeerTimeSync(socket, localId, peerId, onUpdate) {
       };
     }
 
-    // --- Enhanced: Batch time sync for better accuracy ---
+    // --- Enhanced: Batch time sync for better accuracy using NTP 4-way handshake ---
     function performBatchSync(dataChannel) {
       syncSamplesRef.current = [];
       let sent = 0;
-      let completed = 0;
 
       function sendSync() {
         if (sent >= SYNC_BATCH) return;
-        const now = Date.now();
-        dataChannel.send(JSON.stringify({ type: 'timeSync', clientSent: now }));
+        const t0 = (window.performance && performance.now) ? performance.now() : Date.now();
+        dataChannel.send(JSON.stringify({ type: 'ntpSync', t0 }));
         sent++;
       }
 
@@ -157,11 +160,29 @@ export default function usePeerTimeSync(socket, localId, peerId, onUpdate) {
         // Calculate jitter (mean deviation from avg RTT)
         const jitterVal = trimmed.reduce((sum, s) => sum + Math.abs(s.rtt - avgRtt), 0) / trimmed.length;
 
-        setPeerOffsetWithUpdate(avgOffset);
+        // Smooth offset using exponential moving average
+        setPeerOffsetWithUpdate(prev => prev === 0 ? avgOffset : prev * 0.7 + avgOffset * 0.3);
         setPeerRttWithUpdate(avgRtt);
         setJitterWithUpdate(jitterVal);
         lastRttRef.current = avgRtt;
       }, 120 + SYNC_BATCH * 10);
+    }
+
+    // --- NTP 4-way handshake message handling ---
+    function handleNtpSync(msg, dataChannel) {
+      // msg: { type: 'ntpSync', t0 }
+      const t1 = (window.performance && performance.now) ? performance.now() : Date.now();
+      dataChannel.send(JSON.stringify({ type: 'ntpSyncReply', t0: msg.t0, t1, t2: t1 }));
+    }
+
+    function handleNtpSyncReply(msg) {
+      // msg: { type: 'ntpSyncReply', t0, t1, t2 }
+      const t3 = (window.performance && performance.now) ? performance.now() : Date.now();
+      // NTP offset = ((t1 - t0) + (t2 - t3)) / 2
+      // RTT = (t3 - t0) - (t2 - t1)
+      const offset = ((msg.t1 - msg.t0) + (msg.t2 - t3)) / 2;
+      const rtt = (t3 - msg.t0) - (msg.t2 - msg.t1);
+      syncSamplesRef.current.push({ offset, rtt });
     }
 
     function handleTimeSyncReply(msg) {

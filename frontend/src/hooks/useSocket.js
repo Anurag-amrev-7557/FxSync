@@ -547,6 +547,7 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
   // Enhanced return object with more diagnostics, utility methods, and controller status
   return {
     socket: socketRef.current,
+    socketRef, // add this for stable reference
     connected,
     controllerId,
     controllerClientId,
@@ -556,6 +557,7 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
     rtt,
     getServerTime,
     forceTimeSync, // for immediate sync
+    forceNtpBatchSync, // <-- add this
     pendingControllerRequests,
     controllerRequestReceived,
     controllerOfferReceived,
@@ -607,7 +609,7 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
         socketRef.current.off(event, handler);
       }
     },
-    forceNtpBatchSync,
+    // Expose a method to trigger resync
     triggerResync,
   };
 } 
