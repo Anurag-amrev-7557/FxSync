@@ -1,9 +1,7 @@
 import React, { useState } from 'react';
-import useServerTimeSync from '../hooks/useServerTimeSync';
 
-export default function ResyncAnalytics({ resyncHistory, resyncStats, isVisible = false, socket }) {
+export default function ResyncAnalytics({ resyncHistory, resyncStats, isVisible = false }) {
   const [isExpanded, setIsExpanded] = useState(false);
-  const { getServerTime } = useServerTimeSync(socket);
 
   if (!isVisible || resyncHistory.length === 0) {
     return null;
@@ -49,7 +47,7 @@ export default function ResyncAnalytics({ resyncHistory, resyncStats, isVisible 
   };
 
   const formatTimeAgo = (timestamp) => {
-    const now = getServerTime();
+    const now = Date.now();
     const diff = now - timestamp;
     const seconds = Math.floor(diff / 1000);
     const minutes = Math.floor(seconds / 60);
