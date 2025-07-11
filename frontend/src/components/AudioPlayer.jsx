@@ -990,6 +990,38 @@ function maybeCorrectDrift(audio, expected, context = {}, updateDebug) {
     return () => clearInterval(interval);
   }, [socket, isController, getServerTime, audioLatency, clientId, rtt, smoothedOffset, adaptiveThreshold, socket?.sessionId]);
 
+  // --- Heartbeat-based drift correction ---
+useEffect(() => {
+  if (!socket || !audioRef.current) return;
+
+  const audio = audioRef.current;
+  const DRIFT_THRESHOLD_HEARTBEAT = 0.05; // 50ms
+
+  function handleHeartbeat({ isPlaying, timestamp, lastUpdated, controllerId, serverTime, syncSeq }) {
+    if (!audio) return;
+    if (!isPlaying) return;
+    // Use getNow for best time sync
+    const now = getNow(getServerTime);
+    // Estimate expected playback position
+    const expected = timestamp + (now - lastUpdated) / 1000;
+    if (!isFiniteNumber(expected)) return;
+    const drift = audio.currentTime - expected;
+    if (Math.abs(drift) > DRIFT_THRESHOLD_HEARTBEAT) {
+      setCurrentTimeSafely(audio, expected, setCurrentTime);
+      setSyncStatus('Heartbeat Drift Correction');
+      setTimeout(() => setSyncStatus('In Sync'), 600);
+      setDriftCorrectionCount(c => c + 1);
+      setLastCorrectionType('heartbeat');
+      setDriftCorrectionHistory(h => [{ type: 'heartbeat', drift, ts: now }, ...h.slice(0, 9)]);
+    }
+  }
+
+  socket.on('playback_heartbeat', handleHeartbeat);
+  return () => {
+    socket.off('playback_heartbeat', handleHeartbeat);
+  };
+}, [socket, getServerTime]);
+
   // Enhanced: On mount, immediately request sync state on join, with improved error handling, logging, and edge case resilience
   useEffect(() => {
     if (!socket || !audioRef.current || !audioUrl) return;

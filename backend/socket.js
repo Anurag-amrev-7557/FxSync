@@ -101,6 +101,20 @@ export function setupSocket(io) {
             syncSeq: session.syncSeq
           });
         }, 2000); // every 2 seconds
+        // --- Heartbeat emission for drift correction ---
+        sessionSyncIntervals[`${sessionId}_heartbeat`] = setInterval(() => {
+          const session = getSession(sessionId);
+          if (!session) return;
+          if (!session.isPlaying) return;
+          io.to(sessionId).emit('playback_heartbeat', {
+            isPlaying: session.isPlaying,
+            timestamp: session.timestamp,
+            lastUpdated: session.lastUpdated,
+            controllerId: session.controllerId,
+            serverTime: Date.now(),
+            syncSeq: session.syncSeq || 0
+          });
+        }, 1000); // every 1 second
       }
     });
 
