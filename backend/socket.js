@@ -79,8 +79,25 @@ export function setupSocket(io) {
       if (becameController) {
         io.to(sessionId).emit('controller_change', socket.id);
         io.to(sessionId).emit('controller_client_change', clientId);
+        // Emit sync_state after controller change
+        io.to(sessionId).emit('sync_state', {
+          isPlaying: session.isPlaying,
+          timestamp: session.timestamp,
+          lastUpdated: session.lastUpdated,
+          controllerId: session.controllerId,
+          serverTime: Date.now(),
+        });
       }
       log('Client joined session', sessionId, 'Current queue:', getQueue(sessionId));
+
+      // --- Emit sync_state to all clients after join (for robust initial sync) ---
+      io.to(sessionId).emit('sync_state', {
+        isPlaying: session.isPlaying,
+        timestamp: session.timestamp,
+        lastUpdated: session.lastUpdated,
+        controllerId: session.controllerId,
+        serverTime: Date.now(),
+      });
     });
 
     socket.on('play', ({ sessionId, timestamp } = {}) => {
