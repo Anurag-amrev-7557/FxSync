@@ -28,6 +28,7 @@ function buildSessionSyncState(session) {
 }
 
 export function setupSocket(io) {
+  const clientDriftMap = {}; // sessionId -> { clientId: { drift, timestamp } }
   io.on('connection', (socket) => {
     console.log('Socket connected:', socket.id);
 
@@ -786,8 +787,6 @@ export function setupSocket(io) {
     });
 
     // Store per-client drift for diagnostics/adaptive correction
-    const clientDriftMap = {};
-
     socket.on('drift_report', ({ sessionId, drift, clientId, timestamp, manual, resyncDuration, beforeDrift, afterDrift, improvement } = {}) => {
       if (!sessionId || typeof drift !== 'number' || !clientId) return;
       if (!clientDriftMap[sessionId]) clientDriftMap[sessionId] = {};
