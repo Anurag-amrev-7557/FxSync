@@ -681,6 +681,9 @@ function SessionPage({
                         rtt={rtt}
                         sessionSyncState={sessionSyncState}
                         forceNtpBatchSync={forceNtpBatchSync}
+                        queue={queue}
+                        selectedTrackIdx={selectedTrackIdx}
+                        onSelectTrack={handleSelectTrack}
                       />
                     </div>
                     <div className="p-4">
@@ -815,6 +818,9 @@ function SessionPage({
                         rtt={rtt}
                         sessionSyncState={sessionSyncState}
                         forceNtpBatchSync={forceNtpBatchSync}
+                        queue={queue}
+                        selectedTrackIdx={selectedTrackIdx}
+                        onSelectTrack={handleSelectTrack}
                       />
                     </div>
                   </div>
@@ -848,6 +854,9 @@ function SessionPage({
                         rtt={rtt}
                         sessionSyncState={sessionSyncState}
                         forceNtpBatchSync={forceNtpBatchSync}
+                        queue={queue}
+                        selectedTrackIdx={selectedTrackIdx}
+                        onSelectTrack={handleSelectTrack}
                       />
                     </div>
                   </div>

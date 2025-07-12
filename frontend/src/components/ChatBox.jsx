@@ -122,27 +122,60 @@ export default function ChatBox({ socket, sessionId, clientId, messages = [], on
           ) : (
             messages.map((msg, i) => (
               <div key={`${msg.sender}-${msg.timestamp}-${i}`} className={`flex transition-all duration-300 ${msg.sender === clientId ? 'justify-end' : 'justify-start'} ${messageAnimations[i]?.animationClass || ''}`}>
-                <div className={`max-w-xs lg:max-w-md ${msg.sender === clientId ? 'order-2' : 'order-1'}`}>
+                <div className={`relative max-w-xs lg:max-w-md ${msg.sender === clientId ? 'order-2' : 'order-1'}`}>
                   {msg.reaction ? (
                     <div className={`flex items-center gap-2 ${msg.sender === clientId ? 'justify-end' : 'justify-start'}`}>
                       <span className="text-xs text-neutral-500">
                         {getDisplayName(msg.sender)}
                       </span>
-                      <div className="bg-neutral-800 rounded-lg px-3 py-2 text-lg">
+                      <div className="bg-neutral-800 rounded-lg px-3 py-2 text-lg shadow-md">
                         {msg.reaction}
                       </div>
                     </div>
                   ) : (
-                    <div className={`${msg.sender === clientId ? 'bg-primary text-white' : 'bg-neutral-800 text-white'} rounded-lg px-3 py-2`}>
+                    <div
+                      className={`group relative px-3 py-2 rounded-2xl shadow-lg transition-all duration-200 ${msg.sender === clientId
+                        ? 'bg-white text-black ml-8'
+                        : 'bg-white text-black mr-8'}
+                        `}
+                      style={{
+                        borderTopRightRadius: msg.sender === clientId ? '1.5rem' : undefined,
+                        borderTopLeftRadius: msg.sender !== clientId ? '1.5rem' : undefined,
+                      }}
+                    >
+                      {/* Bubble tail */}
+                      <span
+                        className={`absolute bottom-0 ${msg.sender === clientId ? 'right-0 -mr-2' : 'left-0 -ml-2'} w-5 h-5 overflow-hidden pointer-events-none`}
+                      >
+                        <svg
+                          width="20"
+                          height="20"
+                          viewBox="0 0 20 20"
+                          fill="none"
+                          xmlns="http://www.w3.org/2000/svg"
+                          className="absolute bottom-0"
+                        >
+                          <path
+                            d={msg.sender === clientId
+                              ? 'M0 20 Q20 0 20 20 Z'
+                              : 'M20 20 Q0 0 0 20 Z'}
+                            fill="#fff"
+                          />
+                        </svg>
+                      </span>
                       <div className="flex items-center gap-2 mb-1">
                         <span className="text-xs font-medium opacity-80">
                           {getDisplayName(msg.sender)}
                         </span>
-                        <span className="text-xs opacity-60">
+                        <span className="text-xs opacity-60 group-hover:hidden">
                           {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'now'}
                         </span>
+                        {/* Full timestamp on hover */}
+                        <span className="hidden group-hover:inline text-xs opacity-80">
+                          {msg.timestamp ? new Date(msg.timestamp).toLocaleString() : 'now'}
+                        </span>
                       </div>
-                      <p className="text-sm">{msg.message}</p>
+                      <p className="text-sm break-words">{msg.message}</p>
                     </div>
                   )}
                 </div>
@@ -229,27 +262,60 @@ export default function ChatBox({ socket, sessionId, clientId, messages = [], on
         ) : (
           messages.map((msg, i) => (
             <div key={`${msg.sender}-${msg.timestamp}-${i}`} className={`flex transition-all duration-300 ${msg.sender === clientId ? 'justify-end' : 'justify-start'} ${messageAnimations[i]?.animationClass || ''}`}>
-              <div className={`max-w-xs lg:max-w-md ${msg.sender === clientId ? 'order-2' : 'order-1'}`}>
+              <div className={`relative max-w-xs lg:max-w-md ${msg.sender === clientId ? 'order-2' : 'order-1'}`}>
                 {msg.reaction ? (
                   <div className={`flex items-center gap-2 ${msg.sender === clientId ? 'justify-end' : 'justify-start'}`}>
                     <span className="text-xs text-neutral-500">
                       {getDisplayName(msg.sender)}
                     </span>
-                    <div className="bg-neutral-800 rounded-lg px-3 py-2 text-lg">
+                    <div className="bg-neutral-800 rounded-lg px-3 py-2 text-lg shadow-md">
                       {msg.reaction}
                     </div>
                   </div>
                 ) : (
-                  <div className={`${msg.sender === clientId ? 'bg-primary text-white' : 'bg-neutral-800 text-white'} rounded-lg px-3 py-2`}>
+                  <div
+                    className={`group relative px-3 py-2 rounded-2xl shadow-lg transition-all duration-200 ${msg.sender === clientId
+                      ? 'bg-white text-black ml-8'
+                      : 'bg-white text-black mr-8'}
+                      `}
+                    style={{
+                      borderTopRightRadius: msg.sender === clientId ? '1.5rem' : undefined,
+                      borderTopLeftRadius: msg.sender !== clientId ? '1.5rem' : undefined,
+                    }}
+                  >
+                    {/* Bubble tail */}
+                    <span
+                      className={`absolute bottom-0 ${msg.sender === clientId ? 'right-0 -mr-2' : 'left-0 -ml-2'} w-5 h-5 overflow-hidden pointer-events-none`}
+                    >
+                      <svg
+                        width="20"
+                        height="20"
+                        viewBox="0 0 20 20"
+                        fill="none"
+                        xmlns="http://www.w3.org/2000/svg"
+                        className="absolute bottom-0"
+                      >
+                        <path
+                          d={msg.sender === clientId
+                            ? 'M0 20 Q20 0 20 20 Z'
+                            : 'M20 20 Q0 0 0 20 Z'}
+                          fill="#fff"
+                        />
+                      </svg>
+                    </span>
                     <div className="flex items-center gap-2 mb-1">
                       <span className="text-xs font-medium opacity-80">
                         {getDisplayName(msg.sender)}
                       </span>
-                      <span className="text-xs opacity-60">
+                      <span className="text-xs opacity-60 group-hover:hidden">
                         {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'now'}
                       </span>
+                      {/* Full timestamp on hover */}
+                      <span className="hidden group-hover:inline text-xs opacity-80">
+                        {msg.timestamp ? new Date(msg.timestamp).toLocaleString() : 'now'}
+                      </span>
                     </div>
-                    <p className="text-sm">{msg.message}</p>
+                    <p className="text-sm break-words">{msg.message}</p>
                   </div>
                 )}
               </div>

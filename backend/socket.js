@@ -836,6 +836,13 @@ export function setupSocket(io) {
     });
 
     socket.on('disconnect', () => {
+      // Remove client from all sessions and emit updated clients list
+      for (const [sessionId, session] of Object.entries(getAllSessions())) {
+        if (session.clients.has(socket.id)) {
+          removeClient(sessionId, socket.id);
+          io.to(sessionId).emit('clients_update', getClients(sessionId));
+        }
+      }
       setTimeout(() => {
         for (const [sessionId, session] of Object.entries(getAllSessions())) {
           if (!isSessionEmpty(sessionId)) continue;

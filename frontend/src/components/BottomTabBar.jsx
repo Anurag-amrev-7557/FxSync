@@ -61,12 +61,13 @@ function BottomTabBar({ mobileTab, setMobileTab, handleExitRoom }) {
         )}
         <div className={`w-5 h-5 flex items-center justify-center`}>
           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={mobileTab === 0 ? 'stroke-black' : 'stroke-white'}>
-            <path d="M9 18V5l12-2v13" className={mobileTab === 0 ? 'stroke-black' : 'stroke-white'}></path>
-            <circle cx="6" cy="18" r="3" className={mobileTab === 0 ? 'fill-black/10 stroke-black' : 'fill-transparent stroke-white'}></circle>
-            <circle cx="18" cy="16" r="3" className={mobileTab === 0 ? 'fill-black/10 stroke-black' : 'fill-transparent stroke-white'}></circle>
+            <path d="M17 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2" className={mobileTab === 0 ? 'stroke-black' : 'stroke-white'}></path>
+            <circle cx="9" cy="7" r="4" className={mobileTab === 0 ? 'fill-black/10 stroke-black' : 'fill-transparent stroke-white'}></circle>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87" className={mobileTab === 0 ? 'stroke-black' : 'stroke-white'}></path>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75" className={mobileTab === 0 ? 'stroke-black' : 'stroke-white'}></path>
           </svg>
         </div>
-        <span className={`text-sm font-medium ${mobileTab === 0 ? 'text-black' : 'text-white'}`}>Audio</span>
+        <span className={`text-sm font-medium ${mobileTab === 0 ? 'text-black' : 'text-white'}`}>Users</span>
         {mobileTab === 0 && (
           <div className="absolute inset-0 bg-primary/10 rounded-full animate-pulse pointer-events-none"></div>
         )}

@@ -15,6 +15,48 @@ if (typeof window !== 'undefined' && !window._audioPlayerErrorHandlerAdded) {
   window._audioPlayerErrorHandlerAdded = true;
 }
 
+// --- RippleButton ---
+function RippleButton({ children, className = '', style = {}, ...props }) {
+  const btnRef = useRef(null);
+
+  function createRipple(event) {
+    const button = btnRef.current;
+    if (!button) return;
+
+    const rect = button.getBoundingClientRect();
+    const size = Math.max(rect.width, rect.height);
+    const x = event.clientX - rect.left - size / 2;
+    const y = event.clientY - rect.top - size / 2;
+
+    const ripple = document.createElement('span');
+    ripple.className = 'ripple-effect';
+    ripple.style.width = ripple.style.height = `${size}px`;
+    ripple.style.left = `${x}px`;
+    ripple.style.top = `${y}px`;
+
+    button.appendChild(ripple);
+
+    ripple.addEventListener('animationend', () => {
+      ripple.remove();
+    });
+  }
+
+  return (
+    <button
+      ref={btnRef}
+      className={className + ' overflow-hidden relative'}
+      style={style}
+      onClick={e => {
+        if (!props.disabled) createRipple(e);
+        if (props.onClick) props.onClick(e);
+      }}
+      {...props}
+    >
+      {children}
+    </button>
+  );
+}
+
 const DRIFT_THRESHOLD = 0.05; // seconds - reduced for better detection (was 0.12)
 const PLAY_OFFSET = 0.35; // seconds (350ms future offset for play events)
 const DEFAULT_AUDIO_LATENCY = 0.08; // 80ms fallback if not measured
@@ -1016,7 +1058,7 @@ const SyncUtils = {
           case 'emergency_seek':
             syncResult = await SeekSyncUtils.smartSeek(audio, expectedTime, setCurrentTime, {
               forceSeek: true,
-              preservePlayback: preserveState
+              preserveState: preserveState
             });
             break;
 
@@ -1457,7 +1499,11 @@ export default function AudioPlayer({
   timeOffset, // fallback
   sessionSyncState = null,
   forceNtpBatchSync,
+  queue = [],
+  selectedTrackIdx = 0,
+  onSelectTrack = null,
 }) {
+  const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
   const [audioUrl, setAudioUrl] = useState(null);
   const [loading, setLoading] = useState(true);
   const [audioError, setAudioError] = useState(null);
@@ -1477,6 +1523,80 @@ export default function AudioPlayer({
   const correctionInProgressRef = useRef(false);
   const [displayedCurrentTime, setDisplayedCurrentTime] = useState(0);
   const [correctionInProgress, setCorrectionInProgress] = useState(false);
+
+  // Add after other state declarations in AudioPlayer:
+const [audioMetadata, setAudioMetadata] = useState(null);
+const [metadataLoading, setMetadataLoading] = useState(false);
+const [metadataError, setMetadataError] = useState(null);
+
+// Add at the top of the component, after hooks:
+const [prevMetadata, setPrevMetadata] = useState(null);
+const [isTransitioning, setIsTransitioning] = useState(false);
+const [transitionKey, setTransitionKey] = useState('');
+
+function handleNext() {
+  if (!Array.isArray(queue) || queue.length === 0) return;
+  if (typeof onSelectTrack !== "function") return;
+  let nextIdx = selectedTrackIdx + 1;
+  if (nextIdx >= queue.length) nextIdx = 0;
+  onSelectTrack(nextIdx, queue[nextIdx]);
+}
+
+function handlePrev() {
+  if (!Array.isArray(queue) || queue.length === 0) return;
+  if (typeof onSelectTrack !== "function") return;
+  let prevIdx = selectedTrackIdx - 1;
+  if (prevIdx < 0) prevIdx = queue.length - 1;
+  onSelectTrack(prevIdx, queue[prevIdx]);
+}
+
+useEffect(() => {
+  setAudioMetadata(null);
+  setMetadataError(null);
+  if (currentTrack && currentTrack.url && currentTrack.url.startsWith('/audio/')) {
+    setMetadataLoading(true);
+    // Extract relative path after /audio/
+    const relPath = decodeURIComponent(currentTrack.url.replace(/^.*\/audio\//, ''));
+    console.log('Fetching metadata for:', relPath);
+    fetch(`${backendUrl}/audio/metadata/${relPath}`)
+      .then(res => {
+        if (!res.ok) throw new Error('Failed to fetch metadata');
+        return res.json();
+      })
+      .then(data => {
+        console.log('Metadata received:', data);
+        console.log('Cover data:', data.cover);
+        if (data.cover) {
+          console.log('Cover format:', data.cover.format);
+          console.log('Cover data length:', data.cover.data?.length);
+          console.log('Cover data preview:', data.cover.data?.substring(0, 50));
+        }
+        setAudioMetadata(data);
+        setMetadataLoading(false);
+      })
+      .catch(err => {
+        console.error('Metadata fetch error:', err);
+        setMetadataError('Could not load metadata');
+        setMetadataLoading(false);
+      });
+  }
+}, [currentTrack]);
+
+// Watch for track/metadata change to trigger transition
+useEffect(() => {
+  const newKey = audioMetadata?.common?.title || currentTrack?.url || 'default';
+  if (transitionKey && newKey !== transitionKey) {
+    setIsTransitioning(true);
+    setTimeout(() => {
+      setPrevMetadata(audioMetadata);
+      setIsTransitioning(false);
+      setTransitionKey(newKey);
+    }, 300); // 300ms fade duration
+  } else if (!transitionKey && newKey) {
+    setTransitionKey(newKey);
+  }
+  // eslint-disable-next-line
+}, [audioMetadata, currentTrack]);
 
   // Enhanced state management for atomic operations
   const [audioState, setAudioState] = useState({
@@ -1728,7 +1848,6 @@ export default function AudioPlayer({
       let url = currentTrack.url;
       // If url is relative, prepend backend URL
       if (url.startsWith('/audio/')) {
-        const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
         // Remove trailing slash if present
         url = backendUrl.replace(/\/$/, '') + url;
       }
@@ -1860,7 +1979,6 @@ export default function AudioPlayer({
   // Fetch default audio URL only if no currentTrack
   useEffect(() => {
     if (currentTrack && currentTrack.url) return;
-    const backendUrl = import.meta.env.VITE_BACKEND_URL;
     if (!backendUrl) {
       setAudioError(
         <>
@@ -4566,9 +4684,6 @@ export default function AudioPlayer({
           )}
           {/* Top: Track info and sync status */}
           <div className="flex items-center justify-between mb-1">
-            <div className="text-xs text-white font-semibold truncate max-w-[60%]">
-              Now Playing
-            </div>
             <div className="flex items-center gap-1">
               <SyncStatus status={audioState.syncStatus} />
                           {audioState.resyncInProgress && (
@@ -4580,59 +4695,7 @@ export default function AudioPlayer({
             {audioState.rateCorrectionActive && !audioState.correctionInProgress && !audioState.resyncInProgress && (
               <span className="ml-1 px-2 py-0.5 bg-blue-500/20 text-blue-400 text-[10px] rounded font-bold animate-pulse">Rate Sync</span>
             )}
-              {isController && (
-                <span className="ml-1 px-2 py-0.5 bg-primary/20 text-primary text-[10px] rounded font-bold">Controller</span>
-              )}
             </div>
-          </div>
-          {/* Track Title */}
-          <div className="mb-2 text-center min-h-[1.5em] relative flex items-center justify-center" style={{height: '1.5em'}}>
-            <span
-              className={`inline-block mt-6 text-md font-semibold text-white transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]
-                ${animating && direction === 'up' ? 'opacity-0 translate-x-6 scale-95' : ''}
-                ${animating && direction === 'down' ? 'opacity-0 -translate-x-6 scale-95' : ''}
-                ${!animating ? 'opacity-100 translate-x-0 scale-100' : ''}
-              `}
-              style={{
-                willChange: 'opacity, transform',
-                transitionProperty: 'opacity, transform',
-              }}
-            >
-              {displayedTitle || 'Unknown Track'}
-            </span>
-          </div>
-          {/* Progress bar */}
-          <div className="flex items-center gap-2 w-full">
-            <span className="text-[11px] text-neutral-400 w-8 text-left font-mono">{formatTime(displayedCurrentTime)}</span>
-            <input
-              type="range"
-              min={0}
-              max={isFinite(duration) ? duration : 0}
-              step={0.01}
-              value={isFinite(displayedCurrentTime) ? displayedCurrentTime : 0}
-              onChange={handleSeek}
-              className="flex-1 h-3 bg-neutral-800 rounded-full appearance-none cursor-pointer accent-primary"
-              style={{ WebkitAppearance: 'none', appearance: 'none' }}
-              disabled={disabled || !isController || !audioUrl}
-            />
-            <span className="text-[11px] text-neutral-400 w-8 text-right font-mono">
-              {duration && duration > 0 ? formatTime(duration) : '--:--'}
-            </span>
-          </div>
-          {/* Controls row */}
-          <div className="flex items-center justify-between mt-1">
-            <button
-              className="w-12 h-12 rounded-full flex items-center justify-center bg-primary shadow-lg text-white text-2xl active:scale-95 transition-all duration-200"
-              onClick={isPlaying ? handlePause : handlePlay}
-              disabled={disabled || !isController || !audioUrl}
-              aria-label={isPlaying ? 'Pause' : 'Play'}
-            >
-              {isPlaying ? (
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
-              ) : (
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-              )}
-            </button>
             <button
               className={`ml-2 px-3 py-2 rounded-lg text-xs font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 shadow ${
                 audioState.resyncInProgress 
@@ -4661,15 +4724,372 @@ export default function AudioPlayer({
                               {audioState.resyncInProgress ? 'Syncing...' : smartResyncSuggestion ? 'Sync*' : 'Sync'}
             </span>
           </button>
-          {process.env.NODE_ENV === 'development' && (
-            <button
-              className="ml-2 px-2 py-2 rounded-lg text-xs font-medium bg-gray-600 hover:bg-gray-700 text-white transition-all duration-200"
-              onClick={debugCurrentDrift}
-              aria-label="Debug Drift"
+          </div>
+        {/* Smooth Now Playing Section with animated transitions on track change */}
+        <div
+          className="flex items-center gap-3"
+          style={{
+            minHeight: '80px', // Increased to ensure enough space for all content
+            minWidth: '320px', // Set a reasonable min width for the player
+            width: '100%',
+            boxSizing: 'border-box',
+            alignItems: 'center',
+            transition: 'min-height 0.2s',
+          }}
+        >
+          {/* Album Cover Art (replaces SVG icon) */}
+          <div
+            className="w-12 h-12 bg-primary/20 rounded-lg flex items-center justify-center overflow-hidden border border-neutral-700"
+            style={{
+              minWidth: '48px',
+              minHeight: '48px',
+              width: '48px',
+              height: '48px',
+              flexShrink: 0,
+            }}
+          >
+            <div
+              key={
+                audioMetadata?.cover?.data
+                  ? audioMetadata.cover.data.slice(0, 32)
+                  : currentTrack?.title || 'no-cover'
+              }
+              className="transition-all duration-500 ease-in-out w-12 h-12 flex items-center justify-center"
+              style={{
+                opacity: metadataLoading ? 0.5 : 1,
+                transform: metadataLoading
+                  ? 'scale(0.95)'
+                  : 'scale(1)',
+                minWidth: '48px',
+                minHeight: '48px',
+                width: '48px',
+                height: '48px',
+              }}
             >
-              Debug
-            </button>
-          )}
+              {metadataLoading ? (
+                <LoadingSpinner size="xs" />
+              ) : audioMetadata ? (() => {
+                const embeddedCover = audioMetadata.cover && typeof audioMetadata.cover.data === 'string' && audioMetadata.cover.data.length > 0
+                  ? `data:${audioMetadata.cover.format};base64,${audioMetadata.cover.data}`
+                  : null;
+                const title = audioMetadata.common?.title || currentTrack?.title || 'default';
+                const normalizedTitle = title.replace(' - PagalNew', '');
+                const staticCoverUrl = `${backendUrl}/audio/uploads/covers/${normalizedTitle}.jpg`;
+                return (
+                  <img
+                    src={embeddedCover || staticCoverUrl}
+                    alt="Album Art"
+                    className="w-12 h-12 object-cover rounded-lg transition-all duration-500 ease-in-out"
+                    style={{
+                      opacity: 1,
+                      transition: 'opacity 0.5s, transform 0.5s',
+                      minWidth: '48px',
+                      minHeight: '48px',
+                      width: '48px',
+                      height: '48px',
+                    }}
+                    onError={e => {
+                      // Fallback to SVG placeholder if cover art fails to load
+                      e.target.style.display = 'none';
+                      const placeholder = document.createElement('div');
+                      placeholder.innerHTML = `
+                        <div class="w-12 h-12 rounded-lg border border-neutral-700 bg-neutral-800 flex items-center justify-center">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-neutral-400">
+                            <path d="M9 18V5l12-2v13"></path>
+                            <circle cx="6" cy="18" r="3"></circle>
+                            <circle cx="18" cy="16" r="3"></circle>
+                          </svg>
+                        </div>
+                      `;
+                      e.target.parentNode.insertBefore(placeholder.firstElementChild, e.target);
+                    }}
+                  />
+                );
+              })() : (
+                // If no metadata, show SVG placeholder
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary transition-all duration-500 ease-in-out">
+                  <path d="M9 18V5l12-2v13"></path>
+                  <circle cx="6" cy="18" r="3"></circle>
+                  <circle cx="18" cy="16" r="3"></circle>
+                </svg>
+              )}
+            </div>
+          </div>
+          <div
+            className="flex-1 min-w-0"
+            style={{
+              minHeight: '48px',
+              minWidth: '0',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'center',
+            }}
+          >
+            {/* Audio Metadata (Title, Album, Artist) */}
+            <div
+              key={
+                audioMetadata?.common?.title
+                  ? audioMetadata.common.title
+                  : currentTrack?.title || 'no-title'
+              }
+              className="transition-all duration-500 ease-in-out"
+              style={{
+                opacity: metadataLoading ? 0.5 : 1,
+                transform: metadataLoading
+                  ? 'translateY(8px) scale(0.98)'
+                  : 'translateY(0) scale(1)',
+                minHeight: '32px',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'center',
+              }}
+            >
+              {metadataLoading ? (
+                <div className="flex justify-center items-center my-2" style={{ minHeight: '32px' }}>
+                  <LoadingSpinner size="sm" text="Loading metadata..." />
+                </div>
+              ) : (
+                <div className="flex flex-col justify-center min-w-0" style={{ minHeight: '32px' }}>
+                  <div className="flex items-baseline gap-2 min-w-0">
+                    <span
+                      className="text-lg font-bold text-white truncate transition-all duration-500"
+                      title={
+                        (audioMetadata?.common?.title
+                          ? audioMetadata.common.title.replace(' - PagalNew', '')
+                          : currentTrack?.title
+                          ? currentTrack.title.replace(' - PagalNew', '')
+                          : ''
+                        )
+                      }
+                    >
+                      {audioMetadata?.common?.title
+                        ? audioMetadata.common.title.replace(' - PagalNew', '')
+                        : currentTrack?.title
+                        ? currentTrack.title.replace(' - PagalNew', '')
+                        : 'Unknown Title'
+                      }
+                    </span>
+                    {audioMetadata?.common?.album && (
+                      <span className="text-sm text-neutral-400 truncate" title={audioMetadata.common.album}>
+                        {audioMetadata.common.album}
+                      </span>
+                    )}
+                  </div>
+                  {audioMetadata?.common?.artist && (
+                    <div className="text-sm text-neutral-400 truncate" title={audioMetadata.common.artist}>
+                      {audioMetadata.common.artist}
+                    </div>
+                  )}
+                  {metadataError && (
+                    <div className="text-xs text-red-400 text-center my-2">{metadataError}</div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+          {metadataError && <div className="text-xs text-red-400 text-center my-2">{metadataError}</div>}
+{/* Progress Bar with Timer and Duration */}
+<div>
+  <input
+    type="range"
+    min={0}
+    max={isFinite(duration) ? duration : 0}
+    step={0.01}
+    value={isFinite(displayedCurrentTime) ? displayedCurrentTime : 0}
+    onChange={handleSeek}
+    className="w-full h-1 rounded-lg appearance-none cursor-pointer focus:outline-none focus:ring-0"
+    style={{
+      WebkitAppearance: 'none',
+      appearance: 'none',
+      outline: 'none',
+      boxShadow: 'none',
+      backgroundColor: 'rgba(255, 255, 255, 0.1)', // light grey with reduced opacity
+      border: 'none', // Remove any border
+    }}
+    disabled={disabled || !isController || !audioUrl}
+  />
+  <style>
+    {`
+      input[type="range"].w-full::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: #fff;
+        box-shadow: 0 1px 4px rgba(255,255,255,0.08);
+        cursor: pointer;
+        transition: background 0.2s;
+        /* Center thumb vertically without changing heights */
+        margin-top: -4.5px;
+        border: none;
+      }
+      input[type="range"].w-full:disabled::-webkit-slider-thumb {
+        background: #f3f4f6;
+        cursor: not-allowed;
+        border: none;
+      }
+      input[type="range"].w-full::-moz-range-thumb {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: #fff;
+        box-shadow: 0 1px 4px rgba(255,255,255,0.08);
+        cursor: pointer;
+        transition: background 0.2s;
+        border: none;
+      }
+      input[type="range"].w-full:disabled::-moz-range-thumb {
+        background: #f3f4f6;
+        cursor: not-allowed;
+        border: none;
+      }
+      input[type="range"].w-full::-ms-thumb {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: #fff;
+        cursor: pointer;
+        transition: background 0.2s;
+        border: none;
+        /* Center thumb vertically for IE/Edge */
+        margin-top: 0px;
+      }
+      input[type="range"].w-full:disabled::-ms-thumb {
+        background: #f3f4f6;
+        cursor: not-allowed;
+        border: none;
+      }
+      input[type="range"].w-full::-webkit-slider-runnable-track {
+        height: 8px;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.1);
+        border: none;
+      }
+      input[type="range"].w-full::-ms-fill-lower,
+      input[type="range"].w-full::-ms-fill-upper {
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 8px;
+        border: none;
+      }
+      input[type="range"].w-full:focus {
+        outline: none;
+        box-shadow: none;
+      }
+      input[type="range"].w-full::-moz-range-track {
+        height: 8px;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.1);
+        border: none;
+      }
+      input[type="range"].w-full {
+        background: rgba(255, 255, 255, 0.1);
+        border: none;
+      }
+    `}
+  </style>
+  <div className="flex items-center justify-between mb-1 px-1">
+    <span className="text-xs text-neutral-400 tabular-nums min-w-[40px] text-left">
+      {isFinite(displayedCurrentTime)
+        ? new Date(Math.floor(displayedCurrentTime * 1000)).toISOString().substr(displayedCurrentTime >= 3600 ? 11 : 14, displayedCurrentTime >= 3600 ? 8 : 5)
+        : '0:00'}
+    </span>
+    <span className="text-xs text-neutral-400 tabular-nums min-w-[40px] text-right">
+      {isFinite(duration)
+        ? new Date(Math.floor(duration * 1000)).toISOString().substr(duration >= 3600 ? 11 : 14, duration >= 3600 ? 8 : 5)
+        : '0:00'}
+    </span>
+  </div>
+</div>
+          {/* Controls row with Prev, Play/Pause, Next */}
+          <div className="flex items-center justify-center mt-1 gap-4">
+            <RippleButton
+              className="w-10 h-10 rounded-full flex items-center justify-center bg-neutral-800 hover:bg-neutral-700 shadow text-white text-xl active:scale-95 transition-all duration-200 focus:outline-none focus:ring-0"
+              onClick={handlePrev}
+              disabled={disabled || !isController || !audioUrl}
+              aria-label="Previous"
+              style={{ outline: 'none', boxShadow: 'none' }}
+            >
+              {/* Modern Minimalist Previous Icon */}
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M19 20L9 12l10-8v16z" />
+                <line x1="5" y1="5" x2="5" y2="19" />
+              </svg>
+            </RippleButton>
+            <RippleButton
+              className="w-12 h-12 rounded-full flex items-center justify-center bg-primary shadow-lg text-white text-2xl active:scale-95 transition-all duration-200 mx-3 focus:outline-none focus:ring-0 relative overflow-hidden"
+              onClick={isPlaying ? handlePause : handlePlay}
+              disabled={disabled || !isController || !audioUrl}
+              aria-label={isPlaying ? 'Pause' : 'Play'}
+              style={{ outline: 'none', boxShadow: 'none' }}
+            >
+              <span className="absolute w-11 h-11 rounded-full bg-white"></span>
+              {/* Modern minimalist outlined play/pause/track icon with improved clarity */}
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="30"
+                height="30"
+                viewBox="0 0 28 28"
+                fill="none"
+                className="relative z-10"
+                aria-hidden="true"
+                focusable="false"
+              >
+                {isPlaying ? (
+                  // Outlined pause icon (clearer, more contrast, rounded ends)
+                  <>
+                    <rect
+                      x="7.5"
+                      y="6"
+                      width="4"
+                      height="15"
+                      rx="1.5"
+                      fill="#fff"
+                      stroke="#111"
+                      strokeWidth="2"
+                      opacity="0.95"
+                    />
+                    <rect
+                      x="16.5"
+                      y="6"
+                      width="4"
+                      height="15"
+                      rx="1.5"
+                      fill="#fff"
+                      stroke="#111"
+                      strokeWidth="2"
+                      opacity="0.95"
+                    />
+                  </>
+                ) : (
+                  // Outlined play icon (clearer, more contrast, sharp tip)
+                  <>
+                    <polygon
+                      points="10,7 22,14 10,21"
+                      fill="#fff"
+                      stroke="#111"
+                      strokeWidth="2"
+                      strokeLinejoin="round"
+                      opacity="0.95"
+                    />
+                  </>
+                )}
+              </svg>
+            </RippleButton>
+            <RippleButton
+              className="w-10 h-10 rounded-full flex items-center justify-center bg-neutral-800 hover:bg-neutral-700 shadow text-white text-xl active:scale-95 transition-all duration-200 focus:outline-none focus:ring-0"
+              onClick={handleNext}
+              disabled={disabled || !isController || !audioUrl}
+              aria-label="Next"
+              style={{ outline: 'none', boxShadow: 'none' }}
+            >
+              {/* Modern Minimalist Next Icon */}
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M5 4l10 8-10 8V4z" />
+                <line x1="19" y1="5" x2="19" y2="19" />
+              </svg>
+            </RippleButton>
           </div>
         </div>
         </div>
@@ -4703,22 +5123,6 @@ export default function AudioPlayer({
 
   return (
     <div className={`audio-player transition-all duration-500 ${audioLoaded.animationClass}`}>
-      {/* Track Title */}
-      <div className="mb-2 text-center min-h-[1.5em] relative flex items-center justify-center" style={{height: '1.5em'}}>
-        <span
-          className={`inline-block text-lg font-semibold text-white transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]
-            ${animating && direction === 'up' ? 'opacity-0 translate-x-6 scale-95' : ''}
-            ${animating && direction === 'down' ? 'opacity-0 -translate-x-6 scale-95' : ''}
-            ${!animating ? 'opacity-100 translate-x-0 scale-100' : ''}
-          `}
-          style={{
-            willChange: 'opacity, transform',
-            transitionProperty: 'opacity, transform',
-          }}
-        >
-          {displayedTitle || 'Unknown Track'}
-        </span>
-      </div>
       {/* Audio Element */}
       {audioUrl ? (
         <audio 
@@ -4727,6 +5131,18 @@ export default function AudioPlayer({
           preload={isIOS ? "metadata" : "auto"}
           playsInline={isIOS}
           webkit-playsinline={isIOS ? "true" : undefined}
+          style={{
+            width: 0,
+            height: 0,
+            minWidth: 0,
+            minHeight: 0,
+            maxWidth: 0,
+            maxHeight: 0,
+            display: 'block', // keep in flow but invisible
+            position: 'absolute',
+            left: '-9999px',
+            top: 'auto'
+          }}
           onLoadedMetadata={() => {
             // Ensure audio is paused when metadata loads (especially for listeners)
             const audio = audioRef.current;
@@ -4774,98 +5190,8 @@ export default function AudioPlayer({
         />
       ) : null}
 
-      {/* Now Playing Section */}
-      <div className="bg-neutral-900/50 rounded-lg border border-neutral-800 p-4">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-12 h-12 bg-primary/20 rounded-lg flex items-center justify-center">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
-              <path d="M9 18V5l12-2v13"></path>
-              <circle cx="6" cy="18" r="3"></circle>
-              <circle cx="18" cy="16" r="3"></circle>
-            </svg>
-          </div>
-          <div className="flex-1">
-            <h3 className="text-white font-medium">Now Playing</h3>
-            <p className="text-neutral-400 text-sm">Synchronized audio stream</p>
-          </div>
-          <div className="text-right">
-            <div className="text-white font-mono text-sm">
-              {formatTime(displayedCurrentTime)} / {duration && duration > 0 ? formatTime(duration) : '--:--'}
-            </div>
-            <div className="text-neutral-400 text-xs">Duration</div>
-          </div>
-        </div>
-
-        {/* Progress Bar */}
-        <div className="mb-4">
-          <input
-            type="range"
-            min={0}
-            max={isFinite(duration) ? duration : 0}
-            step={0.01}
-            value={isFinite(displayedCurrentTime) ? displayedCurrentTime : 0}
-            onChange={handleSeek}
-            className="w-full h-2 bg-neutral-800 rounded-lg appearance-none cursor-pointer"
-            style={{
-              WebkitAppearance: 'none',
-              appearance: 'none',
-            }}
-            disabled={disabled || !isController || !audioUrl}
-          />
-        </div>
-
-        {/* Controls */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <button
-              className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 ${
-                isPlaying 
-                  ? 'bg-red-500 hover:bg-red-600 text-white' 
-                  : 'bg-primary hover:bg-primary/90 text-white'
-              } disabled:opacity-50 disabled:cursor-not-allowed`}
-              onClick={isPlaying ? handlePause : handlePlay}
-              disabled={disabled || !isController || !audioUrl}
-            >
-              {isPlaying ? (
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="6" y="4" width="4" height="16"></rect>
-                  <rect x="14" y="4" width="4" height="16"></rect>
-                </svg>
-              ) : (
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polygon points="5 3 19 12 5 21 5 3"></polygon>
-                </svg>
-              )}
-            </button>
-            
-            <button
-              className={`px-3 py-2 rounded-lg text-sm transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 ${
-                audioState.resyncInProgress 
-                  ? 'bg-blue-600 text-white' 
-                  : smartResyncSuggestion 
-                    ? 'bg-orange-600 hover:bg-orange-700 text-white' 
-                    : 'bg-neutral-800 hover:bg-neutral-700 text-white'
-              }`}
-              onClick={handleResync}
-              disabled={disabled || !audioUrl || audioState.resyncInProgress}
-            >
-              {audioState.resyncInProgress ? (
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
-                  <path d="M21 12a9 9 0 11-6.219-8.56"></path>
-                </svg>
-              ) : (
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
-                  <path d="M21 3v5h-5"></path>
-                  <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
-                  <path d="M3 21v-5h5"></path>
-                </svg>
-              )}
-              {audioState.resyncInProgress ? 'Syncing...' : smartResyncSuggestion ? 'Re-sync*' : 'Re-sync'}
-            </button>
-          </div>
-
-          <div className="text-right">
+      <div className='flex justify-between'>
+      <div className="text-left">
             <SyncStatus 
               status={audioState.syncStatus} 
               showSmartSuggestion={smartResyncSuggestion}
@@ -4901,7 +5227,416 @@ export default function AudioPlayer({
               </div>
             )}
           </div>
+          <div className="flex items-start justify-end flex-1">
+            <button
+              className={`px-3 py-2 rounded-lg text-sm transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 ${
+                audioState.resyncInProgress 
+                  ? 'bg-blue-600 text-white' 
+                  : smartResyncSuggestion 
+                    ? 'bg-orange-600 hover:bg-orange-700 text-white' 
+                    : 'bg-neutral-800 hover:bg-neutral-700 text-white'
+              }`}
+              onClick={handleResync}
+              disabled={disabled || !audioUrl || audioState.resyncInProgress}
+              style={{ minWidth: 110, justifyContent: 'center' }}
+            >
+              {audioState.resyncInProgress ? (
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
+                  <path d="M21 12a9 9 0 11-6.219-8.56"></path>
+                </svg>
+              ) : (
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
+                  <path d="M21 3v5h-5"></path>
+                  <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
+                  <path d="M3 21v-5h5"></path>
+                </svg>
+              )}
+              <span className="whitespace-nowrap">
+                {audioState.resyncInProgress
+                  ? 'Syncing...'
+                  : smartResyncSuggestion
+                    ? 'Re-sync*'
+                    : 'Re-sync'}
+              </span>
+            </button>
+          </div>
+      </div>
+
+      {/* Now Playing Section */}
+      <div className="bg-neutral-900/50 rounded-lg border border-neutral-800 p-4 pt-0">
+        {/* Smooth Now Playing Section with animated transitions on track change */}
+        <div
+          className="flex items-center gap-3 mb-4"
+          style={{
+            minHeight: '80px', // Increased to ensure enough space for all content
+            minWidth: '320px', // Set a reasonable min width for the player
+            width: '100%',
+            boxSizing: 'border-box',
+            alignItems: 'center',
+            transition: 'min-height 0.2s',
+          }}
+        >
+          {/* Album Cover Art (replaces SVG icon) */}
+          <div
+            className="w-12 h-12 bg-primary/20 rounded-lg flex items-center justify-center overflow-hidden border border-neutral-700"
+            style={{
+              minWidth: '48px',
+              minHeight: '48px',
+              width: '48px',
+              height: '48px',
+              flexShrink: 0,
+            }}
+          >
+            <div
+              key={
+                audioMetadata?.cover?.data
+                  ? audioMetadata.cover.data.slice(0, 32)
+                  : currentTrack?.title || 'no-cover'
+              }
+              className="transition-all duration-500 ease-in-out w-12 h-12 flex items-center justify-center"
+              style={{
+                opacity: metadataLoading ? 0.5 : 1,
+                transform: metadataLoading
+                  ? 'scale(0.95)'
+                  : 'scale(1)',
+                minWidth: '48px',
+                minHeight: '48px',
+                width: '48px',
+                height: '48px',
+              }}
+            >
+              {metadataLoading ? (
+                <LoadingSpinner size="xs" />
+              ) : audioMetadata ? (() => {
+                const embeddedCover = audioMetadata.cover && typeof audioMetadata.cover.data === 'string' && audioMetadata.cover.data.length > 0
+                  ? `data:${audioMetadata.cover.format};base64,${audioMetadata.cover.data}`
+                  : null;
+                const title = audioMetadata.common?.title || currentTrack?.title || 'default';
+                const normalizedTitle = title.replace(' - PagalNew', '');
+                const staticCoverUrl = `${backendUrl}/audio/uploads/covers/${normalizedTitle}.jpg`;
+                return (
+                  <img
+                    src={embeddedCover || staticCoverUrl}
+                    alt="Album Art"
+                    className="w-12 h-12 object-cover rounded-lg transition-all duration-500 ease-in-out"
+                    style={{
+                      opacity: 1,
+                      transition: 'opacity 0.5s, transform 0.5s',
+                      minWidth: '48px',
+                      minHeight: '48px',
+                      width: '48px',
+                      height: '48px',
+                    }}
+                    onError={e => {
+                      // Fallback to SVG placeholder if cover art fails to load
+                      e.target.style.display = 'none';
+                      const placeholder = document.createElement('div');
+                      placeholder.innerHTML = `
+                        <div class="w-12 h-12 rounded-lg border border-neutral-700 bg-neutral-800 flex items-center justify-center">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-neutral-400">
+                            <path d="M9 18V5l12-2v13"></path>
+                            <circle cx="6" cy="18" r="3"></circle>
+                            <circle cx="18" cy="16" r="3"></circle>
+                          </svg>
+                        </div>
+                      `;
+                      e.target.parentNode.insertBefore(placeholder.firstElementChild, e.target);
+                    }}
+                  />
+                );
+              })() : (
+                // If no metadata, show SVG placeholder
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary transition-all duration-500 ease-in-out">
+                  <path d="M9 18V5l12-2v13"></path>
+                  <circle cx="6" cy="18" r="3"></circle>
+                  <circle cx="18" cy="16" r="3"></circle>
+                </svg>
+              )}
+            </div>
+          </div>
+          <div
+            className="flex-1 min-w-0"
+            style={{
+              minHeight: '48px',
+              minWidth: '0',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'center',
+            }}
+          >
+            {/* Audio Metadata (Title, Album, Artist) */}
+            <div
+              key={
+                audioMetadata?.common?.title
+                  ? audioMetadata.common.title
+                  : currentTrack?.title || 'no-title'
+              }
+              className="transition-all duration-500 ease-in-out"
+              style={{
+                opacity: metadataLoading ? 0.5 : 1,
+                transform: metadataLoading
+                  ? 'translateY(8px) scale(0.98)'
+                  : 'translateY(0) scale(1)',
+                minHeight: '32px',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'center',
+              }}
+            >
+              {metadataLoading ? (
+                <div className="flex justify-center items-center my-2" style={{ minHeight: '32px' }}>
+                  <LoadingSpinner size="sm" text="Loading metadata..." />
+                </div>
+              ) : (
+                <div className="flex flex-col justify-center min-w-0" style={{ minHeight: '32px' }}>
+                  <div className="flex items-baseline gap-2 min-w-0">
+                    <span
+                      className="text-lg font-bold text-white truncate transition-all duration-500"
+                      title={
+                        (audioMetadata?.common?.title
+                          ? audioMetadata.common.title.replace(' - PagalNew', '')
+                          : currentTrack?.title
+                          ? currentTrack.title.replace(' - PagalNew', '')
+                          : ''
+                        )
+                      }
+                    >
+                      {audioMetadata?.common?.title
+                        ? audioMetadata.common.title.replace(' - PagalNew', '')
+                        : currentTrack?.title
+                        ? currentTrack.title.replace(' - PagalNew', '')
+                        : 'Unknown Title'
+                      }
+                    </span>
+                    {audioMetadata?.common?.album && (
+                      <span className="text-sm text-neutral-400 truncate" title={audioMetadata.common.album}>
+                        {audioMetadata.common.album}
+                      </span>
+                    )}
+                  </div>
+                  {audioMetadata?.common?.artist && (
+                    <div className="text-sm text-neutral-400 truncate" title={audioMetadata.common.artist}>
+                      {audioMetadata.common.artist}
+                    </div>
+                  )}
+                  {metadataError && (
+                    <div className="text-xs text-red-400 text-center my-2">{metadataError}</div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+          <div
+            className="text-right"
+            style={{
+              minWidth: '90px',
+              minHeight: '48px',
+              display: 'flex',
+              flexDirection: 'column',
+              justifyContent: 'center',
+              alignItems: 'flex-end',
+              flexShrink: 0,
+            }}
+          >
+            <div className="text-white font-mono text-sm transition-all duration-500">
+              {formatTime(displayedCurrentTime)} / {duration && duration > 0 ? formatTime(duration) : '--:--'}
+            </div>
+            <div className="text-neutral-400 text-xs">Duration</div>
+          </div>
         </div>
+
+{/* Progress Bar */}
+<div className="mb-4">
+  <input
+    type="range"
+    min={0}
+    max={isFinite(duration) ? duration : 0}
+    step={0.01}
+    value={isFinite(displayedCurrentTime) ? displayedCurrentTime : 0}
+    onChange={handleSeek}
+    className="w-full h-1 rounded-lg appearance-none cursor-pointer focus:outline-none focus:ring-0"
+    style={{
+      WebkitAppearance: 'none',
+      appearance: 'none',
+      outline: 'none',
+      boxShadow: 'none',
+      backgroundColor: 'rgba(255, 255, 255, 0.1)', // light grey with reduced opacity
+      border: 'none', // Remove any border
+    }}
+    disabled={disabled || !isController || !audioUrl}
+  />
+  <style>
+    {`
+      input[type="range"].w-full::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: #fff;
+        box-shadow: 0 1px 4px rgba(255,255,255,0.08);
+        cursor: pointer;
+        transition: background 0.2s;
+        /* Center thumb vertically without changing heights */
+        margin-top: -4.5px;
+        border: none;
+      }
+      input[type="range"].w-full:disabled::-webkit-slider-thumb {
+        background: #f3f4f6;
+        cursor: not-allowed;
+        border: none;
+      }
+      input[type="range"].w-full::-moz-range-thumb {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: #fff;
+        box-shadow: 0 1px 4px rgba(255,255,255,0.08);
+        cursor: pointer;
+        transition: background 0.2s;
+        border: none;
+      }
+      input[type="range"].w-full:disabled::-moz-range-thumb {
+        background: #f3f4f6;
+        cursor: not-allowed;
+        border: none;
+      }
+      input[type="range"].w-full::-ms-thumb {
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: #fff;
+        cursor: pointer;
+        transition: background 0.2s;
+        border: none;
+        /* Center thumb vertically for IE/Edge */
+        margin-top: 0px;
+      }
+      input[type="range"].w-full:disabled::-ms-thumb {
+        background: #f3f4f6;
+        cursor: not-allowed;
+        border: none;
+      }
+      input[type="range"].w-full::-webkit-slider-runnable-track {
+        height: 8px;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.1);
+        border: none;
+      }
+      input[type="range"].w-full::-ms-fill-lower,
+      input[type="range"].w-full::-ms-fill-upper {
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 8px;
+        border: none;
+      }
+      input[type="range"].w-full:focus {
+        outline: none;
+        box-shadow: none;
+      }
+      input[type="range"].w-full::-moz-range-track {
+        height: 8px;
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.1);
+        border: none;
+      }
+      input[type="range"].w-full {
+        background: rgba(255, 255, 255, 0.1);
+        border: none;
+      }
+    `}
+  </style>
+</div>
+
+      {/* Controls - unified with mobile layout */}
+      <div className="flex items-center justify-center mt-1 gap-4">
+        <RippleButton
+          className="w-10 h-10 rounded-full flex items-center justify-center bg-neutral-800 hover:bg-neutral-700 shadow text-white text-xl active:scale-95 transition-all duration-200 focus:outline-none focus:ring-0"
+          onClick={handlePrev}
+          disabled={disabled || !isController || !audioUrl}
+          aria-label="Previous"
+          style={{ outline: 'none', boxShadow: 'none' }}
+        >
+          {/* Modern Minimalist Previous Icon */}
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M19 20L9 12l10-8v16z" />
+            <line x1="5" y1="5" x2="5" y2="19" />
+          </svg>
+        </RippleButton>
+        <RippleButton
+          className="w-12 h-12 rounded-full flex items-center justify-center bg-primary shadow-lg text-white text-2xl active:scale-95 transition-all duration-200 mx-3 focus:outline-none focus:ring-0 relative overflow-hidden"
+          onClick={isPlaying ? handlePause : handlePlay}
+          disabled={disabled || !isController || !audioUrl}
+          aria-label={isPlaying ? 'Pause' : 'Play'}
+          style={{ outline: 'none', boxShadow: 'none' }}
+        >
+          <span className="absolute w-11 h-11 rounded-full bg-white"></span>
+          {/* Modern minimalist outlined play/pause/track icon with improved clarity */}
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="30"
+            height="30"
+            viewBox="0 0 28 28"
+            fill="none"
+            className="relative z-10"
+            aria-hidden="true"
+            focusable="false"
+          >
+            {isPlaying ? (
+              // Outlined pause icon (clearer, more contrast, rounded ends)
+              <>
+                <rect
+                  x="7.5"
+                  y="6"
+                  width="4"
+                  height="15"
+                  rx="1.5"
+                  fill="#fff"
+                  stroke="#111"
+                  strokeWidth="2"
+                  opacity="0.95"
+                />
+                <rect
+                  x="16.5"
+                  y="6"
+                  width="4"
+                  height="15"
+                  rx="1.5"
+                  fill="#fff"
+                  stroke="#111"
+                  strokeWidth="2"
+                  opacity="0.95"
+                />
+              </>
+            ) : (
+              // Outlined play icon (clearer, more contrast, sharp tip)
+              <>
+                <polygon
+                  points="10,7 22,14 10,21"
+                  fill="#fff"
+                  stroke="#111"
+                  strokeWidth="2"
+                  strokeLinejoin="round"
+                  opacity="0.95"
+                />
+              </>
+            )}
+          </svg>
+        </RippleButton>
+        <RippleButton
+          className="w-10 h-10 rounded-full flex items-center justify-center bg-neutral-800 hover:bg-neutral-700 shadow text-white text-xl active:scale-95 transition-all duration-200 focus:outline-none focus:ring-0"
+          onClick={handleNext}
+          disabled={disabled || !isController || !audioUrl}
+          aria-label="Next"
+          style={{ outline: 'none', boxShadow: 'none' }}
+        >
+          {/* Modern Minimalist Next Icon */}
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M5 4l10 8-10 8V4z" />
+            <line x1="19" y1="5" x2="19" y2="19" />
+          </svg>
+        </RippleButton>
+      </div>
       </div>
     </div>
   );
