@@ -1199,13 +1199,6 @@ export default function AudioPlayer({
         // Reset displayed time and current time, but don't reset duration immediately
         setDisplayedCurrentTime(0);
         setCurrentTime(0);
-        
-        // Force immediate update of displayed time to ensure UI reflects the reset
-        setTimeout(() => {
-          setDisplayedCurrentTime(0);
-          setCurrentTime(0);
-        }, 10);
-        
         // Don't reset duration to 0 immediately - let the new track set its duration
         // setDuration(0);
         
@@ -1344,16 +1337,7 @@ export default function AudioPlayer({
     if (!audio) return;
     
     const update = () => {
-      const newCurrentTime = audio.currentTime;
-      setCurrentTime(newCurrentTime);
-      
-      // Handle track change reset - if audio suddenly resets to 0
-      if (newCurrentTime === 0 && displayedCurrentTime > 0.1) {
-        setDisplayedCurrentTime(0);
-        if (process.env.NODE_ENV === 'development') {
-          console.log('[AudioPlayer] Track reset detected in timeupdate, resetting displayed time');
-        }
-      }
+      setCurrentTime(audio.currentTime);
       
       // Also check for duration in timeupdate as a fallback
       const currentDuration = audio.duration;
@@ -2733,40 +2717,6 @@ export default function AudioPlayer({
         }
       };
       
-      // Debug progress issues
-      window.debugAudioProgress = () => {
-        const audio = audioRef.current;
-        console.log('[DebugProgress] Audio progress debug info:', {
-          audio: audio ? {
-            currentTime: audio.currentTime,
-            duration: audio.duration,
-            readyState: audio.readyState,
-            paused: audio.paused,
-            seeking: audio.seeking,
-            ended: audio.ended
-          } : null,
-          state: {
-            currentTime,
-            displayedCurrentTime,
-            duration,
-            isPlaying
-          },
-          track: currentTrack ? {
-            title: currentTrack.title,
-            id: currentTrack.id
-          } : null
-        });
-        
-        // Force progress reset
-        console.log('[DebugProgress] Forcing progress reset...');
-        setDisplayedCurrentTime(0);
-        setCurrentTime(0);
-        
-        setTimeout(() => {
-          console.log('[DebugProgress] Progress reset completed');
-        }, 100);
-      };
-      
       // Enhanced sync system test
       window.testSyncSystem = () => {
         console.log('[TestSync] Testing enhanced sync system...');
@@ -3259,17 +3209,6 @@ export default function AudioPlayer({
       lastUpdate = now;
       const actual = audio.currentTime;
       
-      // Handle track change reset - if audio is reset but displayed time is not
-      if (actual === 0 && displayedCurrentTime > 0.1) {
-        setDisplayedCurrentTime(0);
-        setCurrentTime(0);
-        if (process.env.NODE_ENV === 'development') {
-          console.log('[AudioPlayer] Track change detected in animation, resetting progress');
-        }
-        raf = requestAnimationFrame(animate);
-        return;
-      }
-      
       // Use atomic time update for precision
       TimingUtils.atomicTimeUpdate(() => {
         setDisplayedCurrentTime(prev => {
@@ -3331,35 +3270,7 @@ export default function AudioPlayer({
         cancelAnimationFrame(raf);
       }
     };
-  }, [audioUrl, audioState.isSeeking, audioState.correctionInProgress, audioState.rateCorrectionActive, audioState.resyncInProgress, isIOS, displayedCurrentTime]);
-
-  // Track change progress reset effect
-  useEffect(() => {
-    if (!currentTrack) return;
-    
-    // When track changes, ensure progress is properly reset
-    const resetProgress = () => {
-      setDisplayedCurrentTime(0);
-      setCurrentTime(0);
-      
-      // Force multiple updates to ensure UI reflects the reset
-      setTimeout(() => {
-        setDisplayedCurrentTime(0);
-        setCurrentTime(0);
-      }, 50);
-      
-      setTimeout(() => {
-        setDisplayedCurrentTime(0);
-        setCurrentTime(0);
-      }, 100);
-      
-      if (process.env.NODE_ENV === 'development') {
-        console.log('[AudioPlayer] Track change progress reset for:', currentTrack.title);
-      }
-    };
-    
-    resetProgress();
-  }, [currentTrack?.id]); // Only trigger on track ID change
+  }, [audioUrl, audioState.isSeeking, audioState.correctionInProgress, audioState.rateCorrectionActive, audioState.resyncInProgress, isIOS]);
 
   /**
    * Enhanced drift correction that minimizes playback interruption.
@@ -3859,7 +3770,6 @@ export default function AudioPlayer({
           <div className="flex items-center gap-2 w-full">
             <span className="text-[11px] text-neutral-400 w-8 text-left font-mono">{formatTime(displayedCurrentTime)}</span>
             <input
-              key={`seekbar-${currentTrack?.id || 'default'}`}
               type="range"
               min={0}
               max={isFinite(duration) ? duration : 0}
@@ -4054,7 +3964,6 @@ export default function AudioPlayer({
         {/* Progress Bar */}
         <div className="mb-4">
           <input
-            key={`seekbar-desktop-${currentTrack?.id || 'default'}`}
             type="range"
             min={0}
             max={isFinite(duration) ? duration : 0}

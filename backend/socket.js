@@ -8,25 +8,6 @@ import path from 'path';
 import dotenv from 'dotenv';
 dotenv.config();
 
-// --- ENHANCED TIME PRECISION ---
-// Helper to get best-available high-precision server time using the most accurate model
-function getHighPrecisionTime() {
-  // Use process.hrtime.bigint() for monotonic time (nanoseconds)
-  // Use Date.now() for wall clock (ms since epoch)
-  // Use process.uptime() for monotonic seconds since process start
-  // Optionally, include performance.now() if available for sub-ms precision (Node 16+)
-  let perfNow = null;
-  if (typeof globalThis.performance !== "undefined" && typeof globalThis.performance.now === "function") {
-    perfNow = globalThis.performance.now(); // ms, monotonic, fractional
-  }
-  return {
-    serverTime: Date.now(), // ms since epoch (wall clock)
-    serverHrTime: process.hrtime.bigint().toString(), // ns (monotonic, as string)
-    serverUptime: process.uptime(), // seconds (monotonic)
-    ...(perfNow !== null ? { serverPerfNow: perfNow } : {})
-  };
-}
-
 // Helper to build full session sync state for advanced sync
 function buildSessionSyncState(session) {
   const queue = Array.isArray(session.queue) ? session.queue : [];
@@ -104,7 +85,7 @@ export function setupSocket(io) {
           timestamp: session.timestamp,
           lastUpdated: session.lastUpdated,
           controllerId: session.controllerId,
-          ...getHighPrecisionTime()
+          serverTime: Date.now(),
         });
       }
       log('Client joined session', sessionId, 'Current queue:', getQueue(sessionId));
@@ -115,7 +96,7 @@ export function setupSocket(io) {
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
         controllerId: session.controllerId,
-        ...getHighPrecisionTime()
+        serverTime: Date.now(),
       });
     });
 
@@ -133,7 +114,7 @@ export function setupSocket(io) {
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
         controllerId: socket.id,
-        ...getHighPrecisionTime()
+        serverTime: Date.now()
       });
     });
 
@@ -151,7 +132,7 @@ export function setupSocket(io) {
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
         controllerId: socket.id,
-        ...getHighPrecisionTime()
+        serverTime: Date.now()
       });
     });
 
@@ -169,7 +150,7 @@ export function setupSocket(io) {
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
         controllerId: socket.id,
-        ...getHighPrecisionTime()
+        serverTime: Date.now()
       });
     });
 
@@ -277,7 +258,7 @@ export function setupSocket(io) {
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
         controllerId: getSocketIdByClientId(sessionId, requesterClientId),
-        ...getHighPrecisionTime()
+        serverTime: Date.now()
       });
       
       typeof callback === "function" && callback({ success: true });
@@ -425,7 +406,7 @@ export function setupSocket(io) {
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
         controllerId: getSocketIdByClientId(sessionId, accepterClientId),
-        ...getHighPrecisionTime()
+        serverTime: Date.now()
       });
       
       typeof callback === "function" && callback({ success: true });
@@ -697,10 +678,6 @@ export function setupSocket(io) {
         session.selectedTrackIdx = 0;
       }
 
-      // --- Reset playback position for new track ---
-      session.timestamp = 0;
-      session.lastUpdated = Date.now();
-
       // Optionally support autoAdvance (e.g., for next/prev track)
       let autoAdvanceInfo = {};
       if (autoAdvance) {
@@ -735,7 +712,7 @@ export function setupSocket(io) {
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
         controllerId: session.controllerId,
-        ...getHighPrecisionTime()
+        serverTime: Date.now()
       });
 
       if (typeof callback === "function") callback({ success: true, ...payload });
@@ -756,7 +733,9 @@ export function setupSocket(io) {
      */
     socket.on('time_sync', (clientSent, callback) => {
       const serverReceived = Date.now();
-      const serverHrReceived = process.hrtime.bigint();
+      const parsedClientSent = typeof clientSent === 'number' ? clientSent : Number(clientSent) || null;
+
+      // Optionally, allow client to send an object with more info (future-proofing)
       let clientExtra = {};
       if (clientSent && typeof clientSent === 'object' && clientSent !== null) {
         clientExtra = { ...clientSent };
@@ -766,20 +745,22 @@ export function setupSocket(io) {
             : Number(clientSent.clientSent) || null;
         }
       }
+
       if (typeof callback === "function") {
+        // Simulate minimal processing delay for realism
         setImmediate(() => {
           const serverProcessed = Date.now();
-          const serverHrProcessed = process.hrtime.bigint();
+          // Optionally estimate round-trip if client sent a callback timestamp
           let roundTripEstimate = null;
           if (clientExtra && typeof clientExtra.clientCallbackReceived === 'number') {
             roundTripEstimate = serverProcessed - clientExtra.clientCallbackReceived;
           }
           callback({
             serverTime: serverReceived,
-            serverHrTime: serverHrReceived.toString(),
-            serverProcessed,
-            serverHrProcessed: serverHrProcessed.toString(),
-            serverUptime: process.uptime(),
+            clientSent: parsedClientSent,
+            serverReceived, // Always include when request was received
+            serverProcessed, // Always include when response is sent
+            serverUptime: Math.round(process.uptime() * 1000),
             serverTimezoneOffset: new Date().getTimezoneOffset(),
             serverIso: new Date(serverReceived).toISOString(),
             serverInfo: {
@@ -798,7 +779,7 @@ export function setupSocket(io) {
     socket.on('time:sync', (clientSentAt, callback) => {
       if (typeof callback === 'function') {
         callback({
-          ...getHighPrecisionTime(),
+          serverTime: Date.now(),
           clientSentAt
         });
       }
@@ -990,7 +971,7 @@ export function setupSocket(io) {
           timestamp: session.timestamp,
           lastUpdated: session.lastUpdated,
           controllerId: session.controllerId,
-          ...getHighPrecisionTime()
+          serverTime: Date.now()
         });
       }
     }
@@ -1016,7 +997,7 @@ export function setupSocket(io) {
           timestamp: session.timestamp,
           lastUpdated: session.lastUpdated,
           controllerId: session.controllerId,
-          ...getHighPrecisionTime()
+          serverTime: Date.now()
         });
       }
     }
