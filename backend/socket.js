@@ -109,16 +109,12 @@ export function setupSocket(io) {
       updatePlayback(sessionId, { isPlaying: true, timestamp, controllerId: socket.id });
       log('Play in session', sessionId, 'at', timestamp);
       console.log('Emitting sync_state to session', sessionId, 'clients:', Array.from(session.clients.keys()));
-      const serverTime = Date.now();
-      const SYNC_DELAY_MS = 200;
       io.to(sessionId).emit('sync_state', {
         isPlaying: true,
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
         controllerId: socket.id,
-        serverTime,
-        effectiveAt: serverTime + SYNC_DELAY_MS,
-        eventType: 'play',
+        serverTime: Date.now()
       });
     });
 
@@ -131,16 +127,12 @@ export function setupSocket(io) {
       updatePlayback(sessionId, { isPlaying: false, timestamp, controllerId: socket.id });
       log('Pause in session', sessionId, 'at', timestamp);
       console.log('Emitting sync_state to session', sessionId, 'clients:', Array.from(session.clients.keys()));
-      const serverTime = Date.now();
-      const SYNC_DELAY_MS = 200;
       io.to(sessionId).emit('sync_state', {
         isPlaying: false,
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
         controllerId: socket.id,
-        serverTime,
-        effectiveAt: serverTime + SYNC_DELAY_MS,
-        eventType: 'pause',
+        serverTime: Date.now()
       });
     });
 
@@ -153,16 +145,12 @@ export function setupSocket(io) {
       updateTimestamp(sessionId, timestamp, socket.id);
       log('Seek in session', sessionId, 'to', timestamp);
       console.log('Emitting sync_state to session', sessionId, 'clients:', Array.from(session.clients.keys()));
-      const serverTime = Date.now();
-      const SYNC_DELAY_MS = 200;
       io.to(sessionId).emit('sync_state', {
         isPlaying: session.isPlaying,
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
         controllerId: socket.id,
-        serverTime,
-        effectiveAt: serverTime + SYNC_DELAY_MS,
-        eventType: 'seek',
+        serverTime: Date.now()
       });
     });
 
@@ -705,16 +693,12 @@ export function setupSocket(io) {
         log('[DEBUG][track_change] session:', sessionId, 'queue:', queue, 'idx:', newIdx, 'track:', track, 'reason:', reason, 'extra:', extra, 'autoAdvance:', autoAdvance, 'force:', force);
       }
 
-      const serverTime = Date.now();
-      const SYNC_DELAY_MS = 200;
       const payload = {
         idx: newIdx,
         track,
         reason: reason || null,
         initiator: clientId,
-        timestamp: serverTime, // when event is emitted
-        effectiveAt: serverTime + SYNC_DELAY_MS,
-        eventType: 'track_change',
+        timestamp: Date.now(),
         ...autoAdvanceInfo,
         ...(extra && typeof extra === 'object' ? { extra } : {})
       };
@@ -729,9 +713,7 @@ export function setupSocket(io) {
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
         controllerId: session.controllerId,
-        serverTime,
-        effectiveAt: serverTime + SYNC_DELAY_MS,
-        eventType: 'track_change',
+        serverTime: Date.now()
       });
 
       if (typeof callback === "function") callback({ success: true, ...payload });

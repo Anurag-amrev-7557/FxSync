@@ -238,12 +238,10 @@ function SessionPage({
 
     const handleTrackChange = (payload) => {
       // Enhanced: Robustly handle various payload shapes and log more details
-      let idx, track, extra = {}, effectiveAt, serverTime;
+      let idx, track, extra = {};
       if (typeof payload === 'object' && payload !== null) {
         idx = typeof payload.idx === 'number' ? payload.idx : null;
         track = payload.track || null;
-        effectiveAt = payload.effectiveAt;
-        serverTime = payload.serverTime;
         // Capture any extra fields for debugging
         extra = Object.keys(payload).reduce((acc, key) => {
           if (key !== 'idx' && key !== 'track') acc[key] = payload[key];
@@ -258,25 +256,6 @@ function SessionPage({
       if (typeof idx !== 'number' || idx < 0) {
         console.warn('[SessionPage][track_change] Invalid idx received:', idx, 'Payload:', payload);
         return;
-      }
-
-      // --- NEW: Schedule action based on effectiveAt ---
-      if (typeof effectiveAt === 'number' && isFinite(effectiveAt)) {
-        // Try to get getServerTime from props, or fallback to window.getServerTime
-        let getServerTimeFn = typeof window !== 'undefined' && window.getServerTime ? window.getServerTime : undefined;
-        if (typeof getServerTime === 'function') getServerTimeFn = getServerTime;
-        const localServerNow = getServerTimeFn ? getServerTimeFn() : Date.now();
-        const msUntilAction = effectiveAt - localServerNow;
-        if (msUntilAction > 10) {
-          // Optionally show a syncing indicator here
-          setTimeout(() => {
-            // Re-run the main logic at the scheduled time, but without effectiveAt to avoid infinite loop
-            handleTrackChange({ ...payload, effectiveAt: undefined });
-          }, msUntilAction);
-          return;
-        } else if (msUntilAction < -200) {
-          console.warn('[SessionPage][track_change] effectiveAt is in the past by', msUntilAction, 'ms, applying immediately');
-        }
       }
 
       // Enhanced: Log with more context

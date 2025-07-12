@@ -2044,8 +2044,6 @@ export default function AudioPlayer({
       trackId,
       meta,
       serverTime,
-      effectiveAt,
-      eventType,
     }) => {
       // Add race condition protection
       if (correctionInProgressRef.current || audioState.resyncInProgress) {
@@ -2292,36 +2290,6 @@ export default function AudioPlayer({
       setLastSync(typeof TimingUtils !== 'undefined' && typeof TimingUtils.getTimeFor === 'function' 
         ? TimingUtils.getTimeFor('sync') 
         : Date.now());
-
-      // --- NEW: Schedule action based on effectiveAt ---
-      if (typeof effectiveAt === 'number' && isFinite(effectiveAt)) {
-        const localServerNow = getServerTime ? getServerTime() : Date.now();
-        const msUntilAction = effectiveAt - localServerNow;
-        if (msUntilAction > 10) {
-          setSyncStatus('Syncing...');
-          setTimeout(() => {
-            // Re-run the main sync logic at the scheduled time
-            // (copy the main logic here, or refactor into a function)
-            // ... main sync logic ...
-            // (for brevity, call the handler recursively without effectiveAt)
-            handleSyncState({
-              isPlaying,
-              timestamp,
-              lastUpdated,
-              controllerId: ctrlId,
-              trackId,
-              meta,
-              serverTime,
-              eventType,
-              // Remove effectiveAt to avoid infinite loop
-            });
-            setSyncStatus('In Sync');
-          }, msUntilAction);
-          return;
-        } else if (msUntilAction < -200) {
-          log('warn', 'SYNC_STATE: effectiveAt is in the past by', msUntilAction, 'ms, applying immediately');
-        }
-      }
     };
 
     socket.on('sync_state', handleSyncState);
