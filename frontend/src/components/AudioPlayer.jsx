@@ -54,6 +54,279 @@ const MICRO_CORRECTION_HYSTERESIS = 0.005; // 5ms hysteresis to prevent oscillat
 const ENHANCED_DRIFT_PREDICTION_WINDOW = 10; // seconds for enhanced prediction
 const SYNC_STATE_VALIDATION_TIMEOUT = 5000; // 5s timeout for sync state validation
 
+// Enhanced RTT and jitter optimization constants
+const RTT_HISTORY_SIZE = 20; // Increased from 10 for better statistical analysis
+const RTT_OUTLIER_THRESHOLD = 2.5; // Standard deviations for outlier detection
+const RTT_SMOOTHING_ALPHA = 0.3; // Exponential smoothing factor for RTT
+const JITTER_BUFFER_SIZE = 15; // Number of samples for jitter calculation
+const MIN_RTT_SAMPLES = 5; // Minimum samples before applying RTT compensation
+const MAX_RTT_COMPENSATION = 0.5; // Maximum RTT compensation in seconds
+const RTT_QUALITY_WEIGHTS = {
+  latency: 0.4,    // RTT latency weight
+  stability: 0.3,  // RTT stability weight
+  jitter: 0.2,     // Jitter weight
+  packetLoss: 0.1  // Packet loss weight
+};
+
+// Enhanced time offset optimization constants
+const OFFSET_HISTORY_SIZE = 10; // Track offset history for stability analysis
+const OFFSET_STABILITY_THRESHOLD = 0.02; // 20ms threshold for offset stability
+const OFFSET_SMOOTHING_FACTOR = 0.7; // Smoothing factor for offset transitions
+const OFFSET_VALIDITY_WINDOW = 30000; // 30s window for offset validity
+const OFFSET_DRIFT_THRESHOLD = 0.1; // 100ms threshold for offset drift detection
+
+// Enhanced jitter calculation constants
+const JITTER_CALCULATION_WINDOW = 5000; // 5s window for jitter calculation
+const JITTER_SMOOTHING_ALPHA = 0.2; // Smoothing factor for jitter
+const MAX_JITTER_COMPENSATION = 0.2; // Maximum jitter compensation in seconds
+const JITTER_QUALITY_THRESHOLDS = {
+  excellent: 0.01, // 10ms - excellent jitter
+  good: 0.025,     // 25ms - good jitter
+  fair: 0.05,      // 50ms - fair jitter
+  poor: 0.1        // 100ms - poor jitter
+};
+
+// Enhanced network quality calculation constants
+const NETWORK_QUALITY_WEIGHTS = {
+  rttLatency: 0.35,    // RTT latency impact
+  rttStability: 0.25,  // RTT stability impact
+  jitter: 0.20,        // Jitter impact
+  packetLoss: 0.15,    // Packet loss impact
+  connectionStability: 0.05 // Connection stability impact
+};
+
+// Enhanced sync compensation utilities
+const SyncCompensationUtils = {
+  // Enhanced RTT calculation with outlier detection and smoothing
+  calculateOptimizedRTT: (rttHistory, currentRtt) => {
+    if (!rttHistory || rttHistory.length === 0) {
+      return { compensatedRTT: 0, quality: 1.0, stability: 1.0 };
+    }
+
+    // Add current RTT to history
+    const history = [...rttHistory, currentRtt].slice(-RTT_HISTORY_SIZE);
+    
+    // Calculate basic statistics
+    const mean = history.reduce((sum, r) => sum + r, 0) / history.length;
+    const variance = history.reduce((sum, r) => sum + Math.pow(r - mean, 2), 0) / history.length;
+    const stdDev = Math.sqrt(variance);
+    
+    // Outlier detection using modified z-score
+    const median = history.sort((a, b) => a - b)[Math.floor(history.length / 2)];
+    const mad = history.reduce((sum, r) => sum + Math.abs(r - median), 0) / history.length;
+    const modifiedZScore = Math.abs(currentRtt - median) / (mad * 1.4826);
+    
+    // Filter outliers
+    const filteredHistory = history.filter(r => {
+      const zScore = Math.abs(r - mean) / stdDev;
+      return zScore < RTT_OUTLIER_THRESHOLD;
+    });
+    
+    // Calculate smoothed RTT using exponential smoothing
+    const smoothedRTT = filteredHistory.reduce((smoothed, r, i) => {
+      const alpha = i === 0 ? 1 : RTT_SMOOTHING_ALPHA;
+      return alpha * r + (1 - alpha) * smoothed;
+    }, filteredHistory[0] || currentRtt);
+    
+    // Calculate stability (inverse of coefficient of variation)
+    const stability = stdDev > 0 ? Math.max(0.1, Math.min(1.0, mean / stdDev)) : 1.0;
+    
+    // Calculate quality based on multiple factors
+    const latencyQuality = Math.max(0.1, Math.min(1.0, 1 - (smoothedRTT / 1000))); // Normalize to 1s
+    const stabilityQuality = stability;
+    const outlierQuality = Math.max(0.1, Math.min(1.0, 1 - (modifiedZScore / 10)));
+    
+    const quality = (
+      latencyQuality * RTT_QUALITY_WEIGHTS.latency +
+      stabilityQuality * RTT_QUALITY_WEIGHTS.stability +
+      outlierQuality * 0.5 // Outlier penalty
+    );
+    
+    // Calculate compensated RTT (one-way)
+    const compensatedRTT = Math.min(MAX_RTT_COMPENSATION, smoothedRTT / 2000);
+    
+    return {
+      compensatedRTT,
+      quality: Math.max(0.1, Math.min(1.0, quality)),
+      stability: Math.max(0.1, Math.min(1.0, stability)),
+      mean,
+      stdDev,
+      outlierScore: modifiedZScore,
+      sampleCount: filteredHistory.length
+    };
+  },
+
+  // Enhanced jitter calculation with adaptive buffering
+  calculateOptimizedJitter: (timingHistory) => {
+    if (!timingHistory || timingHistory.length < 3) {
+      return { jitter: 0, quality: 1.0, bufferSize: 0 };
+    }
+
+    const recent = timingHistory.slice(-JITTER_BUFFER_SIZE);
+    
+    // Calculate inter-arrival time variations
+    const intervals = [];
+    for (let i = 1; i < recent.length; i++) {
+      intervals.push(recent[i].timestamp - recent[i-1].timestamp);
+    }
+    
+    if (intervals.length === 0) {
+      return { jitter: 0, quality: 1.0, bufferSize: 0 };
+    }
+    
+    // Calculate jitter using RFC 3550 algorithm (simplified)
+    let jitter = 0;
+    for (let i = 1; i < intervals.length; i++) {
+      const d = Math.abs(intervals[i] - intervals[i-1]);
+      jitter = jitter + (1/16) * (d - jitter);
+    }
+    
+    // Convert to seconds
+    jitter = jitter / 1000;
+    
+    // Calculate jitter quality
+    let quality = 1.0;
+    if (jitter <= JITTER_QUALITY_THRESHOLDS.excellent) {
+      quality = 1.0;
+    } else if (jitter <= JITTER_QUALITY_THRESHOLDS.good) {
+      quality = 0.8;
+    } else if (jitter <= JITTER_QUALITY_THRESHOLDS.fair) {
+      quality = 0.6;
+    } else if (jitter <= JITTER_QUALITY_THRESHOLDS.poor) {
+      quality = 0.4;
+    } else {
+      quality = 0.2;
+    }
+    
+    // Calculate adaptive buffer size
+    const bufferSize = Math.min(MAX_JITTER_COMPENSATION, jitter * 2);
+    
+    return {
+      jitter,
+      quality: Math.max(0.1, Math.min(1.0, quality)),
+      bufferSize,
+      sampleCount: intervals.length
+    };
+  },
+
+  // Enhanced time offset calculation with stability analysis
+  calculateOptimizedOffset: (offsetHistory, currentOffset, ultraPreciseOffset) => {
+    // Determine the best offset to use
+    let targetOffset = currentOffset || 0;
+    if (
+      typeof ultraPreciseOffset === 'number' &&
+      Math.abs(ultraPreciseOffset) < 1000 && // sanity check: < 1s
+      !isNaN(ultraPreciseOffset)
+    ) {
+      targetOffset = ultraPreciseOffset;
+    }
+    
+    // Add to history
+    const history = [...(offsetHistory || []), { offset: targetOffset, timestamp: Date.now() }]
+      .slice(-OFFSET_HISTORY_SIZE);
+    
+    // Calculate offset stability
+    const offsets = history.map(h => h.offset);
+    const meanOffset = offsets.reduce((sum, o) => sum + o, 0) / offsets.length;
+    const offsetVariance = offsets.reduce((sum, o) => sum + Math.pow(o - meanOffset, 2), 0) / offsets.length;
+    const offsetStdDev = Math.sqrt(offsetVariance);
+    
+    // Calculate stability score
+    const stability = offsetStdDev > 0 ? Math.max(0.1, Math.min(1.0, OFFSET_STABILITY_THRESHOLD / offsetStdDev)) : 1.0;
+    
+    // Calculate drift rate
+    let driftRate = 0;
+    if (history.length >= 2) {
+      const timeSpan = history[history.length - 1].timestamp - history[0].timestamp;
+      const offsetSpan = history[history.length - 1].offset - history[0].offset;
+      driftRate = timeSpan > 0 ? offsetSpan / timeSpan : 0;
+    }
+    
+    // Determine if offset is stable enough
+    const isStable = stability > 0.7 && Math.abs(driftRate) < OFFSET_DRIFT_THRESHOLD;
+    
+    // Calculate smoothed offset
+    const smoothedOffset = offsets.reduce((smoothed, offset, i) => {
+      const alpha = i === 0 ? 1 : OFFSET_SMOOTHING_FACTOR;
+      return alpha * offset + (1 - alpha) * smoothed;
+    }, offsets[0] || targetOffset);
+    
+    return {
+      offset: smoothedOffset,
+      stability: Math.max(0.1, Math.min(1.0, stability)),
+      isStable,
+      driftRate,
+      sampleCount: history.length,
+      meanOffset,
+      offsetStdDev
+    };
+  },
+
+  // Enhanced network quality calculation
+  calculateNetworkQuality: (rttData, jitterData, packetLossRate, connectionStability) => {
+    const rttQuality = rttData?.quality || 1.0;
+    const jitterQuality = jitterData?.quality || 1.0;
+    const packetLossQuality = Math.max(0.1, Math.min(1.0, 1 - (packetLossRate || 0)));
+    const connectionQuality = connectionStability || 1.0;
+    
+    const networkQuality = (
+      rttQuality * NETWORK_QUALITY_WEIGHTS.rttLatency +
+      (rttData?.stability || 1.0) * NETWORK_QUALITY_WEIGHTS.rttStability +
+      jitterQuality * NETWORK_QUALITY_WEIGHTS.jitter +
+      packetLossQuality * NETWORK_QUALITY_WEIGHTS.packetLoss +
+      connectionQuality * NETWORK_QUALITY_WEIGHTS.connectionStability
+    );
+    
+    return {
+      overall: Math.max(0.1, Math.min(1.0, networkQuality)),
+      components: {
+        rttLatency: rttQuality,
+        rttStability: rttData?.stability || 1.0,
+        jitter: jitterQuality,
+        packetLoss: packetLossQuality,
+        connectionStability: connectionQuality
+      }
+    };
+  },
+
+  // Enhanced sync compensation calculation
+  calculateSyncCompensation: (rttData, jitterData, offsetData, audioLatency) => {
+    const rttComp = rttData?.compensatedRTT || 0;
+    const jitterComp = jitterData?.bufferSize || 0;
+    const offsetComp = offsetData?.offset || 0;
+    
+    // Calculate total compensation
+    const totalCompensation = rttComp + jitterComp + offsetComp - audioLatency;
+    
+    // Calculate compensation quality
+    const rttQuality = rttData?.quality || 1.0;
+    const jitterQuality = jitterData?.quality || 1.0;
+    const offsetQuality = offsetData?.stability || 1.0;
+    
+    const compensationQuality = (
+      rttQuality * 0.4 +
+      jitterQuality * 0.3 +
+      offsetQuality * 0.3
+    );
+    
+    return {
+      totalCompensation,
+      compensationQuality: Math.max(0.1, Math.min(1.0, compensationQuality)),
+      components: {
+        rtt: rttComp,
+        jitter: jitterComp,
+        offset: offsetComp,
+        audioLatency: -audioLatency
+      },
+      quality: {
+        rtt: rttQuality,
+        jitter: jitterQuality,
+        offset: offsetQuality
+      }
+    };
+  }
+};
+
 function isFiniteNumber(n) {
   return typeof n === 'number' && isFinite(n);
 }
@@ -962,6 +1235,211 @@ function getNow(getServerTime) {
   }
 }
 
+// Enhanced music sync optimization constants
+const MUSIC_SYNC_OPTIMIZATIONS = {
+  // Music-specific drift thresholds (more sensitive for music)
+  microDriftThreshold: 0.02,    // 20ms - very sensitive for music
+  smallDriftThreshold: 0.05,    // 50ms - small drift for music
+  mediumDriftThreshold: 0.15,   // 150ms - medium drift for music
+  largeDriftThreshold: 0.3,     // 300ms - large drift for music
+  
+  // Music-specific rate corrections (more gradual for music)
+  microRateCap: 0.002,          // 0.2% max rate change for micro-corrections
+  smallRateCap: 0.005,          // 0.5% max rate change for small corrections
+  mediumRateCap: 0.015,         // 1.5% max rate change for medium corrections
+  
+  // Music-specific timing windows
+  microCorrectionWindow: 150,   // 150ms window for micro-corrections
+  smallCorrectionWindow: 300,   // 300ms window for small corrections
+  mediumCorrectionWindow: 500,  // 500ms window for medium corrections
+  
+  // Music-specific sync intervals (more frequent for music)
+  excellentNetworkInterval: 800,  // 800ms for excellent network
+  goodNetworkInterval: 600,       // 600ms for good network
+  fairNetworkInterval: 400,       // 400ms for fair network
+  poorNetworkInterval: 300,       // 300ms for poor network
+  
+  // Music-specific hysteresis to prevent oscillation
+  microHysteresis: 0.003,       // 3ms hysteresis for micro-corrections
+  smallHysteresis: 0.008,       // 8ms hysteresis for small corrections
+  
+  // Music-specific quality weights
+  rttWeight: 0.35,              // RTT importance for music
+  jitterWeight: 0.25,           // Jitter importance for music
+  offsetWeight: 0.25,           // Offset importance for music
+  latencyWeight: 0.15           // Audio latency importance for music
+};
+
+// Enhanced music sync utilities
+const MusicSyncUtils = {
+  // Calculate music-optimized sync compensation
+  calculateMusicSyncCompensation: (rttData, jitterData, offsetData, audioLatency) => {
+    const rttComp = rttData?.compensatedRTT || 0;
+    const jitterComp = jitterData?.bufferSize || 0;
+    const offsetComp = offsetData?.offset || 0;
+    
+    // Validate input parameters
+    if (!isFiniteNumber(audioLatency) || audioLatency < 0) {
+      if (process.env.NODE_ENV === 'development') {
+        console.warn('[MusicSyncUtils] Invalid audioLatency:', audioLatency);
+      }
+      return {
+        totalCompensation: 0,
+        compensationQuality: 0.1,
+        components: { rtt: 0, jitter: 0, offset: 0, audioLatency: 0 },
+        quality: { rtt: 1.0, jitter: 1.0, offset: 1.0 },
+        musicOptimized: true
+      };
+    }
+    
+    // Music-specific compensation calculation with validation
+    const totalCompensation = (
+      rttComp * MUSIC_SYNC_OPTIMIZATIONS.rttWeight +
+      jitterComp * MUSIC_SYNC_OPTIMIZATIONS.jitterWeight +
+      offsetComp * MUSIC_SYNC_OPTIMIZATIONS.offsetWeight -
+      audioLatency * MUSIC_SYNC_OPTIMIZATIONS.latencyWeight
+    );
+    
+    // Validate the result
+    if (!isFiniteNumber(totalCompensation)) {
+      if (process.env.NODE_ENV === 'development') {
+        console.warn('[MusicSyncUtils] Invalid totalCompensation calculated:', {
+          totalCompensation,
+          rttComp,
+          jitterComp,
+          offsetComp,
+          audioLatency,
+          weights: MUSIC_SYNC_OPTIMIZATIONS
+        });
+      }
+      return {
+        totalCompensation: 0,
+        compensationQuality: 0.1,
+        components: { rtt: rttComp, jitter: jitterComp, offset: offsetComp, audioLatency: -audioLatency },
+        quality: { rtt: 1.0, jitter: 1.0, offset: 1.0 },
+        musicOptimized: true
+      };
+    }
+    
+    // Calculate music-specific quality
+    const rttQuality = rttData?.quality || 1.0;
+    const jitterQuality = jitterData?.quality || 1.0;
+    const offsetQuality = offsetData?.stability || 1.0;
+    
+    const musicQuality = (
+      rttQuality * MUSIC_SYNC_OPTIMIZATIONS.rttWeight +
+      jitterQuality * MUSIC_SYNC_OPTIMIZATIONS.jitterWeight +
+      offsetQuality * MUSIC_SYNC_OPTIMIZATIONS.offsetWeight
+    );
+    
+    return {
+      totalCompensation,
+      compensationQuality: Math.max(0.1, Math.min(1.0, musicQuality)),
+      components: {
+        rtt: rttComp,
+        jitter: jitterComp,
+        offset: offsetComp,
+        audioLatency: -audioLatency
+      },
+      quality: {
+        rtt: rttQuality,
+        jitter: jitterQuality,
+        offset: offsetQuality
+      },
+      musicOptimized: true
+    };
+  },
+
+  // Get music-optimized sync interval
+  getMusicSyncInterval: (networkQuality) => {
+    if (networkQuality > 0.8) {
+      return MUSIC_SYNC_OPTIMIZATIONS.excellentNetworkInterval;
+    } else if (networkQuality > 0.6) {
+      return MUSIC_SYNC_OPTIMIZATIONS.goodNetworkInterval;
+    } else if (networkQuality > 0.4) {
+      return MUSIC_SYNC_OPTIMIZATIONS.fairNetworkInterval;
+    } else {
+      return MUSIC_SYNC_OPTIMIZATIONS.poorNetworkInterval;
+    }
+  },
+
+  // Music-optimized drift correction
+  correctMusicDrift: (audio, expected, currentTime) => {
+    const drift = Math.abs(expected - currentTime);
+    
+    // Micro-correction for very small drifts (music-sensitive)
+    if (drift < MUSIC_SYNC_OPTIMIZATIONS.microDriftThreshold) {
+      const rateAdjustment = (expected - currentTime) * 0.1; // Very gentle
+      const newRate = Math.max(
+        1 - MUSIC_SYNC_OPTIMIZATIONS.microRateCap,
+        Math.min(1 + MUSIC_SYNC_OPTIMIZATIONS.microRateCap, 1 + rateAdjustment)
+      );
+      
+      if (Math.abs(audio.playbackRate - newRate) > MUSIC_SYNC_OPTIMIZATIONS.microHysteresis) {
+        audio.playbackRate = newRate;
+        return { corrected: true, type: 'micro', rate: newRate, drift };
+      }
+    }
+    
+    // Small correction for small drifts
+    else if (drift < MUSIC_SYNC_OPTIMIZATIONS.smallDriftThreshold) {
+      const rateAdjustment = (expected - currentTime) * 0.2;
+      const newRate = Math.max(
+        1 - MUSIC_SYNC_OPTIMIZATIONS.smallRateCap,
+        Math.min(1 + MUSIC_SYNC_OPTIMIZATIONS.smallRateCap, 1 + rateAdjustment)
+      );
+      
+      if (Math.abs(audio.playbackRate - newRate) > MUSIC_SYNC_OPTIMIZATIONS.smallHysteresis) {
+        audio.playbackRate = newRate;
+        return { corrected: true, type: 'small', rate: newRate, drift };
+      }
+    }
+    
+    // Medium correction for medium drifts
+    else if (drift < MUSIC_SYNC_OPTIMIZATIONS.mediumDriftThreshold) {
+      const rateAdjustment = (expected - currentTime) * 0.3;
+      const newRate = Math.max(
+        1 - MUSIC_SYNC_OPTIMIZATIONS.mediumRateCap,
+        Math.min(1 + MUSIC_SYNC_OPTIMIZATIONS.mediumRateCap, 1 + rateAdjustment)
+      );
+      
+      audio.playbackRate = newRate;
+      return { corrected: true, type: 'medium', rate: newRate, drift };
+    }
+    
+    // Large correction for large drifts (seek)
+    else if (drift < MUSIC_SYNC_OPTIMIZATIONS.largeDriftThreshold) {
+      audio.currentTime = expected;
+      return { corrected: true, type: 'seek', drift };
+    }
+    
+    return { corrected: false, drift };
+  },
+
+  // Music-optimized gradual rate restoration
+  restoreMusicRate: (audio, targetRate = 1.0, duration = 200) => {
+    const startRate = audio.playbackRate;
+    const rateDiff = targetRate - startRate;
+    const steps = 10;
+    const stepSize = rateDiff / steps;
+    const stepDuration = duration / steps;
+    
+    let currentStep = 0;
+    const interval = setInterval(() => {
+      currentStep++;
+      const newRate = startRate + (stepSize * currentStep);
+      audio.playbackRate = newRate;
+      
+      if (currentStep >= steps) {
+        audio.playbackRate = targetRate; // Ensure exact target rate
+        clearInterval(interval);
+      }
+    }, stepDuration);
+    
+    return () => clearInterval(interval);
+  }
+};
+
 export default function AudioPlayer({
   disabled = false,
   socket,
@@ -1082,41 +1560,131 @@ export default function AudioPlayer({
     driftHistory: [], // last 20 drift measurements
     syncMode: 'normal' // 'normal', 'aggressive', 'conservative'
   });
+  
+  const networkQualityRef = useRef(1.0); // Network quality factor for RTT compensation
 
-  // --- Offset selection with best practices ---
+  // Enhanced RTT, jitter, and offset tracking state
+  const [rttHistory, setRttHistory] = useState([]);
+  const [timingHistory, setTimingHistory] = useState([]);
+  const [offsetHistory, setOffsetHistory] = useState([]);
+  const [packetLossRate, setPacketLossRate] = useState(0);
+  const [connectionStability, setConnectionStability] = useState(1.0);
+  const [syncCompensation, setSyncCompensation] = useState({
+    totalCompensation: 0,
+    compensationQuality: 1.0,
+    components: { rtt: 0, jitter: 0, offset: 0, audioLatency: 0 },
+    quality: { rtt: 1.0, jitter: 1.0, offset: 1.0 }
+  });
+
+  // --- Enhanced offset selection with stability analysis ---
   const [smoothedOffset, setSmoothedOffset] = useState(timeOffset || 0);
   useEffect(() => {
-    let nextOffset = timeOffset || 0;
-    if (
-      typeof ultraPreciseOffset === 'number' &&
-      Math.abs(ultraPreciseOffset) < 1000 && // sanity check: < 1s
-      !isNaN(ultraPreciseOffset)
-    ) {
-      nextOffset = ultraPreciseOffset;
-    }
-    // Smooth transition if offset changes by more than 50ms
-    if (Math.abs(smoothedOffset - nextOffset) > 50) {
-      const step = (nextOffset - smoothedOffset) / 5;
-      let i = 0;
-      const smooth = () => {
-        setSmoothedOffset(prev => {
-          const newVal = prev + step;
-          if (i++ < 4) {
-            setTimeout(smooth, 30);
-          } else {
-            return nextOffset;
-          }
-          return newVal;
-        });
-      };
-      smooth();
-    } else {
-      setSmoothedOffset(nextOffset);
-    }
+    // Calculate optimized offset using enhanced utilities
+    const offsetData = SyncCompensationUtils.calculateOptimizedOffset(
+      offsetHistory, 
+      timeOffset, 
+      ultraPreciseOffset
+    );
+    
+    // Update smoothed offset with enhanced smoothing
+    setSmoothedOffset(offsetData.offset);
+    
+    // Log suspicious offsets in development
     if (typeof ultraPreciseOffset === 'number' && (isNaN(ultraPreciseOffset) || Math.abs(ultraPreciseOffset) > 1000)) {
       console.warn('[AudioPlayer] Ignoring suspicious ultraPreciseOffset:', ultraPreciseOffset);
     }
-  }, [ultraPreciseOffset, timeOffset]);
+    
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[AudioPlayer] Enhanced offset calculation:', {
+        offset: offsetData.offset,
+        stability: offsetData.stability,
+        isStable: offsetData.isStable,
+        driftRate: offsetData.driftRate,
+        sampleCount: offsetData.sampleCount
+      });
+    }
+  }, [ultraPreciseOffset, timeOffset, offsetHistory]);
+
+  // Update offset history separately to avoid infinite loop
+  useEffect(() => {
+    if (timeOffset !== undefined || ultraPreciseOffset !== undefined) {
+      const currentOffset = ultraPreciseOffset !== undefined ? ultraPreciseOffset : timeOffset;
+      setOffsetHistory(prev => {
+        const newEntry = { offset: currentOffset, timestamp: Date.now() };
+        const newHistory = [...prev, newEntry].slice(-OFFSET_HISTORY_SIZE);
+        return newHistory;
+      });
+    }
+  }, [timeOffset, ultraPreciseOffset]);
+
+  // Update sync compensation when RTT, jitter, or offset data changes
+  useEffect(() => {
+    // Calculate optimized RTT compensation
+    const rttData = rtt && rtt > 0 ? SyncCompensationUtils.calculateOptimizedRTT(rttHistory, rtt) : null;
+    
+    // Calculate optimized jitter compensation
+    const jitterData = timingHistory.length >= 3 ? SyncCompensationUtils.calculateOptimizedJitter(timingHistory) : null;
+    
+    // Calculate optimized offset compensation using smoothed offset instead of recalculating
+    const offsetData = offsetHistory.length > 0 ? {
+      offset: smoothedOffset,
+      stability: 1.0,
+      isStable: true,
+      driftRate: 0,
+      sampleCount: offsetHistory.length,
+      meanOffset: smoothedOffset,
+      offsetStdDev: 0
+    } : null;
+    
+    // Calculate network quality
+    const networkQuality = SyncCompensationUtils.calculateNetworkQuality(
+      rttData, 
+      jitterData, 
+      packetLossRate, 
+      connectionStability
+    );
+    
+    // Calculate music-optimized sync compensation
+    const compensation = MusicSyncUtils.calculateMusicSyncCompensation(
+      rttData, 
+      jitterData, 
+      offsetData, 
+      audioLatency
+    );
+    
+    // Validate compensation before updating state
+    if (!isFiniteNumber(compensation.totalCompensation)) {
+      if (process.env.NODE_ENV === 'development') {
+        console.warn('[AudioPlayer] Invalid compensation calculated, using fallback:', compensation);
+      }
+      // Use fallback compensation
+      const fallbackCompensation = {
+        totalCompensation: 0,
+        compensationQuality: 0.1,
+        components: { rtt: 0, jitter: 0, offset: 0, audioLatency: 0 },
+        quality: { rtt: 1.0, jitter: 1.0, offset: 1.0 },
+        musicOptimized: true
+      };
+      setSyncCompensation(fallbackCompensation);
+    } else {
+      // Update sync compensation state
+      setSyncCompensation(compensation);
+    }
+    
+    // Update network quality ref for backward compatibility
+    networkQualityRef.current = networkQuality.overall;
+    
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[AudioPlayer] Music-optimized sync compensation:', {
+        totalCompensation: compensation.totalCompensation,
+        compensationQuality: compensation.compensationQuality,
+        networkQuality: networkQuality.overall,
+        components: compensation.components,
+        quality: compensation.quality,
+        musicOptimized: compensation.musicOptimized
+      });
+    }
+  }, [rtt, rttHistory, timingHistory, packetLossRate, connectionStability, audioLatency, smoothedOffset]);
 
   useEffect(() => {
     if ((currentTrack?.title || '') !== displayedTitle) {
@@ -1236,8 +1804,7 @@ export default function AudioPlayer({
             const audio = audioRef.current;
             if (audio && audio.readyState >= 2) {
               const now = getNow(getServerTime);
-              const rttComp = rtt ? rtt / 2000 : 0;
-              const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency + rttComp + smoothedOffset;
+              const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency + syncCompensation.totalCompensation;
               
               if (isFiniteNumber(expected) && expected >= 0) {
                 setCurrentTimeSafely(audio, expected, setCurrentTime);
@@ -1478,18 +2045,34 @@ export default function AudioPlayer({
       meta,
       serverTime,
     }) => {
+      // Add race condition protection
+      if (correctionInProgressRef.current || audioState.resyncInProgress) {
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[AudioPlayer] Skipping sync state - correction in progress');
+        }
+        return;
+      }
+
       // Track change detection and validation
       const syncCurrentTrackId = currentTrack?.id;
       const trackChanged = trackId && syncCurrentTrackId && trackId !== syncCurrentTrackId;
       
-              if (trackChanged) {
-          if (process.env.NODE_ENV === 'development') {
-            console.log('[AudioPlayer] Track change detected in sync state:', {
-              receivedTrackId: trackId,
-              currentTrackId: syncCurrentTrackId,
-              currentTrackTitle: currentTrack?.title
-            });
-          }
+      if (trackChanged) {
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[AudioPlayer] Track change detected in sync state:', {
+            receivedTrackId: trackId,
+            currentTrackId: syncCurrentTrackId,
+            currentTrackTitle: currentTrack?.title
+          });
+        }
+        
+        // Reset all sync-related state for track change
+        driftCountRef.current = 0;
+        lastCorrectionRef.current = 0;
+        if (rateCorrectionRef.current.active) {
+          rateCorrectionRef.current.active = false;
+          setRateCorrectionActive(false);
+        }
         
         // For track changes, we need to reset sync state and wait for the new track to load
         // Don't process sync state until the track is properly loaded
@@ -1554,11 +2137,55 @@ export default function AudioPlayer({
         now = getNow(getServerTime);
         log('warn', 'SYNC_STATE: serverTime missing, using getNow(getServerTime)', { now });
       }
-      // Compensate for measured audio latency and RTT (one-way delay)
-      const rttComp = rtt ? rtt / 2000 : 0; // ms to s, one-way
-      const expected = timestamp + (now - lastUpdated) / 1000 - audioLatency + rttComp + smoothedOffset;
+      // Enhanced sync compensation with optimized RTT, jitter, and offset
+      const expected = timestamp + (now - lastUpdated) / 1000 - audioLatency + syncCompensation.totalCompensation;
+      
+      // Enhanced validation with detailed debugging
       if (!isFiniteNumber(expected)) {
-        log('warn', 'SYNC_STATE: expected is not finite', { expected, timestamp, lastUpdated, now });
+        log('warn', 'SYNC_STATE: expected is not finite', { 
+          expected, 
+          timestamp, 
+          lastUpdated, 
+          now,
+          audioLatency,
+          syncCompensation: {
+            totalCompensation: syncCompensation.totalCompensation,
+            compensationQuality: syncCompensation.compensationQuality,
+            components: syncCompensation.components
+          },
+          calculation: {
+            base: timestamp + (now - lastUpdated) / 1000,
+            afterLatency: timestamp + (now - lastUpdated) / 1000 - audioLatency,
+            final: expected
+          }
+        });
+        showSyncStatus('Sync failed');
+        return;
+      }
+      
+      // Additional validation for reasonable time values
+      if (expected < 0) {
+        log('warn', 'SYNC_STATE: expected time is negative', { 
+          expected, 
+          timestamp, 
+          lastUpdated, 
+          now,
+          audioLatency,
+          syncCompensation: syncCompensation.totalCompensation
+        });
+        showSyncStatus('Sync failed');
+        return;
+      }
+      
+      if (expected > 86400) { // More than 24 hours
+        log('warn', 'SYNC_STATE: expected time seems unreasonable (>24h)', { 
+          expected, 
+          timestamp, 
+          lastUpdated, 
+          now,
+          audioLatency,
+          syncCompensation: syncCompensation.totalCompensation
+        });
         showSyncStatus('Sync failed');
         return;
       }
@@ -1573,6 +2200,12 @@ export default function AudioPlayer({
       // Only track drift for the current track
       const localCurrentTrackId = currentTrack?.id;
       if (trackId === localCurrentTrackId) {
+        // Clean up old entries to prevent memory leaks
+        const maxHistorySize = 20; // Increased from 10 for better analytics
+        if (window._audioDriftHistory.length >= maxHistorySize) {
+          window._audioDriftHistory = window._audioDriftHistory.slice(-maxHistorySize + 1);
+        }
+        
         window._audioDriftHistory.push({
           drift,
           current: audio.currentTime,
@@ -1582,7 +2215,6 @@ export default function AudioPlayer({
           ctrlId,
           trackId,
         });
-        if (window._audioDriftHistory.length > 10) window._audioDriftHistory.shift();
       }
 
       // Intelligent drift analysis
@@ -1667,7 +2299,7 @@ export default function AudioPlayer({
       if (syncTimeout) clearTimeout(syncTimeout);
       if (resyncTimeout) clearTimeout(resyncTimeout);
     };
-  }, [socket, audioLatency, getServerTime, clientId, rtt, smoothedOffset]);
+  }, [socket, audioLatency, getServerTime, clientId, syncCompensation]);
 
   // Enhanced periodic drift check with continuous sync monitoring
   useEffect(() => {
@@ -1719,8 +2351,7 @@ export default function AudioPlayer({
                 return;
               }
               
-              const rttComp = rtt ? rtt / 2000 : 0;
-              const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency + rttComp + smoothedOffset;
+              const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency + syncCompensation.totalCompensation;
               
               if (isFiniteNumber(expected) && expected >= 0) {
                 resolve(expected);
@@ -1740,16 +2371,14 @@ export default function AudioPlayer({
 
     const audio = audioRef.current;
     if (audio) {
-      // Enhanced adaptive sync intervals based on network quality and drift patterns
+      // Music-optimized adaptive sync intervals based on network quality and drift patterns
       const analysis = analyzeDriftPattern(0, Date.now()); // Get initial analysis
-      const adaptiveInterval = EnhancedSyncUtils.getAdaptiveSyncInterval(
-        autoSyncRef.current.networkStability,
-        analysis.syncQuality,
-        analysis.driftVariance
+      const musicSyncInterval = MusicSyncUtils.getMusicSyncInterval(
+        autoSyncRef.current.networkStability
       );
       
-      // iOS-specific adjustments
-      const syncInterval = isIOS ? Math.max(adaptiveInterval, 1000) : adaptiveInterval;
+      // iOS-specific adjustments with music optimization
+      const syncInterval = isIOS ? Math.max(musicSyncInterval, 800) : musicSyncInterval;
       const syncThreshold = isIOS ? Math.max(analysis.adaptiveThreshold, 0.12) : analysis.adaptiveThreshold;
       const maxCorrections = isIOS ? 5 : 10; // Fewer corrections on iOS
       
@@ -1826,7 +2455,7 @@ export default function AudioPlayer({
         continuousSyncController.destroy();
       }
     };
-  }, [socket, isController, getServerTime, audioLatency, clientId, rtt, smoothedOffset, isIOS]);
+  }, [socket, isController, getServerTime, audioLatency, clientId, syncCompensation, isIOS]);
 
   // Enhanced: On mount, immediately request sync state on join, with improved error handling, logging, and edge case resilience
   useEffect(() => {
@@ -1889,9 +2518,8 @@ export default function AudioPlayer({
         }
 
         const now = getNow(getServerTime);
-        // Compensate for measured audio latency and RTT (one-way delay)
-        const rttComp = rtt ? rtt / 2000 : 0; // ms to s, one-way
-        const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency + rttComp + smoothedOffset;
+        // Enhanced sync compensation with optimized RTT, jitter, and offset
+        const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency + syncCompensation.totalCompensation;
         if (!isFiniteNumber(expected) || expected < 0) {
           warn('Invalid expected time, pausing audio', { expected, state });
           audio.pause();
@@ -1902,9 +2530,9 @@ export default function AudioPlayer({
           return;
         }
 
-        // Use advanced time sync
+        // Use advanced time sync with enhanced compensation
         const syncedNow = getNow(getServerTime);
-        const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000 + rttComp + smoothedOffset;
+        const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000 + syncCompensation.totalCompensation;
 
         // Clamp expectedSynced to [0, duration] if possible
         let safeExpected = expectedSynced;
@@ -1945,7 +2573,7 @@ export default function AudioPlayer({
         warn('Exception in sync_request callback', err);
       }
     });
-  }, [socket, getServerTime, audioLatency, rtt, smoothedOffset]);
+  }, [socket, getServerTime, audioLatency, syncCompensation]);
 
   // Enhanced: Emit play/pause/seek events (controller only) with improved logging, error handling, and latency compensation
   const emitPlay = () => {
@@ -2327,17 +2955,16 @@ export default function AudioPlayer({
                 return;
               }
               
-              const rttComp = rtt ? rtt / 2000 : 0;
-              const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency + rttComp + smoothedOffset;
+              const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency + syncCompensation.totalCompensation;
               
               if (process.env.NODE_ENV === 'development') {
-                console.log('[ManualResync] Time calculation:', {
+                console.log('[ManualResync] Enhanced time calculation:', {
                   stateTimestamp: state.timestamp,
                   stateLastUpdated: state.lastUpdated,
                   now,
-                  rttComp,
+                  totalCompensation: syncCompensation.totalCompensation,
+                  compensationQuality: syncCompensation.compensationQuality,
                   audioLatency,
-                  smoothedOffset,
                   expected
                 });
               }
@@ -2435,8 +3062,7 @@ export default function AudioPlayer({
           
           if (fallbackState && typeof fallbackState.timestamp === 'number') {
             const now = getNow(getServerTime);
-            const rttComp = rtt ? rtt / 2000 : 0;
-            const fallbackExpected = fallbackState.timestamp + (now - fallbackState.lastUpdated) / 1000 - audioLatency + rttComp + smoothedOffset;
+            const fallbackExpected = fallbackState.timestamp + (now - fallbackState.lastUpdated) / 1000 - audioLatency + syncCompensation.totalCompensation;
             
             if (isFiniteNumber(fallbackExpected) && fallbackExpected >= 0) {
               const beforeDrift = Math.abs(audio.currentTime - fallbackExpected);
@@ -2568,8 +3194,7 @@ export default function AudioPlayer({
       }
       
       const now = getNow(getServerTime);
-      const rttComp = rtt ? rtt / 2000 : 0;
-      const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency + rttComp + smoothedOffset;
+      const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency + syncCompensation.totalCompensation;
       const drift = audio.currentTime - expected;
       const absDrift = Math.abs(drift);
       
@@ -2589,9 +3214,9 @@ export default function AudioPlayer({
         // Time calculations
         timeCalculation: {
           now,
-          rttComp,
+          totalCompensation: syncCompensation.totalCompensation,
+          compensationQuality: syncCompensation.compensationQuality,
           audioLatency,
-          smoothedOffset,
           expected,
           isValid: isFiniteNumber(expected) && expected >= 0
         },
@@ -2650,9 +3275,8 @@ export default function AudioPlayer({
             stateTimestamp: state.timestamp,
             stateLastUpdated: state.lastUpdated,
             now,
-            rttComp,
-            audioLatency,
-            smoothedOffset
+            totalCompensation: syncCompensation.totalCompensation,
+            audioLatency
           }
         });
       }
@@ -2719,7 +3343,7 @@ export default function AudioPlayer({
       
       // Enhanced sync system test
       window.testSyncSystem = () => {
-        console.log('[TestSync] Testing enhanced sync system...');
+        console.log('[TestSync] Testing enhanced sync compensation system...');
         const audio = audioRef.current;
         if (!audio) {
           console.error('[TestSync] No audio element available');
@@ -2732,6 +3356,18 @@ export default function AudioPlayer({
           isPlaying: !audio.paused,
           playbackRate: audio.playbackRate,
           readyState: audio.readyState
+        });
+        
+        console.log('[TestSync] Enhanced sync compensation state:', {
+          totalCompensation: syncCompensation.totalCompensation,
+          compensationQuality: syncCompensation.compensationQuality,
+          components: syncCompensation.components,
+          quality: syncCompensation.quality,
+          rttHistory: rttHistory.length,
+          timingHistory: timingHistory.length,
+          offsetHistory: offsetHistory.length,
+          packetLossRate,
+          connectionStability
         });
         
         console.log('[TestSync] Enhanced system state:', {
@@ -2794,6 +3430,132 @@ export default function AudioPlayer({
         }
       };
       
+      // Test enhanced sync compensation
+      window.testSyncCompensation = () => {
+        console.log('[TestCompensation] Testing enhanced sync compensation...');
+        
+        // Test RTT calculation
+        if (rtt && rtt > 0) {
+          const rttData = SyncCompensationUtils.calculateOptimizedRTT(rttHistory, rtt);
+          console.log('[TestCompensation] RTT calculation:', rttData);
+        }
+        
+        // Test jitter calculation
+        if (timingHistory.length >= 3) {
+          const jitterData = SyncCompensationUtils.calculateOptimizedJitter(timingHistory);
+          console.log('[TestCompensation] Jitter calculation:', jitterData);
+        }
+        
+        // Test offset calculation
+        const offsetData = SyncCompensationUtils.calculateOptimizedOffset(offsetHistory, timeOffset, ultraPreciseOffset);
+        console.log('[TestCompensation] Offset calculation:', offsetData);
+        
+        // Test network quality
+        const networkQuality = SyncCompensationUtils.calculateNetworkQuality(
+          rtt && rtt > 0 ? SyncCompensationUtils.calculateOptimizedRTT(rttHistory, rtt) : null,
+          timingHistory.length >= 3 ? SyncCompensationUtils.calculateOptimizedJitter(timingHistory) : null,
+          packetLossRate,
+          connectionStability
+        );
+        console.log('[TestCompensation] Network quality:', networkQuality);
+        
+        // Test music-optimized compensation
+        const musicCompensation = MusicSyncUtils.calculateMusicSyncCompensation(
+          rtt && rtt > 0 ? SyncCompensationUtils.calculateOptimizedRTT(rttHistory, rtt) : null,
+          timingHistory.length >= 3 ? SyncCompensationUtils.calculateOptimizedJitter(timingHistory) : null,
+          offsetData,
+          audioLatency
+        );
+        console.log('[TestCompensation] Music-optimized compensation:', musicCompensation);
+        
+        // Test music sync interval
+        const musicInterval = MusicSyncUtils.getMusicSyncInterval(networkQuality.overall);
+        console.log('[TestCompensation] Music sync interval:', musicInterval, 'ms');
+      };
+      
+      // Debug sync compensation issues
+      window.debugSyncCompensation = () => {
+        console.log('[DebugSyncCompensation] Current sync compensation state:', {
+          syncCompensation,
+          rtt,
+          rttHistory: rttHistory.length,
+          timingHistory: timingHistory.length,
+          offsetHistory: offsetHistory.length,
+          audioLatency,
+          timeOffset,
+          ultraPreciseOffset
+        });
+        
+        // Test music compensation calculation
+        const rttData = rtt && rtt > 0 ? SyncCompensationUtils.calculateOptimizedRTT(rttHistory, rtt) : null;
+        const jitterData = timingHistory.length >= 3 ? SyncCompensationUtils.calculateOptimizedJitter(timingHistory) : null;
+        const offsetData = offsetHistory.length > 0 ? {
+          offset: smoothedOffset,
+          stability: 1.0,
+          isStable: true,
+          driftRate: 0,
+          sampleCount: offsetHistory.length,
+          meanOffset: smoothedOffset,
+          offsetStdDev: 0
+        } : null;
+        
+        const testCompensation = MusicSyncUtils.calculateMusicSyncCompensation(
+          rttData, 
+          jitterData, 
+          offsetData, 
+          audioLatency
+        );
+        
+        console.log('[DebugSyncCompensation] Test calculation result:', testCompensation);
+      };
+      
+      // Test music-specific optimizations
+      window.testMusicSync = () => {
+        console.log('[TestMusicSync] Testing music-specific sync optimizations...');
+        
+        const audio = audioRef.current;
+        if (!audio) {
+          console.error('[TestMusicSync] No audio element available');
+          return;
+        }
+        
+        // Test music drift correction with different drift values
+        const testDrifts = [
+          { drift: 0.015, expected: audio.currentTime + 0.015, description: 'Micro drift (15ms)' },
+          { drift: 0.035, expected: audio.currentTime + 0.035, description: 'Small drift (35ms)' },
+          { drift: 0.1, expected: audio.currentTime + 0.1, description: 'Medium drift (100ms)' },
+          { drift: 0.2, expected: audio.currentTime + 0.2, description: 'Large drift (200ms)' }
+        ];
+        
+        testDrifts.forEach((test, index) => {
+          setTimeout(() => {
+            console.log(`[TestMusicSync] Testing ${test.description}...`);
+            const correction = MusicSyncUtils.correctMusicDrift(audio, test.expected, audio.currentTime);
+            console.log(`[TestMusicSync] ${test.description} result:`, correction);
+            
+            // Restore rate after test
+            setTimeout(() => {
+              audio.playbackRate = 1.0;
+            }, 1000);
+          }, index * 2000);
+        });
+        
+        // Test music sync intervals
+        const testNetworkQualities = [0.9, 0.7, 0.5, 0.3];
+        testNetworkQualities.forEach(quality => {
+          const interval = MusicSyncUtils.getMusicSyncInterval(quality);
+          console.log(`[TestMusicSync] Network quality ${quality}: ${interval}ms interval`);
+        });
+        
+        // Test music compensation weights
+        console.log('[TestMusicSync] Music compensation weights:', {
+          rttWeight: MUSIC_SYNC_OPTIMIZATIONS.rttWeight,
+          jitterWeight: MUSIC_SYNC_OPTIMIZATIONS.jitterWeight,
+          offsetWeight: MUSIC_SYNC_OPTIMIZATIONS.offsetWeight,
+          latencyWeight: MUSIC_SYNC_OPTIMIZATIONS.latencyWeight
+        });
+      };
+      
       // iOS-specific debug function
       window.debugIOSAudio = () => {
         if (!isIOS) {
@@ -2852,17 +3614,17 @@ export default function AudioPlayer({
             console.error('[DebugIOS] Failed to resume AudioContext:', err);
           });
         }
-            };
+      };
     }
   }, []);
 
-  // Network quality monitoring
+  // Enhanced network quality monitoring with RTT and jitter tracking
   useEffect(() => {
     if (!socket) return;
     
-    let rttHistory = [];
     let packetLossCount = 0;
     let lastPingTime = 0;
+    let localTimingHistory = [];
     
     const updateNetworkQuality = () => {
       const autoSync = autoSyncRef.current;
@@ -2872,56 +3634,94 @@ export default function AudioPlayer({
         return;
       }
       
-      // Calculate RTT stability
-      if (rttHistory.length > 5) {
-        const avgRtt = rttHistory.reduce((sum, r) => sum + r, 0) / rttHistory.length;
-        const rttVariance = rttHistory.reduce((sum, r) => sum + Math.pow(r - avgRtt, 2), 0) / rttHistory.length;
-        
-        // Network stability based on RTT variance
-        autoSync.networkStability = Math.max(0.1, Math.min(1.0, 1 - (rttVariance / 100)));
-        
-        // Adjust sync strategy based on network quality
-        if (autoSync.networkStability < 0.5) {
-          // Poor network - be more conservative
-          autoSync.adaptiveThreshold = (autoSync.adaptiveThreshold || DRIFT_THRESHOLD) * 1.3;
-          autoSync.syncMode = 'conservative';
-        } else if (autoSync.networkStability > 0.8) {
-          // Good network - can be more aggressive
-          autoSync.adaptiveThreshold = (autoSync.adaptiveThreshold || DRIFT_THRESHOLD) * 0.9;
-          if ((autoSync.syncQuality || 1.0) > 0.7) {
-            autoSync.syncMode = 'aggressive';
-          }
+      // Calculate network quality using enhanced utilities
+      const rttData = rtt && rtt > 0 ? SyncCompensationUtils.calculateOptimizedRTT(rttHistory, rtt) : null;
+      const jitterData = localTimingHistory.length >= 3 ? SyncCompensationUtils.calculateOptimizedJitter(localTimingHistory) : null;
+      
+      const networkQuality = SyncCompensationUtils.calculateNetworkQuality(
+        rttData, 
+        jitterData, 
+        packetLossRate, 
+        connectionStability
+      );
+      
+      // Update autoSync with enhanced network quality
+      autoSync.networkStability = networkQuality.overall;
+      networkQualityRef.current = networkQuality.overall;
+      
+      // Adjust sync strategy based on enhanced network quality
+      if (networkQuality.overall < 0.5) {
+        // Poor network - be more conservative
+        autoSync.adaptiveThreshold = (autoSync.adaptiveThreshold || DRIFT_THRESHOLD) * 1.3;
+        autoSync.syncMode = 'conservative';
+      } else if (networkQuality.overall > 0.8) {
+        // Good network - can be more aggressive
+        autoSync.adaptiveThreshold = (autoSync.adaptiveThreshold || DRIFT_THRESHOLD) * 0.9;
+        if ((autoSync.syncQuality || 1.0) > 0.7) {
+          autoSync.syncMode = 'aggressive';
         }
+      }
+      
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[NetworkQuality] Enhanced network quality update:', {
+          overall: networkQuality.overall,
+          components: networkQuality.components,
+          rttData: rttData ? {
+            compensatedRTT: rttData.compensatedRTT,
+            quality: rttData.quality,
+            stability: rttData.stability
+          } : null,
+          jitterData: jitterData ? {
+            jitter: jitterData.jitter,
+            quality: jitterData.quality,
+            bufferSize: jitterData.bufferSize
+          } : null
+        });
       }
     };
     
-    // Monitor RTT changes
+    // Monitor RTT changes with enhanced tracking
     if (rtt && rtt > 0) {
-      rttHistory.push(rtt);
-      if (rttHistory.length > 10) rttHistory.shift();
       updateNetworkQuality();
     }
     
-    // Monitor socket connection quality
+    // Monitor socket connection quality with enhanced timing
     const checkConnection = () => {
       if (socket && socket.connected) {
         const now = Date.now();
         if (now - lastPingTime > 5000) { // Check every 5 seconds
           lastPingTime = now;
-          // Simple ping test
+          
+          // Enhanced ping test with timing history
           socket.emit('ping', { timestamp: now }, (response) => {
             if (response && response.timestamp) {
               const responseTime = Date.now() - response.timestamp;
-              rttHistory.push(responseTime);
-              if (rttHistory.length > 10) rttHistory.shift();
+              
+              // Update local timing history for jitter calculation
+              localTimingHistory.push({ timestamp: now, responseTime });
+              if (localTimingHistory.length > JITTER_BUFFER_SIZE) {
+                localTimingHistory.shift();
+              }
+              
+              // Update timing history state
+              setTimingHistory(prev => {
+                const newHistory = [...prev, { timestamp: now, responseTime }].slice(-JITTER_BUFFER_SIZE);
+                return newHistory;
+              });
+              
+              // Update RTT history
+              setRttHistory(prev => {
+                const newHistory = [...prev, responseTime].slice(-RTT_HISTORY_SIZE);
+                return newHistory;
+              });
+              
               updateNetworkQuality();
             } else {
               packetLossCount++;
+              setPacketLossRate(Math.min(1.0, packetLossCount / 10)); // Normalize packet loss rate
+              
               if (packetLossCount > 3) {
-                const autoSync = autoSyncRef.current;
-                if (autoSync) {
-                  autoSync.networkStability = (autoSync.networkStability || 1.0) * 0.8; // Reduce stability on packet loss
-                }
+                setConnectionStability(prev => Math.max(0.1, prev * 0.8)); // Reduce connection stability
               }
             }
           });
@@ -2934,7 +3734,17 @@ export default function AudioPlayer({
     return () => {
       clearInterval(connectionInterval);
     };
-  }, [socket, rtt]);
+  }, [socket, rtt, packetLossRate, connectionStability]);
+
+  // Update RTT history separately to avoid infinite loop
+  useEffect(() => {
+    if (rtt && rtt > 0) {
+      setRttHistory(prev => {
+        const newHistory = [...prev, rtt].slice(-RTT_HISTORY_SIZE);
+        return newHistory;
+      });
+    }
+  }, [rtt]);
 
   // Enhanced intelligent drift analysis and prediction
   const analyzeDriftPattern = (currentDrift, timestamp) => {
@@ -3300,7 +4110,18 @@ export default function AudioPlayer({
     if (!isFiniteNumber(expected) || expected < 0) {
       if (process.env.NODE_ENV === 'development') {
         // eslint-disable-next-line no-console
-        console.warn('[DriftCorrection] Expected time is not finite or negative', { expected });
+        console.warn('[DriftCorrection] Expected time is not finite or negative', { 
+          expected,
+          type: typeof expected,
+          isFinite: isFinite(expected),
+          isNaN: isNaN(expected),
+          isNegative: expected < 0,
+          audio: audio ? {
+            currentTime: audio.currentTime,
+            duration: audio.duration,
+            readyState: audio.readyState
+          } : null
+        });
       }
       return { corrected: false, reason: 'expected_invalid' };
     }
@@ -3382,26 +4203,38 @@ export default function AudioPlayer({
       return { corrected: true, largeGap: true, before, after: expected, drift };
     }
 
-    // Tier 1: Micro-correction for very small drifts (0.04s)
-    if (absDrift < MICRO_DRIFT_THRESHOLD) {
+    // Tier 1: Music-optimized micro-correction for very small drifts
+    if (absDrift < MUSIC_SYNC_OPTIMIZATIONS.microDriftThreshold) {
       correctionInProgressRef.current = true;
       setCorrectionInProgress(true);
-      const rate = 1 + Math.max(-MICRO_RATE_CAP, Math.min(MICRO_RATE_CAP, drift * 0.7));
-      audio.playbackRate = rate;
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
-        console.log('[DriftCorrection] Micro-correcting with playbackRate', rate.toFixed(4), 'for drift', drift.toFixed(3));
+      
+      // Use music-optimized drift correction
+      const correction = MusicSyncUtils.correctMusicDrift(audio, expected, before);
+      
+      if (correction.corrected) {
+        // Use music-optimized rate restoration
+        const cleanupRestoration = MusicSyncUtils.restoreMusicRate(
+          audio, 
+          1.0, 
+          MUSIC_SYNC_OPTIMIZATIONS.microCorrectionWindow
+        );
+        
+        setTimeout(() => {
+          if (cleanupRestoration) cleanupRestoration();
+          correctionInProgressRef.current = false;
+          setCorrectionInProgress(false);
+        }, MUSIC_SYNC_OPTIMIZATIONS.microCorrectionWindow + 50);
+        
+        if (process.env.NODE_ENV === 'development') {
+          // eslint-disable-next-line no-console
+          console.log('[MusicDriftCorrection] Micro-correcting with playbackRate', correction.rate?.toFixed(5), 'for drift', drift.toFixed(3));
+        }
+        return { corrected: true, micro: true, before, after: expected, drift, rate: correction.rate };
       }
-      setTimeout(() => {
-        audio.playbackRate = 1;
-        correctionInProgressRef.current = false;
-        setCorrectionInProgress(false);
-      }, MICRO_CORRECTION_WINDOW);
-      return { corrected: true, micro: true, before, after: expected, drift, rate };
     }
 
-    // Tier 2: Enhanced rate correction for medium drifts (0.04s - 0.25s)
-    if (absDrift < MEDIUM_DRIFT_THRESHOLD) {
+    // Tier 2: Music-optimized rate correction for medium drifts
+    if (absDrift < MUSIC_SYNC_OPTIMIZATIONS.mediumDriftThreshold) {
       correctionInProgressRef.current = true;
       setCorrectionInProgress(true);
       lastCorrectionRef.current = now;
@@ -3454,8 +4287,8 @@ export default function AudioPlayer({
               return { corrected: true, rate: true, before, after: expected, drift, playbackRate: newRate };
     }
 
-    // Tier 3: Enhanced rate correction for large drifts (0.25s - 0.5s) - avoid seeking
-    if (absDrift < LARGE_DRIFT_THRESHOLD) {
+    // Tier 3: Music-optimized rate correction for large drifts - avoid seeking
+    if (absDrift < MUSIC_SYNC_OPTIMIZATIONS.largeDriftThreshold) {
       correctionInProgressRef.current = true;
       setCorrectionInProgress(true);
       lastCorrectionRef.current = now;
@@ -3558,66 +4391,60 @@ export default function AudioPlayer({
         return;
       }
       
-      // Estimate expected time using current sync logic
+      // Estimate expected time using enhanced sync compensation
       const now = getNow(getServerTime);
-      const rttComp = rtt ? rtt / 2000 : 0;
       const expected = (sessionSyncState && typeof sessionSyncState.timestamp === 'number' && typeof sessionSyncState.lastUpdated === 'number')
-        ? sessionSyncState.timestamp + (now - sessionSyncState.lastUpdated) / 1000 - audioLatency + rttComp + smoothedOffset
+        ? sessionSyncState.timestamp + (now - sessionSyncState.lastUpdated) / 1000 - audioLatency + syncCompensation.totalCompensation
         : null;
       if (!isFiniteNumber(expected)) return;
       const drift = audio.currentTime - expected;
       
-      // Enhanced micro-correction with hysteresis to prevent oscillation
-      if (Math.abs(drift) > MICRO_DRIFT_MIN && Math.abs(drift) < MICRO_DRIFT_MAX) {
-        // Calculate playbackRate adjustment with hysteresis
-        const hysteresisThreshold = MICRO_DRIFT_MIN + MICRO_CORRECTION_HYSTERESIS;
+      // Music-optimized micro-correction with enhanced hysteresis
+      if (Math.abs(drift) > MUSIC_SYNC_OPTIMIZATIONS.microHysteresis && Math.abs(drift) < MUSIC_SYNC_OPTIMIZATIONS.smallDriftThreshold) {
+        // Use music-optimized drift correction
+        const correction = MusicSyncUtils.correctMusicDrift(audio, expected, audio.currentTime);
         
-        // Only correct if drift is above hysteresis threshold
-        if (Math.abs(drift) > hysteresisThreshold) {
-          // Calculate rate adjustment with enhanced precision
-          const driftRatio = Math.abs(drift) / MICRO_DRIFT_MAX;
-          const rateAdjustment = driftRatio * MICRO_RATE_CAP_MICRO * (drift > 0 ? -1 : 1);
+        if (correction.corrected) {
+          // Use music-optimized rate restoration
+          const cleanupRestoration = MusicSyncUtils.restoreMusicRate(
+            audio, 
+            1.0, 
+            correction.type === 'micro' ? MUSIC_SYNC_OPTIMIZATIONS.microCorrectionWindow : MUSIC_SYNC_OPTIMIZATIONS.smallCorrectionWindow
+          );
           
-          // Apply gradual rate transition for smoother correction
-          const targetRate = Math.max(1 - MICRO_RATE_CAP_MICRO, Math.min(1 + MICRO_RATE_CAP_MICRO, 1 + rateAdjustment));
-          
-          // Only apply if the change is significant enough
-          if (Math.abs(audio.playbackRate - targetRate) > 0.0005) {
-                  // Use gradual transition for micro-corrections with cleanup
-      const cleanupTransition = EnhancedSyncUtils.gradualRateTransition(audio, targetRate, 200);
-      
-      // Store cleanup function (micro-corrections are short-lived)
-      setTimeout(() => {
-        if (cleanupTransition) cleanupTransition();
-      }, 250);
-            
-            if (process.env.NODE_ENV === 'development') {
-              // eslint-disable-next-line no-console
-              console.log('[MicroDrift] Gradual adjustment to', targetRate.toFixed(5), 'for drift', drift.toFixed(4));
-            }
-          }
-        }
-      } else {
-        // Enhanced restoration logic with gradual transition
-        if (Math.abs(audio.playbackRate - 1) > 0.001) {
-                  // Use gradual transition to restore normal rate with cleanup
-        const cleanupTransition = EnhancedSyncUtils.gradualRateTransition(audio, 1, 300);
-        
-        // Store cleanup function (restoration is short-lived)
-        setTimeout(() => {
-          if (cleanupTransition) cleanupTransition();
-        }, 350);
+          // Store cleanup function
+          setTimeout(() => {
+            if (cleanupRestoration) cleanupRestoration();
+          }, correction.type === 'micro' ? MUSIC_SYNC_OPTIMIZATIONS.microCorrectionWindow + 50 : MUSIC_SYNC_OPTIMIZATIONS.smallCorrectionWindow + 50);
           
           if (process.env.NODE_ENV === 'development') {
             // eslint-disable-next-line no-console
-            console.log('[MicroDrift] Gradual restoration to 1.0');
+            console.log('[MusicMicroDrift]', correction.type, 'correction applied:', {
+              rate: correction.rate?.toFixed(5),
+              drift: correction.drift.toFixed(4),
+              window: correction.type === 'micro' ? MUSIC_SYNC_OPTIMIZATIONS.microCorrectionWindow : MUSIC_SYNC_OPTIMIZATIONS.smallCorrectionWindow
+            });
+          }
+        }
+      } else {
+        // Music-optimized restoration logic
+        if (Math.abs(audio.playbackRate - 1) > 0.001) {
+          const cleanupRestoration = MusicSyncUtils.restoreMusicRate(audio, 1.0, 200);
+          
+          setTimeout(() => {
+            if (cleanupRestoration) cleanupRestoration();
+          }, 250);
+          
+          if (process.env.NODE_ENV === 'development') {
+            // eslint-disable-next-line no-console
+            console.log('[MusicMicroDrift] Gradual restoration to 1.0');
           }
         }
       }
     }
     interval = setInterval(correctMicroDrift, MICRO_CORRECTION_WINDOW);
     return () => clearInterval(interval);
-  }, [isController, sessionSyncState, audioLatency, rtt, smoothedOffset, getServerTime]);
+  }, [isController, sessionSyncState, audioLatency, syncCompensation, getServerTime]);
 
   // --- Cleanup rate corrections on unmount/audio change ---
   useEffect(() => {
@@ -3630,7 +4457,15 @@ export default function AudioPlayer({
           rateCorrectionRef.current.cleanupTransition = null;
         }
         
-        audioRef.current.playbackRate = rateCorrectionRef.current.originalRate;
+        // Ensure audio playback rate is restored
+        try {
+          audioRef.current.playbackRate = rateCorrectionRef.current.originalRate || 1.0;
+        } catch (error) {
+          if (process.env.NODE_ENV === 'development') {
+            console.warn('[AudioPlayer] Failed to restore playback rate during cleanup:', error);
+          }
+        }
+        
         rateCorrectionRef.current.active = false;
         setRateCorrectionActive(false);
       }
