@@ -3,10 +3,14 @@ import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-route
 import SessionPage from './components/SessionPage'
 import CreateRoomPage from './components/CreateRoomPage'
 import useSocket from './hooks/useSocket'
+import { useDefaultMetadata } from './hooks/useDefaultMetadata'
 import './App.css'
 
 // Enhanced App component with better state management and routing
 function App() {
+  // Load default metadata when app starts
+  const { isLoading: metadataLoading, error: metadataError } = useDefaultMetadata();
+  
   // Enhanced session state management
   const [currentSessionId, setCurrentSessionId] = useState(() => {
     // Initialize from URL params or localStorage
@@ -71,6 +75,16 @@ function App() {
   return (
     <Router>
       <div className="app-container">
+        {/* Show loading indicator while metadata is loading */}
+        {metadataLoading && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-neutral-900 rounded-lg p-6 flex flex-col items-center gap-4">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
+              <p className="text-white text-sm">Loading audio metadata...</p>
+            </div>
+          </div>
+        )}
+        
         <Routes>
           <Route
             path="/"

@@ -17,5 +17,5 @@ export function isValidSessionId(id) {
 }
 
 export function log(...args) {
-  console.log('[Backend]', ...args);
+  // Production logging removed
 } 

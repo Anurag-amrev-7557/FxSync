@@ -30,10 +30,8 @@ function buildSessionSyncState(session) {
 export function setupSocket(io) {
   const clientDriftMap = {}; // sessionId -> { clientId: { drift, timestamp } }
   io.on('connection', (socket) => {
-    console.log('Socket connected:', socket.id);
 
     socket.on('join_session', async ({ sessionId, displayName, deviceInfo, clientId } = {}, callback) => {
-      console.log('join_session event received', { sessionId, clientId });
       if (!sessionId || typeof sessionId !== 'string') {
         log('join_session: missing or invalid sessionId');
         return typeof callback === "function" && callback({ error: 'No sessionId provided' });
@@ -58,12 +56,6 @@ export function setupSocket(io) {
         becameController = true;
       }
       // Debug log for controller assignment
-      console.log('JOIN CALLBACK:', {
-        controllerClientId: session.controllerClientId,
-        clientId,
-        sessionId,
-        controllerId: session.controllerId
-      });
       // Always send the correct controllerClientId in the callback
       const syncState = buildSessionSyncState(session);
       typeof callback === "function" && callback({
@@ -108,7 +100,6 @@ export function setupSocket(io) {
       if (session.controllerClientId !== clientId) return;
       updatePlayback(sessionId, { isPlaying: true, timestamp, controllerId: socket.id });
       log('Play in session', sessionId, 'at', timestamp);
-      console.log('Emitting sync_state to session', sessionId, 'clients:', Array.from(session.clients.keys()));
       io.to(sessionId).emit('sync_state', {
         isPlaying: true,
         timestamp: session.timestamp,
@@ -126,7 +117,6 @@ export function setupSocket(io) {
       if (session.controllerClientId !== clientId) return;
       updatePlayback(sessionId, { isPlaying: false, timestamp, controllerId: socket.id });
       log('Pause in session', sessionId, 'at', timestamp);
-      console.log('Emitting sync_state to session', sessionId, 'clients:', Array.from(session.clients.keys()));
       io.to(sessionId).emit('sync_state', {
         isPlaying: false,
         timestamp: session.timestamp,
@@ -144,7 +134,6 @@ export function setupSocket(io) {
       if (session.controllerClientId !== clientId) return;
       updateTimestamp(sessionId, timestamp, socket.id);
       log('Seek in session', sessionId, 'to', timestamp);
-      console.log('Emitting sync_state to session', sessionId, 'clients:', Array.from(session.clients.keys()));
       io.to(sessionId).emit('sync_state', {
         isPlaying: session.isPlaying,
         timestamp: session.timestamp,
@@ -442,39 +431,26 @@ export function setupSocket(io) {
     });
 
     socket.on('chat_message', ({ sessionId, message, sender } = {}) => {
-      console.log('Backend: Received chat_message event:', { sessionId, message, sender, socketId: socket.id });
       if (!sessionId || !message || typeof message !== 'string') {
-        console.log('Backend: Invalid chat message data:', { sessionId, message, sender });
         return;
       }
       const session = getSession(sessionId);
-      console.log('Backend: Available sessions:', Object.keys(getAllSessions()));
       if (!session) {
-        console.log('Backend: Session not found:', sessionId);
         return;
       }
-      console.log('Backend: Session found, broadcasting message to session:', sessionId);
-      log('Chat in session', sessionId, ':', message);
       const formattedMessage = formatChatMessage(sender || socket.id, message);
-      console.log('Backend: Formatted message:', formattedMessage);
       io.to(sessionId).emit('chat_message', formattedMessage);
     });
 
     socket.on('reaction', ({ sessionId, reaction, sender } = {}) => {
-      console.log('Backend: Received reaction event:', { sessionId, reaction, sender, socketId: socket.id });
       if (!sessionId || !reaction || typeof reaction !== 'string') {
-        console.log('Backend: Invalid reaction data:', { sessionId, reaction, sender });
         return;
       }
       const session = getSession(sessionId);
       if (!session) {
-        console.log('Backend: Session not found for reaction:', sessionId);
         return;
       }
-      console.log('Backend: Session found, broadcasting reaction to session:', sessionId);
-      log('Reaction in session', sessionId, ':', reaction);
       const formattedReaction = formatReaction(sender || socket.id, reaction);
-      console.log('Backend: Formatted reaction:', formattedReaction);
       io.to(sessionId).emit('reaction', formattedReaction);
     });
 
@@ -658,7 +634,6 @@ export function setupSocket(io) {
       }
 
       // Debug log for queue and track BEFORE emitting events
-      console.log('[SOCKET][track_change] About to emit. sessionId:', sessionId, 'queue:', queue, 'newIdx:', newIdx, 'track:', track, 'session:', JSON.stringify(session));
 
       // Defensive: If idx is out of bounds, clamp to valid range or null
       if (typeof newIdx === 'number' && (newIdx < 0 || newIdx >= queue.length)) {
@@ -858,7 +833,7 @@ export function setupSocket(io) {
                 const filePath = path.join(uploadsDir, filename);
                 fs.unlink(filePath, (err) => {
                   if (err) {
-                    console.error(`[CLEANUP] Failed to delete file ${filePath}:`, err);
+                    // Production logging removed
                   } else {
                     log(`[CLEANUP] Deleted user-uploaded file: ${filePath}`);
                   }

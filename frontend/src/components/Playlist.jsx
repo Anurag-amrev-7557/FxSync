@@ -3,6 +3,7 @@ import { useStaggeredAnimation } from '../hooks/useSmoothAppearance';
 import { InlineLoadingSpinner } from './LoadingSpinner';
 import { getClientId } from '../utils/clientId';
 import jsmediatags from 'jsmediatags/dist/jsmediatags.min.js';
+import metadataCache from '../utils/metadataCache';
 
 // Add this Equalizer component at the top of the file:
 function EqualizerBars() {
@@ -44,6 +45,10 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
       .then(data => {
         setAllTracks(data);
         setAllTracksLoading(false);
+        
+        // Preload metadata for all tracks
+        const trackUrls = data.map(track => track.url).filter(Boolean);
+        metadataCache.preloadMetadata(trackUrls);
       })
       .catch(err => {
         setAllTracksError('Could not load tracks');
@@ -51,23 +56,21 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
       });
   }, []);
 
-  // Fetch metadata for each track in queue
+  // Fetch metadata for each track in queue using cache
   useEffect(() => {
-    queue.forEach(item => {
+    queue.forEach(async (item) => {
       if (!item.url || trackMetadata[item.url] || metadataLoading[item.url]) return;
+      
       setMetadataLoading(prev => ({ ...prev, [item.url]: true }));
-      // Extract relative path after /audio/
-      const relPath = decodeURIComponent(item.url.replace(/^.*\/audio\//, ''));
-      fetch(`${backendUrl}/audio/metadata/${relPath}`)
-        .then(res => res.ok ? res.json() : null)
-        .then(data => {
-          setTrackMetadata(prev => ({ ...prev, [item.url]: data || {} }));
-          setMetadataLoading(prev => ({ ...prev, [item.url]: false }));
-        })
-        .catch(() => {
-          setTrackMetadata(prev => ({ ...prev, [item.url]: {} }));
-          setMetadataLoading(prev => ({ ...prev, [item.url]: false }));
-        });
+      
+      try {
+        const metadata = await metadataCache.getMetadata(item.url);
+        setTrackMetadata(prev => ({ ...prev, [item.url]: metadata || {} }));
+      } catch (error) {
+        setTrackMetadata(prev => ({ ...prev, [item.url]: {} }));
+      } finally {
+        setMetadataLoading(prev => ({ ...prev, [item.url]: false }));
+      }
     });
   }, [queue]);
 

@@ -10,113 +10,110 @@ const STORAGE_KEYS = {
 const getSessionKey = (baseKey, sessionId) => `${baseKey}_${sessionId}`;
 
 // Save messages for a session
-export const saveMessages = (sessionId, messages) => {
+export function saveMessages(sessionId, messages) {
   try {
-    const key = getSessionKey(STORAGE_KEYS.MESSAGES, sessionId);
+    const key = `messages_${sessionId}`;
     localStorage.setItem(key, JSON.stringify(messages));
   } catch (error) {
-    console.warn('Failed to save messages to localStorage:', error);
+    // Production logging removed
   }
-};
+}
 
 // Load messages for a session
-export const loadMessages = (sessionId) => {
+export function loadMessages(sessionId) {
   try {
-    const key = getSessionKey(STORAGE_KEYS.MESSAGES, sessionId);
-    const stored = localStorage.getItem(key);
-    return stored ? JSON.parse(stored) : [];
+    const key = `messages_${sessionId}`;
+    const data = localStorage.getItem(key);
+    return data ? JSON.parse(data) : [];
   } catch (error) {
-    console.warn('Failed to load messages from localStorage:', error);
+    // Production logging removed
     return [];
   }
-};
+}
 
 // Save queue for a session
-export const saveQueue = (sessionId, queue) => {
+export function saveQueue(sessionId, queue) {
   try {
-    const key = getSessionKey(STORAGE_KEYS.QUEUE, sessionId);
+    const key = `queue_${sessionId}`;
     localStorage.setItem(key, JSON.stringify(queue));
   } catch (error) {
-    console.warn('Failed to save queue to localStorage:', error);
+    // Production logging removed
   }
-};
+}
 
 // Load queue for a session
-export const loadQueue = (sessionId) => {
+export function loadQueue(sessionId) {
   try {
-    const key = getSessionKey(STORAGE_KEYS.QUEUE, sessionId);
-    const stored = localStorage.getItem(key);
-    return stored ? JSON.parse(stored) : [];
+    const key = `queue_${sessionId}`;
+    const data = localStorage.getItem(key);
+    return data ? JSON.parse(data) : [];
   } catch (error) {
-    console.warn('Failed to load queue from localStorage:', error);
+    // Production logging removed
     return [];
   }
-};
+}
 
 // Save session data (display name, etc.)
-export const saveSessionData = (sessionId, data) => {
+export function saveSessionData(sessionId, data) {
   try {
-    const key = getSessionKey(STORAGE_KEYS.SESSION_DATA, sessionId);
-    localStorage.setItem(key, JSON.stringify(data));
+    const key = `session_${sessionId}`;
+    localStorage.setItem(key, JSON.stringify({
+      ...data,
+      timestamp: Date.now()
+    }));
   } catch (error) {
-    console.warn('Failed to save session data to localStorage:', error);
+    // Production logging removed
   }
-};
+}
 
 // Load session data
-export const loadSessionData = (sessionId) => {
+export function loadSessionData(sessionId) {
   try {
-    const key = getSessionKey(STORAGE_KEYS.SESSION_DATA, sessionId);
-    const stored = localStorage.getItem(key);
-    return stored ? JSON.parse(stored) : null;
+    const key = `session_${sessionId}`;
+    const data = localStorage.getItem(key);
+    return data ? JSON.parse(data) : null;
   } catch (error) {
-    console.warn('Failed to load session data from localStorage:', error);
+    // Production logging removed
     return null;
   }
-};
+}
 
 // Clear all data for a session
-export const clearSessionData = (sessionId) => {
+export function clearSessionData(sessionId) {
   try {
     const keys = [
-      getSessionKey(STORAGE_KEYS.MESSAGES, sessionId),
-      getSessionKey(STORAGE_KEYS.QUEUE, sessionId),
-      getSessionKey(STORAGE_KEYS.SESSION_DATA, sessionId)
+      `messages_${sessionId}`,
+      `queue_${sessionId}`,
+      `session_${sessionId}`
     ];
     keys.forEach(key => localStorage.removeItem(key));
   } catch (error) {
-    console.warn('Failed to clear session data from localStorage:', error);
+    // Production logging removed
   }
-};
+}
 
 // Clean up old session data (keep only last 10 sessions)
-export const cleanupOldSessions = () => {
+export function cleanupOldSessions(maxAge = 24 * 60 * 60 * 1000) { // 24 hours default
   try {
-    const allKeys = Object.keys(localStorage);
-    const sessionKeys = allKeys.filter(key => key.startsWith('fxsync_'));
+    const now = Date.now();
+    const keys = Object.keys(localStorage);
+    const sessionKeys = keys.filter(key => key.startsWith('session_'));
     
-    // Group by session ID
-    const sessions = {};
     sessionKeys.forEach(key => {
-      const parts = key.split('_');
-      if (parts.length >= 3) {
-        const sessionId = parts.slice(2).join('_');
-        if (!sessions[sessionId]) {
-          sessions[sessionId] = [];
+      try {
+        const data = localStorage.getItem(key);
+        if (data) {
+          const sessionData = JSON.parse(data);
+          if (sessionData.timestamp && (now - sessionData.timestamp) > maxAge) {
+            const sessionId = key.replace('session_', '');
+            clearSessionData(sessionId);
+          }
         }
-        sessions[sessionId].push(key);
+      } catch (error) {
+        // Production logging removed
       }
     });
-    
-    // Keep only the 10 most recent sessions
-    const sessionIds = Object.keys(sessions);
-    if (sessionIds.length > 10) {
-      const sessionsToRemove = sessionIds.slice(10);
-      sessionsToRemove.forEach(sessionId => {
-        sessions[sessionId].forEach(key => localStorage.removeItem(key));
-      });
-    }
   } catch (error) {
-    console.warn('Failed to cleanup old sessions:', error);
+    // Production logging removed
   }
-}; 
+} 

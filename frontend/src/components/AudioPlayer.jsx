@@ -3,6 +3,7 @@ import SyncStatus from './SyncStatus';
 import useSmoothAppearance from '../hooks/useSmoothAppearance';
 import LoadingSpinner from './LoadingSpinner';
 import ResyncAnalytics from './ResyncAnalytics';
+import metadataCache from '../utils/metadataCache';
 
 // Add global error handlers
 if (typeof window !== 'undefined' && !window._audioPlayerErrorHandlerAdded) {
@@ -1555,32 +1556,31 @@ useEffect(() => {
   setMetadataError(null);
   if (currentTrack && currentTrack.url && currentTrack.url.startsWith('/audio/')) {
     setMetadataLoading(true);
-    // Extract relative path after /audio/
-    const relPath = decodeURIComponent(currentTrack.url.replace(/^.*\/audio\//, ''));
-    console.log('Fetching metadata for:', relPath);
-    fetch(`${backendUrl}/audio/metadata/${relPath}`)
-      .then(res => {
-        if (!res.ok) throw new Error('Failed to fetch metadata');
-        return res.json();
-      })
+    
+    // Use metadata cache
+    metadataCache.getMetadata(currentTrack.url)
       .then(data => {
-        console.log('Metadata received:', data);
-        console.log('Cover data:', data.cover);
-        if (data.cover) {
-          console.log('Cover format:', data.cover.format);
-          console.log('Cover data length:', data.cover.data?.length);
-          console.log('Cover data preview:', data.cover.data?.substring(0, 50));
+        if (data) {
+          setAudioMetadata(data);
+        } else {
+          setMetadataError('Could not load metadata');
         }
-        setAudioMetadata(data);
         setMetadataLoading(false);
       })
       .catch(err => {
-        console.error('Metadata fetch error:', err);
         setMetadataError('Could not load metadata');
         setMetadataLoading(false);
       });
   }
 }, [currentTrack]);
+
+// Preload metadata for all tracks in queue when component mounts or queue changes
+useEffect(() => {
+  if (queue && queue.length > 0) {
+    const trackUrls = queue.map(track => track.url).filter(Boolean);
+    metadataCache.preloadMetadata(trackUrls);
+  }
+}, [queue]);
 
 // Watch for track/metadata change to trigger transition
 useEffect(() => {

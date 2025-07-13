@@ -56,13 +56,11 @@ router.get('/metadata/:filename(*)', async (req, res) => {
     return res.status(400).json({ error: 'Invalid filename' });
   }
   const filePath = path.join(__dirname, '../', filename);
-  console.log('Looking for file:', filePath); // Debug log
   try {
     const metadata = await mm.parseFile(filePath);
     let cover = null;
     if (metadata.common.picture && metadata.common.picture[0]) {
       const pic = metadata.common.picture[0];
-      console.log('Cover data type:', typeof pic.data, 'Is Buffer:', Buffer.isBuffer(pic.data));
       
       // Ensure we have valid image data
       if (pic.data && pic.format && /^image\//.test(pic.format)) {
@@ -72,7 +70,6 @@ router.get('/metadata/:filename(*)', async (req, res) => {
         } else if (Array.isArray(pic.data)) {
           base64Data = Buffer.from(pic.data).toString('base64');
         } else {
-          console.log('Unexpected data type for cover:', typeof pic.data);
           base64Data = null;
         }
         
@@ -81,7 +78,6 @@ router.get('/metadata/:filename(*)', async (req, res) => {
             format: pic.format,
             data: base64Data,
           };
-          console.log('Cover data length:', base64Data.length);
         }
       }
     }
