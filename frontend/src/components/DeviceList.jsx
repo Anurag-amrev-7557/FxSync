@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useStaggeredAnimation } from '../hooks/useSmoothAppearance';
 
-export default function DeviceList({ clients = [], controllerClientId, clientId, socket, mobile = false, isAudioTabActive = false }) {
+const DeviceList = React.memo(function DeviceList({ clients = [], controllerClientId, clientId, socket, mobile = false, isAudioTabActive = false }) {
   const isController = controllerClientId && clientId && controllerClientId === clientId;
   const [shouldAnimate, setShouldAnimate] = useState(false);
   
@@ -255,4 +255,6 @@ export default function DeviceList({ clients = [], controllerClientId, clientId,
       </div>
     </div>
   );
-} 
+});
+
+export default DeviceList; 

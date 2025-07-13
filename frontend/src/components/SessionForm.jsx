@@ -35,8 +35,6 @@ export default function SessionForm({ onJoin, currentSessionId }) {
   const [isFocused, setIsFocused] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
-  const [isHovering, setIsHovering] = useState(false);
-  const [isTyping, setIsTyping] = useState(false);
   const [cursorPosition, setCursorPosition] = useState(0);
   const [showCursor, setShowCursor] = useState(true);
 
@@ -55,6 +53,7 @@ export default function SessionForm({ onJoin, currentSessionId }) {
   const [copied, setCopied] = useState(false);
   const [recentRooms, setRecentRooms] = useState([]);
   const [formHeight, setFormHeight] = useState('auto');
+  const [isHovering, setIsHovering] = useState(false);
   
   const formRef = useRef(null);
   const heroRef = useRef(null);
@@ -220,7 +219,6 @@ export default function SessionForm({ onJoin, currentSessionId }) {
   const handleInputChange = (e) => {
     const value = e.target.value.toLowerCase();
     setSessionId(value);
-    setIsTyping(true);
     
     // Get cursor position from the input element
     const input = e.target;
@@ -268,10 +266,6 @@ export default function SessionForm({ onJoin, currentSessionId }) {
     const y = e.clientY - rect.top - rect.height / 2;
     
     element.style.transform = `translate(${x * 0.1}px, ${y * 0.1}px)`;
-  };
-
-  const handleMouseLeave = (element) => {
-    element.style.transform = 'translate(0px, 0px)';
   };
 
   const handleGenerate = async () => {
@@ -533,6 +527,8 @@ export default function SessionForm({ onJoin, currentSessionId }) {
           top: mousePosition.y - 8,
           transform: `scale(${isHovering ? 2 : 1})`,
         }}
+        onMouseEnter={() => setIsHovering(true)}
+        onMouseLeave={() => setIsHovering(false)}
       />
       
       {/* Click animation circles */}

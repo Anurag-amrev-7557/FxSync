@@ -131,8 +131,8 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
 
     // Helper: log diagnostics
     function logTimeSyncDiagnostics(diag) {
-      if (process.env.NODE_ENV !== 'production') {
-        // eslint-disable-next-line no-console
+      if (import.meta.env.MODE !== 'production') {
+         
         console.debug('[TimeSync]', diag);
       }
     }
@@ -242,7 +242,7 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
           // Adaptive interval: shorter if unstable, longer if stable
           if (calcJitterVal > 20 || Math.abs(driftVal) > 20) {
             adaptiveInterval = ADAPTIVE_INTERVAL_BAD; // Unstable, sync more often
-            if (process.env.NODE_ENV !== 'production') {
+            if (import.meta.env.MODE !== 'production') {
               console.warn('[TimeSync] High jitter or drift detected:', { jitter: calcJitterVal, drift: driftVal });
             }
           } else if (calcJitterVal < JITTER_GOOD && Math.abs(driftVal) < 5 && avgRtt < AVG_RTT_GOOD) {
@@ -303,7 +303,7 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
       window.removeEventListener('online', handleOnline);
       resetSyncHistory();
     };
-  }, [connected]);
+  }, [connected, deviceInfo, displayName]);
 
   // --- Continuous Adaptive Sync: periodic NTP batch in background ---
   useEffect(() => {
@@ -369,9 +369,7 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
           setControllerClientId(data.controllerClientId || null);
           // --- Advanced sync state ---
           // Optionally expose more session state to consumers
-          if (typeof setSessionSyncState === 'function') {
-            setSessionSyncState(data);
-          }
+          // setSessionSyncState(data); // This line was causing an error, so it's removed.
           // Optionally, you can add more state setters here for queue, track, etc.
           socket.sessionId = sessionId;
         }

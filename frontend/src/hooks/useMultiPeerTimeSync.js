@@ -4,11 +4,11 @@ import usePeerTimeSync from './usePeerTimeSync';
 const MAX_PEERS = 5;
 
 export default function useMultiPeerTimeSync(socket, clientId, peerIds) {
-  // Always call hooks in the same order
-  const paddedPeerIds = [...peerIds.slice(0, MAX_PEERS)];
-  while (paddedPeerIds.length < MAX_PEERS) paddedPeerIds.push(null);
-
-  return paddedPeerIds.map(peerId =>
-    peerId ? usePeerTimeSync(socket, clientId, peerId) : null
-  );
+  return [
+    usePeerTimeSync(socket, clientId, peerIds[0] || null),
+    usePeerTimeSync(socket, clientId, peerIds[1] || null),
+    usePeerTimeSync(socket, clientId, peerIds[2] || null),
+    usePeerTimeSync(socket, clientId, peerIds[3] || null),
+    usePeerTimeSync(socket, clientId, peerIds[4] || null),
+  ];
 } 

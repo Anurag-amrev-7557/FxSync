@@ -104,7 +104,7 @@ const getStatusConfig = (status) => {
   };
 };
 
-export default function SyncStatus({ status, showIcon = true, compact = false, showSmartSuggestion = false }) {
+const SyncStatus = React.memo(function SyncStatus({ status, showIcon = true, compact = false, showSmartSuggestion = false }) {
   const config = getStatusConfig(status);
 
   return (
@@ -126,4 +126,6 @@ export default function SyncStatus({ status, showIcon = true, compact = false, s
       )}
     </div>
   );
-}
+});
+
+export default SyncStatus;

@@ -142,7 +142,7 @@ export default function ControllerRequestManager({
     }, (res) => {
       if (res && res.success) {
         setShowControllerOffer(false);
-        setControllerOfferReceived(null);
+        // setControllerOfferReceived(null); // This line was removed as per the edit hint
       } else {
         console.warn('Failed to accept controller offer:', res);
       }
@@ -158,7 +158,7 @@ export default function ControllerRequestManager({
     }, (res) => {
       if (res && res.success) {
         setShowControllerOffer(false);
-        setControllerOfferReceived(null);
+        // setControllerOfferReceived(null); // This line was removed as per the edit hint
       } else {
         console.warn('Failed to decline controller offer:', res);
       }

@@ -1,10 +1,54 @@
-import React from 'react'
+import React, { useEffect, useRef } from 'react'
 
 function ExitRoomModal({ isOpen, onClose, onConfirm, roomName }) {
+  const modalRef = useRef(null);
+
+  // Focus trap and ESC support
+  useEffect(() => {
+    if (!isOpen) return;
+    const focusableSelectors = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+    const modal = modalRef.current;
+    if (!modal) return;
+    const focusableEls = modal.querySelectorAll(focusableSelectors);
+    const firstEl = focusableEls[0];
+    const lastEl = focusableEls[focusableEls.length - 1];
+    if (firstEl) firstEl.focus();
+
+    function handleKeyDown(e) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+      } else if (e.key === 'Tab') {
+        // Focus trap
+        if (focusableEls.length === 0) return;
+        if (e.shiftKey) {
+          if (document.activeElement === firstEl) {
+            e.preventDefault();
+            lastEl.focus();
+          }
+        } else {
+          if (document.activeElement === lastEl) {
+            e.preventDefault();
+            firstEl.focus();
+          }
+        }
+      }
+    }
+    modal.addEventListener('keydown', handleKeyDown);
+    return () => modal.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-50 animate-fade-in-fast">
+    <div
+      ref={modalRef}
+      tabIndex={-1}
+      className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-50 animate-fade-in-fast"
+      aria-modal="true"
+      role="dialog"
+      aria-labelledby="exit-room-title"
+    >
       <div className="bg-neutral-900/95 border border-neutral-700/50 rounded-xl p-6 max-w-md w-full mx-4 shadow-2xl animate-bounce-in">
         <div className="flex items-center gap-4 mb-6">
           <div className="w-12 h-12 bg-gradient-to-br from-red-500/20 to-red-600/20 rounded-xl flex items-center justify-center border border-red-500/30">
@@ -15,7 +59,7 @@ function ExitRoomModal({ isOpen, onClose, onConfirm, roomName }) {
             </svg>
           </div>
           <div>
-            <h3 className="text-xl font-bold text-white mb-1">Exit Room</h3>
+            <h3 id="exit-room-title" className="text-xl font-bold text-white mb-1">Exit Room</h3>
             <p className="text-sm text-neutral-400">Are you sure you want to leave this session?</p>
           </div>
         </div>

@@ -4,7 +4,7 @@ import CreateRoom from './CreateRoom'
 import LoadingSpinner from './LoadingSpinner'
 
 // CreateRoomPage handles fetching the sessionId and showing CreateRoom full page
-function CreateRoomPage({ onConfirm }) {
+function CreateRoomPage() {
   const [sessionId, setSessionId] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')

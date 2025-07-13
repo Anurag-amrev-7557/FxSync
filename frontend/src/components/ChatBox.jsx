@@ -4,7 +4,7 @@ import { InlineLoadingSpinner } from './LoadingSpinner';
 
 const EMOJIS = ['🎵', '👏', '🔥', '😂', '😍', '👍', '❤️', '🎉'];
 
-export default function ChatBox({ socket, sessionId, clientId, messages = [], onSend, clients = [], mobile = false, isChatTabActive = false }) {
+const ChatBox = React.memo(function ChatBox({ socket, sessionId, clientId, messages = [], clients = [], mobile = false, isChatTabActive = false }) {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [shouldAnimate, setShouldAnimate] = useState(false);
@@ -54,11 +54,6 @@ export default function ChatBox({ socket, sessionId, clientId, messages = [], on
     socket.emit('chat_message', { sessionId, message: msg, sender: clientId }, (response) => {});
     setInput('');
     setTimeout(() => setSending(false), 300);
-  };
-
-  const sendEmoji = (emoji) => {
-    if (!socket) return;
-    socket.emit('reaction', { sessionId, reaction: emoji, sender: clientId });
   };
 
   const handleSubmit = (e) => {
@@ -297,4 +292,6 @@ export default function ChatBox({ socket, sessionId, clientId, messages = [], on
       </div>
     </div>
   );
-}
+});
+
+export default ChatBox;

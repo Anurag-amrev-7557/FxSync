@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 
-export default function ResyncAnalytics({ resyncHistory, resyncStats, isVisible = false }) {
+const ResyncAnalytics = React.memo(function ResyncAnalytics({ resyncHistory, resyncStats, isVisible = false }) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   if (!isVisible || resyncHistory.length === 0) {
@@ -126,4 +126,6 @@ export default function ResyncAnalytics({ resyncHistory, resyncStats, isVisible 
       )}
     </div>
   );
-} 
+});
+
+export default ResyncAnalytics; 

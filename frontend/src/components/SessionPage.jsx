@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
+import { useParams } from 'react-router-dom'
 import SessionForm from './SessionForm'
 import AudioPlayer from './AudioPlayer'
 import DeviceList from './DeviceList'
@@ -13,7 +13,6 @@ import useSmoothAppearance from '../hooks/useSmoothAppearance'
 import { 
   saveMessages, 
   loadMessages, 
-  saveQueue, 
   loadQueue, 
   saveSessionData, 
   loadSessionData,
@@ -21,11 +20,15 @@ import {
   cleanupOldSessions 
 } from '../utils/persistence'
 import usePeerTimeSync from '../hooks/usePeerTimeSync'
+import useChatMessages from '../hooks/useChatMessages'
+import useQueue from '../hooks/useQueue'
+import useUltraPreciseOffset from '../hooks/useUltraPreciseOffset'
+import useModalState from '../hooks/useModalState'
+import useMobileTab from '../hooks/useMobileTab'
 
 function SessionPage({
   currentSessionId,
   setCurrentSessionId,
-  displayName,
   setDisplayName,
   onLeaveSession,
   socket,
@@ -49,13 +52,6 @@ function SessionPage({
   forceNtpBatchSync
 }) {
   const { sessionId: urlSessionId } = useParams()
-  const [messages, setMessages] = useState([])
-  const [queue, setQueue] = useState([])
-  const [showExitModal, setShowExitModal] = useState(false)
-  const navigate = useNavigate()
-  const [mobileTab, setMobileTab] = useState(0); // 0: Audio/Controller/Device, 1: Playlist, 2: Chat
-  const [selectedTrackIdx, setSelectedTrackIdx] = useState(0);
-  const [currentTrackOverride, setCurrentTrackOverride] = useState(null);
   const pendingTrackIdx = useRef(null); // Buffer for track_change before queue is set
   const [peerIds, setPeerIds] = useState([]);
 
@@ -88,24 +84,24 @@ function SessionPage({
       try {
         savedSessionData = loadSessionData(urlSessionId);
       } catch (e) {
-        if (process.env.NODE_ENV === 'development') {
-          // eslint-disable-next-line no-console
+        if (import.meta.env.MODE === 'development') {
+           
           console.warn('[SessionPage][AutoJoin] Failed to load session data', e);
         }
       }
       try {
         savedMessages = loadMessages(urlSessionId) || [];
       } catch (e) {
-        if (process.env.NODE_ENV === 'development') {
-          // eslint-disable-next-line no-console
+        if (import.meta.env.MODE === 'development') {
+           
           console.warn('[SessionPage][AutoJoin] Failed to load messages', e);
         }
       }
       try {
         savedQueue = loadQueue(urlSessionId) || [];
       } catch (e) {
-        if (process.env.NODE_ENV === 'development') {
-          // eslint-disable-next-line no-console
+        if (import.meta.env.MODE === 'development') {
+           
           console.warn('[SessionPage][AutoJoin] Failed to load queue', e);
         }
       }
@@ -142,8 +138,8 @@ function SessionPage({
       }
 
       // Logging for debugging
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
+      if (import.meta.env.MODE === 'development') {
+         
         console.log('[SessionPage][AutoJoin] Joining session', {
           urlSessionId,
           autoDisplayName,
@@ -154,8 +150,13 @@ function SessionPage({
 
       setCurrentSessionId(urlSessionId);
       setDisplayName(autoDisplayName);
-      setMessages(Array.isArray(savedMessages) ? savedMessages : []);
-      setQueue(Array.isArray(savedQueue) ? savedQueue : []);
+      // In auto-join effect, after loading savedQueue:
+      // setQueue(Array.isArray(savedQueue) ? savedQueue : []);
+      // Instead, pass as initialQueue to useQueue
+      // setMessages(Array.isArray(savedMessages) ? savedMessages : []);
+      // Instead, pass as initialMessages to useChatMessages
+      // setSelectedTrackIdx(0); // This will be handled by useQueue
+      // setCurrentTrackOverride(null); // This will be handled by useQueue
 
       // Save the session data (robustly merge with any existing data)
       try {
@@ -164,8 +165,8 @@ function SessionPage({
           displayName: autoDisplayName,
         });
       } catch (e) {
-        if (process.env.NODE_ENV === 'development') {
-          // eslint-disable-next-line no-console
+        if (import.meta.env.MODE === 'development') {
+           
           console.warn('[SessionPage][AutoJoin] Failed to save session data', e);
         }
       }
@@ -173,134 +174,18 @@ function SessionPage({
   // Add clients as a dependency for duplicate name avoidance
   }, [urlSessionId, currentSessionId, setCurrentSessionId, setDisplayName, clients]);
 
-  useEffect(() => {
-    if (!socket) return
-    const handleChat = (msg) => {
-      setMessages((prev) => {
-        const newMessages = [...prev, msg]
-        // Save messages to localStorage
-        if (currentSessionId) {
-          saveMessages(currentSessionId, newMessages)
-        }
-        return newMessages
-      })
-    }
-    const handleReaction = (reaction) => {
-      setMessages((prev) => {
-        const newMessages = [...prev, reaction]
-        // Save messages to localStorage
-        if (currentSessionId) {
-          saveMessages(currentSessionId, newMessages)
-        }
-        return newMessages
-      })
-    }
-    socket.on('chat_message', handleChat)
-    socket.on('reaction', handleReaction)
-    return () => {
-      socket.off('chat_message', handleChat)
-      socket.off('reaction', handleReaction)
-    }
-  }, [socket, currentSessionId])
+  // Ensure savedQueue is always defined before useQueue
+  let savedQueue = [];
+  try {
+    savedQueue = loadQueue(currentSessionId) || [];
+  } catch (e) {
+    savedQueue = [];
+  }
 
-  useEffect(() => {
-    if (!socket) return;
-    const handleQueueUpdate = (q) => {
-      console.log('[DEBUG] Received queue_update:', q);
-      setQueue(q);
-      // If a track_change was received before the queue, apply it now
-      if (pendingTrackIdx.current !== null) {
-        console.log('[DEBUG] Applying buffered track_change:', pendingTrackIdx.current, pendingTrackIdx.currentTrack);
-        // If a track was also buffered, set it
-        if (pendingTrackIdx.currentTrack) {
-          setCurrentTrackOverride(pendingTrackIdx.currentTrack);
-        } else {
-          setCurrentTrackOverride(null);
-        }
-        setSelectedTrackIdx(pendingTrackIdx.current);
-        console.log('[DEBUG] After applying buffered track_change:', {
-          queue: q,
-          selectedTrackIdx: pendingTrackIdx.current,
-          currentTrackOverride: pendingTrackIdx.currentTrack
-        });
-        pendingTrackIdx.current = null;
-        pendingTrackIdx.currentTrack = null;
-      }
-    };
-    socket.on('queue_update', handleQueueUpdate);
-    return () => {
-      socket.off('queue_update', handleQueueUpdate);
-    };
-  }, [socket]);
+  // After loading savedQueue:
+  const [queue, setQueue, selectedTrackIdx, setSelectedTrackIdx, currentTrackOverride, setCurrentTrackOverride] = useQueue(socket, savedQueue, pendingTrackIdx)
 
-  useEffect(() => {
-    if (!socket) return;
-
-    const handleTrackChange = (payload) => {
-      // Enhanced: Robustly handle various payload shapes and log more details
-      let idx, track, extra = {};
-      if (typeof payload === 'object' && payload !== null) {
-        idx = typeof payload.idx === 'number' ? payload.idx : null;
-        track = payload.track || null;
-        // Capture any extra fields for debugging
-        extra = Object.keys(payload).reduce((acc, key) => {
-          if (key !== 'idx' && key !== 'track') acc[key] = payload[key];
-          return acc;
-        }, {});
-      } else {
-        idx = payload;
-        track = null;
-      }
-
-      // Defensive: Validate idx
-      if (typeof idx !== 'number' || idx < 0) {
-        console.warn('[SessionPage][track_change] Invalid idx received:', idx, 'Payload:', payload);
-        return;
-      }
-
-      // Enhanced: Log with more context
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
-        console.log('[SessionPage][track_change] Received:', { payload, idx, track, extra, queueLength: queue?.length });
-      }
-
-      // If queue is not set yet, buffer the track_change
-      if (!Array.isArray(queue) || queue.length === 0) {
-        if (process.env.NODE_ENV === 'development') {
-          // eslint-disable-next-line no-console
-          console.log('[SessionPage][track_change] Buffering until queue is set', { idx, track });
-        }
-        pendingTrackIdx.current = idx;
-        pendingTrackIdx.currentTrack = track;
-      } else {
-        // Enhanced: Clamp idx to valid range
-        const clampedIdx = Math.max(0, Math.min(idx, queue.length - 1));
-        setCurrentTrackOverride(track || null);
-        setSelectedTrackIdx(clampedIdx);
-
-        if (process.env.NODE_ENV === 'development') {
-          // eslint-disable-next-line no-console
-          console.log('[SessionPage][track_change] Applied immediately:', {
-            queue,
-            selectedTrackIdx: clampedIdx,
-            currentTrackOverride: track,
-            originalIdx: idx
-          });
-        }
-      }
-    };
-
-    socket.on('track_change', handleTrackChange);
-
-    // Enhanced: Clean up and warn if handler was still active
-    return () => {
-      socket.off('track_change', handleTrackChange);
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
-        console.log('[SessionPage][track_change] Handler removed');
-      }
-    };
-  }, [socket, queue]);
+  // Remove the useEffects that handle queue_update, track_change, and related queue/track state, as this is now in the hook
 
   // When queue changes, reset selected track if needed
   useEffect(() => {
@@ -315,8 +200,8 @@ function SessionPage({
       const clampedIdx = Math.max(0, Math.min(pendingTrackIdx.current, queue.length - 1));
       setCurrentTrackOverride(pendingTrackIdx.currentTrack || null);
       setSelectedTrackIdx(clampedIdx);
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
+      if (import.meta.env.MODE === 'development') {
+         
         console.log('[SessionPage][listener-fix] Applied buffered track_change after queue set:', {
           clampedIdx,
           currentTrack: pendingTrackIdx.currentTrack,
@@ -348,8 +233,8 @@ function SessionPage({
 
     // Defensive: Add timeout fallback in case server doesn't respond
     let syncTimeout = setTimeout(() => {
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
+      if (import.meta.env.MODE === 'development') {
+         
         console.warn('[SessionPage][sync_request] Timed out waiting for sync state');
       }
     }, 4000);
@@ -358,8 +243,8 @@ function SessionPage({
       clearTimeout(syncTimeout);
       if (didCancel) return;
 
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
+      if (import.meta.env.MODE === 'development') {
+         
         console.log('[SessionPage][sync_request] Received state:', state);
       }
 
@@ -373,21 +258,21 @@ function SessionPage({
           );
           if (idx !== -1) {
             setSelectedTrackIdx(idx);
-            if (process.env.NODE_ENV === 'development') {
-              // eslint-disable-next-line no-console
+            if (import.meta.env.MODE === 'development') {
+               
               console.log('[SessionPage][sync_request] Matched currentTrack in queue at idx', idx);
             }
           } else {
             setSelectedTrackIdx(0);
-            if (process.env.NODE_ENV === 'development') {
-              // eslint-disable-next-line no-console
+            if (import.meta.env.MODE === 'development') {
+               
               console.warn('[SessionPage][sync_request] currentTrack not found in queue, defaulting to idx 0');
             }
           }
         } else {
           setSelectedTrackIdx(0);
-          if (process.env.NODE_ENV === 'development') {
-            // eslint-disable-next-line no-console
+          if (import.meta.env.MODE === 'development') {
+             
             console.warn('[SessionPage][sync_request] Queue empty or not loaded, defaulting to idx 0');
           }
         }
@@ -396,8 +281,8 @@ function SessionPage({
         const clampedIdx = Math.max(0, Math.min(state.currentTrackIdx, queue.length - 1));
         setSelectedTrackIdx(clampedIdx);
         setCurrentTrackOverride(queue[clampedIdx] || null);
-        if (process.env.NODE_ENV === 'development') {
-          // eslint-disable-next-line no-console
+        if (import.meta.env.MODE === 'development') {
+           
           console.log('[SessionPage][sync_request] Used currentTrackIdx fallback:', clampedIdx);
         }
       }
@@ -408,7 +293,7 @@ function SessionPage({
       didCancel = true;
       clearTimeout(syncTimeout);
     };
-  }, [socket, currentSessionId, queue]);
+  }, [socket, currentSessionId, queue, selectedTrackIdx]);
 
   /**
    * Enhanced handleJoin:
@@ -427,8 +312,8 @@ function SessionPage({
     try {
       savedMessages = loadMessages(sessionId) || [];
     } catch (e) {
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
+      if (import.meta.env.MODE === 'development') {
+         
         console.warn('[SessionPage][handleJoin] Failed to load messages', e);
       }
       savedMessages = [];
@@ -436,8 +321,8 @@ function SessionPage({
     try {
       savedQueue = loadQueue(sessionId) || [];
     } catch (e) {
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
+      if (import.meta.env.MODE === 'development') {
+         
         console.warn('[SessionPage][handleJoin] Failed to load queue', e);
       }
       savedQueue = [];
@@ -445,15 +330,15 @@ function SessionPage({
 
     setCurrentSessionId(sessionId);
     setDisplayName(displayName);
-    setMessages(savedMessages);
-    setQueue(savedQueue);
+    // setMessages(savedMessages); // This will be handled by useChatMessages
+    // setQueue(savedQueue); // This will be handled by useQueue
 
     // Save the session data robustly
     try {
       saveSessionData(sessionId, { displayName });
     } catch (e) {
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
+      if (import.meta.env.MODE === 'development') {
+         
         console.warn('[SessionPage][handleJoin] Failed to save session data', e);
       }
     }
@@ -464,14 +349,14 @@ function SessionPage({
       if (chatInput) chatInput.focus();
     }, 200);
 
-    if (process.env.NODE_ENV === 'development') {
-      // eslint-disable-next-line no-console
+    if (import.meta.env.MODE === 'development') {
+       
       console.log('[SessionPage][handleJoin] Joined session', { sessionId, displayName, messages: savedMessages.length, queue: savedQueue.length });
     }
   }
 
   const handleExitRoom = () => {
-    setShowExitModal(true)
+    openExitModal()
   }
 
   const confirmExitRoom = () => {
@@ -486,11 +371,11 @@ function SessionPage({
     }
     
     // Close modal
-    setShowExitModal(false)
+    closeExitModal()
   }
 
   // Enhanced handler for Playlist selection with improved robustness, logging, and user experience
-  const handleSelectTrack = (idx, trackObj) => {
+  const handleSelectTrack = useCallback((idx, trackObj) => {
     // If a custom track object is provided (e.g., preview or external), override
     if (trackObj) {
       setCurrentTrackOverride(trackObj);
@@ -498,8 +383,8 @@ function SessionPage({
       if (isController && socket) {
         socket.emit('track_change', { sessionId: currentSessionId, idx }, { override: true, track: trackObj });
       }
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
+      if (import.meta.env.MODE === 'development') {
+         
         console.log('[SessionPage][handleSelectTrack] Overriding with custom track', { idx, trackObj });
       }
       return;
@@ -507,8 +392,8 @@ function SessionPage({
 
     // Defensive: Validate idx and queue
     if (typeof idx !== 'number' || idx < 0 || !Array.isArray(queue) || idx >= queue.length) {
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
+      if (import.meta.env.MODE === 'development') {
+         
         console.warn('[SessionPage][handleSelectTrack] Invalid track index', { idx, queueLength: queue ? queue.length : null });
       }
       return;
@@ -520,11 +405,11 @@ function SessionPage({
     if (isController && socket) {
       socket.emit('track_change', { sessionId: currentSessionId, idx }, { override: false });
     }
-    if (process.env.NODE_ENV === 'development') {
-      // eslint-disable-next-line no-console
+    if (import.meta.env.MODE === 'development') {
+       
       console.log('[SessionPage][handleSelectTrack] Selected track from queue', { idx, track: queue[idx] });
     }
-  };
+  }, [setSelectedTrackIdx, setCurrentTrackOverride, isController, socket, currentSessionId, queue]);
 
   // In render, always derive currentTrack from latest queue and selectedTrackIdx
   const currentTrack = currentTrackOverride || (queue && queue.length > 0 ? queue[selectedTrackIdx] : null);
@@ -533,24 +418,13 @@ function SessionPage({
   // When sessionSyncState changes (from join_session), initialize playback/session state
   useEffect(() => {
     if (sessionSyncState) {
-      if (Array.isArray(sessionSyncState.queue)) setQueue(sessionSyncState.queue);
+      // setQueue(sessionSyncState.queue); // This will be handled by useQueue
       if (typeof sessionSyncState.selectedTrackIdx === 'number') setSelectedTrackIdx(sessionSyncState.selectedTrackIdx);
       if (sessionSyncState.currentTrack) setCurrentTrackOverride(sessionSyncState.currentTrack);
       // Optionally: handle isPlaying, timestamp, etc. for AudioPlayer
       // You can add more state initializations here as needed
     }
   }, [sessionSyncState]);
-
-  // --- Sync Quality Calculation ---
-  const syncQuality = useMemo(() => {
-    // Use RTT, jitter, and drift if available
-    const r = rtt !== null && !isNaN(rtt) ? rtt : 0;
-    const j = jitter !== null && !isNaN(jitter) ? Math.abs(jitter) : 0;
-    const d = drift !== null && !isNaN(drift) ? Math.abs(drift) : 0;
-    if (r < 30 && j < 10 && d < 10) return { label: 'Good', color: 'bg-green-500', tooltip: 'Sync is excellent. Low latency, jitter, and drift.' };
-    if (r < 80 && j < 25 && d < 25) return { label: 'Fair', color: 'bg-yellow-500', tooltip: 'Sync is fair. Some latency, jitter, or drift detected.' };
-    return { label: 'Poor', color: 'bg-red-500', tooltip: 'Sync is poor. High latency, jitter, or drift.' };
-  }, [rtt, jitter, drift]);
 
   // --- Peer Discovery ---
   useEffect(() => {
@@ -575,16 +449,26 @@ function SessionPage({
   const peerSyncE = usePeerTimeSync(socket, clientId, paddedPeerIds[4]);
   const peerSyncs = [peerSyncA, peerSyncB, peerSyncC, peerSyncD, peerSyncE];
 
-  // --- Combine Peer and Server Sync ---
-  const allOffsets = [
-    ...peerSyncs.map((p, i) => (p && paddedPeerIds[i] && p.connectionState === 'connected' && p.peerRtt !== null) ? { offset: p.peerOffset, rtt: p.peerRtt } : null).filter(Boolean),
-    { offset: timeOffset, rtt: rtt }
-  ];
-  const best = allOffsets.reduce((a, b) => (a.rtt < b.rtt ? a : b));
-  const ultraPreciseOffset = best.offset;
-
+  // Remove: syncQuality useMemo and allOffsets/best/ultraPreciseOffset logic
+  // Instead, use the hook:
+  const { ultraPreciseOffset, syncQuality, allOffsets } = useUltraPreciseOffset(peerSyncs, timeOffset, rtt, jitter, drift)
   // Debug log for ultra-precise offset
   console.log('Ultra-precise offset:', ultraPreciseOffset, 'All offsets:', allOffsets);
+
+  // Ensure savedMessages is always defined before useChatMessages
+  let savedMessages = [];
+  try {
+    savedMessages = loadMessages(currentSessionId) || [];
+  } catch (e) {
+    savedMessages = [];
+  }
+  const [messages, setMessages] = useChatMessages(socket, currentSessionId, savedMessages)
+
+  // Ensure mobileTab is always defined before use
+  const [mobileTab, setMobileTab] = useMobileTab(0);
+
+  // Ensure showExitModal is always defined before use
+  const [showExitModal, openExitModal, closeExitModal] = useModalState(false);
 
   return (
     <div className="min-h-screen bg-neutral-950 text-white">
@@ -651,8 +535,8 @@ function SessionPage({
                   onClick={() => {
                     if (currentSessionId && window.confirm('Clear all saved data for this session?')) {
                       clearSessionData(currentSessionId)
-                      setMessages([])
-                      setQueue([])
+                      // setMessages([]) // This will be handled by useChatMessages
+                      // setQueue([]) // This will be handled by useQueue
                     }
                   }}
                   className="flex items-center gap-2 px-3 py-1.5 text-xs text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-lg transition-all duration-200 hover:shadow-md"
@@ -699,6 +583,7 @@ function SessionPage({
                         getServerTime={getServerTime}
                         currentTrack={currentTrack}
                         rtt={rtt}
+                        ultraPreciseOffset={ultraPreciseOffset} // <-- Canonical hybrid offset
                         sessionSyncState={sessionSyncState}
                         forceNtpBatchSync={forceNtpBatchSync}
                       />
@@ -743,13 +628,13 @@ function SessionPage({
                     clientId={clientId}
                     messages={messages}
                     onSend={(msg) => {
-                      setMessages((prev) => {
-                        const newMessages = [...prev, msg]
-                        if (currentSessionId) {
-                          saveMessages(currentSessionId, newMessages)
-                        }
-                        return newMessages
-                      })
+                      // setMessages((prev) => { // This will be handled by useChatMessages
+                      //   const newMessages = [...prev, msg]
+                      //   if (currentSessionId) {
+                      //     saveMessages(currentSessionId, newMessages)
+                      //   }
+                      //   return newMessages
+                      // })
                     }}
                     clients={clients}
                   />
@@ -880,13 +765,13 @@ function SessionPage({
                   clientId={clientId}
                   messages={messages}
                   onSend={(msg) => {
-                    setMessages((prev) => {
-                      const newMessages = [...prev, msg]
-                      if (currentSessionId) {
-                        saveMessages(currentSessionId, newMessages)
-                      }
-                      return newMessages
-                    })
+                    // setMessages((prev) => { // This will be handled by useChatMessages
+                    //   const newMessages = [...prev, msg]
+                    //   if (currentSessionId) {
+                    //     saveMessages(currentSessionId, newMessages)
+                    //   }
+                    //   return newMessages
+                    // })
                   }}
                   clients={clients}
                   mobile={true}
@@ -905,7 +790,7 @@ function SessionPage({
       )}
       <ExitRoomModal
         isOpen={showExitModal}
-        onClose={() => setShowExitModal(false)}
+        onClose={closeExitModal}
         onConfirm={confirmExitRoom}
         roomName={currentSessionId}
       />

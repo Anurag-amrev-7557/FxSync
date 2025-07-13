@@ -70,7 +70,7 @@ export default function usePeerTimeSync(socket, localId, peerId) {
       if (from !== peerId) return;
       try {
         await pc.addIceCandidate(new RTCIceCandidate(candidate));
-      } catch (e) {
+      } catch {
         // Ignore
       }
     });
@@ -81,7 +81,24 @@ export default function usePeerTimeSync(socket, localId, peerId) {
       dataChannel.onopen = () => {
         setConnectionState('connected');
         // Periodically send time sync messages
+        let lastIntervalFired = Date.now();
         intervalRef.current = setInterval(() => {
+          const nowInterval = Date.now();
+          const elapsed = nowInterval - lastIntervalFired;
+          lastIntervalFired = nowInterval;
+          // Timer drift detection: if interval fires late, reset connection
+          if (elapsed > 4000) { // 2x the normal 2000ms interval
+            setConnectionState('disconnected');
+            if (intervalRef.current) clearInterval(intervalRef.current);
+            if (dataChannel.readyState === 'open' || dataChannel.readyState === 'connecting') {
+              dataChannel.close();
+            }
+            // Optionally, log or trigger a reconnect here
+            if (typeof window !== 'undefined' && window.console) {
+              console.warn('[PeerTimeSync] Timer drift detected (tab throttling?). Peer sync will reconnect.');
+            }
+            return;
+          }
           const now = Date.now();
           dataChannel.send(JSON.stringify({ type: 'timeSync', clientSent: now }));
         }, 2000);

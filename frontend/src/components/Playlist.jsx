@@ -4,7 +4,7 @@ import { InlineLoadingSpinner } from './LoadingSpinner';
 import { getClientId } from '../utils/clientId';
 import jsmediatags from 'jsmediatags/dist/jsmediatags.min.js';
 
-export default function Playlist({ queue = [], isController, socket, sessionId, onSelectTrack, selectedTrackIdx }) {
+const Playlist = React.memo(function Playlist({ queue = [], isController, socket, sessionId, onSelectTrack, selectedTrackIdx }) {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -403,4 +403,6 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
       </div>
     </div>
   );
-} 
+});
+
+export default Playlist; 
