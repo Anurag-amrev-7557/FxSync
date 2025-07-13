@@ -11,7 +11,6 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const app = express();
-global._expressApp = app;
 const server = http.createServer(app);
 
 const allowedOrigins = (process.env.FRONTEND_ORIGINS

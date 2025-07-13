@@ -1502,9 +1502,6 @@ export default function AudioPlayer({
   queue = [],
   selectedTrackIdx = 0,
   onSelectTrack = null,
-  getHighResServerTime = null,
-  highResOffset = null,
-  jitter = null,
 }) {
   const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
   const [audioUrl, setAudioUrl] = useState(null);

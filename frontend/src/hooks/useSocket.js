@@ -31,11 +31,6 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
   const socketRef = useRef(null);
   const clientId = getClientId();
 
-  // --- Add high-res time sync state ---
-  const [highResOffset, setHighResOffset] = useState(0); // ns
-  const [lastHighResServer, setLastHighResServer] = useState(0); // ns
-  const [lastHighResClient, setLastHighResClient] = useState(0); // ns
-
   // --- NTP-like multi-round time sync before joining session ---
   async function ntpBatchSync(socket, rounds = 8) {
     const samples = [];
@@ -91,90 +86,6 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
     const avgRtt = trimmed.reduce((sum, s) => sum + s.rtt, 0) / trimmed.length;
     setTimeOffset(avgOffset);
     setRtt(avgRtt);
-  }
-
-  // --- Batch NTP/Time Sync with High-Res Support ---
-  async function batchTimeSync(socket, rounds = 8) {
-    if (!socket) return;
-    let samples = [];
-    let usedBatch = false;
-    // Try new batch event first
-    try {
-      samples = await new Promise((resolve) => {
-        socket.emit('time_sync_batch', { count: rounds }, (arr) => {
-          if (Array.isArray(arr) && arr.length > 0 && arr[0].serverTime && arr[0].hrtime) {
-            usedBatch = true;
-            const clientTimes = [];
-            for (let i = 0; i < arr.length; i++) {
-              clientTimes.push(performance.now() * 1e6); // ns
-            }
-            // Map samples to include client receive time
-            const mapped = arr.map((s, i) => ({
-              serverTime: s.serverTime,
-              hrtime: s.hrtime,
-              clientReceived: clientTimes[i],
-            }));
-            resolve(mapped);
-          } else {
-            resolve([]);
-          }
-        });
-      });
-    } catch (e) {
-      samples = [];
-    }
-    // Fallback to old method if batch not available
-    if (!usedBatch || samples.length < 2) {
-      for (let i = 0; i < rounds; i++) {
-        await new Promise((resolve) => {
-          const clientSentAt = Date.now();
-          socket.emit('time:sync', clientSentAt, ({ serverTime, clientSentAt: echoed }) => {
-            const clientReceivedAt = Date.now();
-            const rtt = clientReceivedAt - echoed;
-            const offset = serverTime - (echoed + rtt / 2);
-            samples.push({ serverTime, rtt, offset, clientReceived: clientReceivedAt });
-            resolve();
-          });
-        });
-      }
-    }
-    // Analyze samples
-    if (samples.length > 1) {
-      // Use trimmed mean/median for ms offset/RTT
-      const msOffsets = samples.map(s => s.offset !== undefined ? s.offset : (s.serverTime - (s.clientReceived - (s.rtt || 0) / 2)));
-      const msRtts = samples.map(s => s.rtt !== undefined ? s.rtt : Math.abs(s.serverTime - s.clientReceived));
-      msOffsets.sort((a, b) => a - b);
-      msRtts.sort((a, b) => a - b);
-      const trim = Math.floor(samples.length * 0.2);
-      const trimmedOffsets = msOffsets.slice(trim, msOffsets.length - trim);
-      const trimmedRtts = msRtts.slice(trim, msRtts.length - trim);
-      const bestOffset = trimmedOffsets.length ? trimmedOffsets.reduce((a, b) => a + b, 0) / trimmedOffsets.length : msOffsets[0];
-      const bestRtt = trimmedRtts.length ? trimmedRtts.reduce((a, b) => a + b, 0) / trimmedRtts.length : msRtts[0];
-      setTimeOffset(bestOffset);
-      setRtt(bestRtt);
-      // High-res offset (ns)
-      if (usedBatch && samples[0].hrtime) {
-        // Estimate offset: server hrtime - client hrtime
-        const hrOffsets = samples.map(s => s.hrtime - s.clientReceived);
-        hrOffsets.sort((a, b) => a - b);
-        const trimmedHrOffsets = hrOffsets.slice(trim, hrOffsets.length - trim);
-        const bestHrOffset = trimmedHrOffsets.length ? trimmedHrOffsets.reduce((a, b) => a + b, 0) / trimmedHrOffsets.length : hrOffsets[0];
-        setHighResOffset(bestHrOffset);
-        setLastHighResServer(samples[0].hrtime);
-        setLastHighResClient(samples[0].clientReceived);
-      }
-    }
-  }
-
-  // --- Expose a getHighResServerTime() method ---
-  function getHighResServerTime() {
-    if (highResOffset && lastHighResClient) {
-      // Estimate current server hrtime
-      const now = performance.now() * 1e6; // ns
-      return now + highResOffset;
-    }
-    // Fallback to ms
-    return Date.now() * 1e6;
   }
 
   // Further enhanced time sync logic with drift smoothing, error handling, diagnostics, and visibility/reactivity improvements
@@ -393,18 +304,18 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
   useEffect(() => {
     if (!socketRef.current || !connected || !sessionId) return;
     let interval;
-    // Periodic batch time sync every 20 seconds
+    // Periodic NTP batch sync every 20 seconds
     interval = setInterval(() => {
-      batchTimeSync(socketRef.current);
+      ntpBatchSync(socketRef.current);
     }, 20000);
-    // Trigger batch time sync on tab focus or network reconnect
+    // Trigger NTP batch sync on tab focus or network reconnect
     function handleVisibilityChange() {
       if (document.visibilityState === 'visible') {
-        batchTimeSync(socketRef.current);
+        ntpBatchSync(socketRef.current);
       }
     }
     function handleOnline() {
-      batchTimeSync(socketRef.current);
+      ntpBatchSync(socketRef.current);
     }
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('online', handleOnline);
@@ -679,7 +590,5 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
       }
     },
     forceNtpBatchSync,
-    highResOffset, // ns
-    getHighResServerTime,
   };
 } 

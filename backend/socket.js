@@ -6,7 +6,6 @@ import { getSessionFiles, removeSessionFiles } from './managers/fileManager.js';
 import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
-import express from 'express';
 dotenv.config();
 
 // Helper to build full session sync state for advanced sync
@@ -26,40 +25,6 @@ function buildSessionSyncState(session) {
     sessionSettings: session.settings || {},
     drift: typeof session.drift === 'number' ? session.drift : null,
   };
-}
-
-// --- Per-session adaptive sync interval state ---
-const sessionSyncIntervals = {}; // sessionId -> { interval: ms, lastDrift: number, lastRtt: number }
-const MIN_SYNC_INTERVAL = 50;
-const MAX_SYNC_INTERVAL = 1000;
-const SYNC_INTERVAL_STEP = 50;
-
-// --- Helper: get high-res time ---
-function getHighResTime() {
-  return typeof process.hrtime === 'function' && process.hrtime.bigint ? Number(process.hrtime.bigint()) : Date.now() * 1e6;
-}
-
-// --- Top-level emitSyncState ---
-function emitSyncState(io, sessionId, session) {
-  const payload = {
-    isPlaying: session.isPlaying,
-    timestamp: session.timestamp,
-    lastUpdated: session.lastUpdated,
-    controllerId: session.controllerId,
-    serverTime: Date.now(),
-    hrtime: getHighResTime()
-  };
-  io.to(sessionId).emit('sync_state', payload);
-}
-
-// --- Add /time HTTP endpoint ---
-if (typeof global._timeEndpointAdded === 'undefined') {
-  global._timeEndpointAdded = true;
-  if (typeof global._expressApp !== 'undefined') {
-    global._expressApp.get('/time', (req, res) => {
-      res.json({ serverTime: Date.now(), hrtime: getHighResTime() });
-    });
-  }
 }
 
 export function setupSocket(io) {
@@ -121,7 +86,6 @@ export function setupSocket(io) {
           lastUpdated: session.lastUpdated,
           controllerId: session.controllerId,
           serverTime: Date.now(),
-          hrtime: getHighResTime()
         });
       }
       log('Client joined session', sessionId, 'Current queue:', getQueue(sessionId));
@@ -133,7 +97,6 @@ export function setupSocket(io) {
         lastUpdated: session.lastUpdated,
         controllerId: session.controllerId,
         serverTime: Date.now(),
-        hrtime: getHighResTime()
       });
     });
 
@@ -145,16 +108,13 @@ export function setupSocket(io) {
       if (session.controllerClientId !== clientId) return;
       updatePlayback(sessionId, { isPlaying: true, timestamp, controllerId: socket.id });
       log('Play in session', sessionId, 'at', timestamp);
-      const payload = {
+      io.to(sessionId).emit('sync_state', {
         isPlaying: true,
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
         controllerId: socket.id,
-        serverTime: Date.now(),
-        hrtime: getHighResTime()
-      };
-      setImmediate(() => io.to(sessionId).emit('sync_state', payload)); // Immediate emit
-      batchSyncEmit(sessionId, session, io, payload); // Batched emit
+        serverTime: Date.now()
+      });
     });
 
     socket.on('pause', ({ sessionId, timestamp } = {}) => {
@@ -165,16 +125,13 @@ export function setupSocket(io) {
       if (session.controllerClientId !== clientId) return;
       updatePlayback(sessionId, { isPlaying: false, timestamp, controllerId: socket.id });
       log('Pause in session', sessionId, 'at', timestamp);
-      const payload = {
+      io.to(sessionId).emit('sync_state', {
         isPlaying: false,
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
         controllerId: socket.id,
-        serverTime: Date.now(),
-        hrtime: getHighResTime()
-      };
-      setImmediate(() => io.to(sessionId).emit('sync_state', payload));
-      batchSyncEmit(sessionId, session, io, payload);
+        serverTime: Date.now()
+      });
     });
 
     socket.on('seek', ({ sessionId, timestamp } = {}) => {
@@ -185,16 +142,13 @@ export function setupSocket(io) {
       if (session.controllerClientId !== clientId) return;
       updateTimestamp(sessionId, timestamp, socket.id);
       log('Seek in session', sessionId, 'to', timestamp);
-      const payload = {
+      io.to(sessionId).emit('sync_state', {
         isPlaying: session.isPlaying,
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
         controllerId: socket.id,
-        serverTime: Date.now(),
-        hrtime: getHighResTime()
-      };
-      setImmediate(() => io.to(sessionId).emit('sync_state', payload));
-      batchSyncEmit(sessionId, session, io, payload);
+        serverTime: Date.now()
+      });
     });
 
     socket.on('sync_request', async ({ sessionId } = {}, callback) => {
@@ -209,7 +163,6 @@ export function setupSocket(io) {
           return;
         }
         const response = buildSessionSyncState(session);
-        response.hrtime = getHighResTime();
         if (process.env.NODE_ENV === 'development') {
           // eslint-disable-next-line no-console
           console.log('[socket][sync_request] Responding to sync_request for session', sessionId, response);
@@ -302,8 +255,7 @@ export function setupSocket(io) {
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
         controllerId: getSocketIdByClientId(sessionId, requesterClientId),
-        serverTime: Date.now(),
-        hrtime: getHighResTime()
+        serverTime: Date.now()
       });
       
       typeof callback === "function" && callback({ success: true });
@@ -451,8 +403,7 @@ export function setupSocket(io) {
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
         controllerId: getSocketIdByClientId(sessionId, accepterClientId),
-        serverTime: Date.now(),
-        hrtime: getHighResTime()
+        serverTime: Date.now()
       });
       
       typeof callback === "function" && callback({ success: true });
@@ -731,7 +682,6 @@ export function setupSocket(io) {
         reason: reason || null,
         initiator: clientId,
         timestamp: Date.now(),
-        hrtime: getHighResTime(),
         ...autoAdvanceInfo,
         ...(extra && typeof extra === 'object' ? { extra } : {})
       };
@@ -739,17 +689,15 @@ export function setupSocket(io) {
       io.to(sessionId).emit('queue_update', queue);
       io.to(sessionId).emit('track_change', payload);
       log('Track change in session', sessionId, ':', payload);
+
       // Emit sync_state after track change so all clients get the latest play state and timestamp
-      const syncPayload = {
+      io.to(sessionId).emit('sync_state', {
         isPlaying: session.isPlaying,
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
         controllerId: session.controllerId,
-        serverTime: Date.now(),
-        hrtime: getHighResTime()
-      };
-      setImmediate(() => io.to(sessionId).emit('sync_state', syncPayload));
-      batchSyncEmit(sessionId, session, io, syncPayload);
+        serverTime: Date.now()
+      });
 
       if (typeof callback === "function") callback({ success: true, ...payload });
     });
@@ -793,7 +741,6 @@ export function setupSocket(io) {
           }
           callback({
             serverTime: serverReceived,
-            hrtime: getHighResTime(),
             clientSent: parsedClientSent,
             serverReceived, // Always include when request was received
             serverProcessed, // Always include when response is sent
@@ -817,20 +764,9 @@ export function setupSocket(io) {
       if (typeof callback === 'function') {
         callback({
           serverTime: Date.now(),
-          hrtime: getHighResTime(),
           clientSentAt
         });
       }
-    });
-
-    // --- NTP-like batch time sync ---
-    socket.on('time_sync_batch', (data, callback) => {
-      const count = (data && typeof data.count === 'number' && data.count > 0 && data.count < 20) ? data.count : 5;
-      const samples = [];
-      for (let i = 0; i < count; i++) {
-        samples.push({ serverTime: Date.now(), hrtime: getHighResTime() });
-      }
-      if (typeof callback === 'function') callback(samples);
     });
 
     // Store per-client drift for diagnostics/adaptive correction
@@ -878,44 +814,7 @@ export function setupSocket(io) {
       
       // (Optional) Adaptive correction logic can be added here
       if (Math.abs(drift) > DRIFT_THRESHOLD) {
-        // Feedback to controller for immediate action
-        const session = getSession(sessionId);
-        if (session && session.controllerId) {
-          setImmediate(() => io.to(session.controllerId).emit('drift_feedback', { sessionId, drift, clientId, timestamp }));
-        }
         io.to(getSocketIdByClientId(sessionId, clientId)).emit('drift_warning', { drift, threshold: DRIFT_THRESHOLD });
-      }
-    });
-
-    // --- Store RTT and drift for adaptive interval ---
-    socket.on('drift_report', ({ sessionId, drift, clientId, timestamp, rtt } = {}) => {
-      if (!sessionId) return;
-      if (!sessionSyncIntervals[sessionId]) sessionSyncIntervals[sessionId] = { interval: BASE_SYNC_INTERVAL, lastDrift: 0, lastRtt: 0 };
-      if (typeof drift === 'number') sessionSyncIntervals[sessionId].lastDrift = drift;
-      if (typeof rtt === 'number') sessionSyncIntervals[sessionId].lastRtt = rtt;
-    });
-
-    // --- Immediate sync_state to listeners on high drift ---
-    socket.on('drift_report', ({ sessionId, drift, clientId, timestamp } = {}) => {
-      if (!sessionId || typeof drift !== 'number') return;
-      if (Math.abs(drift) > DRIFT_THRESHOLD) {
-        const session = getSession(sessionId);
-        if (session) {
-          // Only emit to listeners (not controller)
-          for (const [sockId, info] of session.clients.entries()) {
-            if (info.clientId !== session.controllerClientId) {
-              io.to(sockId).emit('sync_state', {
-                isPlaying: session.isPlaying,
-                timestamp: session.timestamp,
-                lastUpdated: session.lastUpdated,
-                controllerId: session.controllerId,
-                serverTime: Date.now(),
-                hrtime: getHighResTime(),
-                driftFeedback: true
-              });
-            }
-          }
-        }
       }
     });
 
@@ -1008,55 +907,12 @@ export function setupSocket(io) {
     }
   }, 60 * 1000);
 
-  // --- Adaptive per-session sync interval adjustment ---
-  setInterval(() => {
-    const now = Date.now();
-    for (const [sessionId, state] of Object.entries(sessionSyncIntervals)) {
-      // If drift or RTT is high, decrease interval; if low, increase
-      const drift = Math.abs(state.lastDrift || 0);
-      const rtt = state.lastRtt || 0;
-      let interval = state.interval || BASE_SYNC_INTERVAL;
-      if (drift > 0.3 || rtt > 300) {
-        interval = Math.max(MIN_SYNC_INTERVAL, interval - SYNC_INTERVAL_STEP);
-      } else if (drift < 0.05 && rtt < 100) {
-        interval = Math.min(MAX_SYNC_INTERVAL, interval + SYNC_INTERVAL_STEP);
-      }
-      state.interval = interval;
-    }
-  }, 60000); // Adjust every minute
-
-  // --- Adaptive sync broadcast using per-session interval ---
-  setInterval(() => {
-    const sessions = getAllSessions();
-    const now = Date.now();
-    for (const [sessionId, session] of Object.entries(sessions)) {
-      const state = sessionSyncIntervals[sessionId] || { interval: BASE_SYNC_INTERVAL };
-      if (!sessionSyncIntervals[sessionId]) sessionSyncIntervals[sessionId] = state;
-      if (!state._lastEmit || now - state._lastEmit >= state.interval) {
-        emitSyncState(io, sessionId, session);
-        state._lastEmit = now;
-      }
-    }
-  }, 50); // Check every 50ms for all sessions
-
-  // --- Adaptive sync broadcast ---
-  // Ultra-low-latency config
-  const ULTRA_LOW_LATENCY = process.env.ULTRA_LOW_LATENCY === 'true';
-  const BASE_SYNC_INTERVAL = ULTRA_LOW_LATENCY ? 50 : 100; // ms (was 400)
-  const HIGH_DRIFT_SYNC_INTERVAL = ULTRA_LOW_LATENCY ? 30 : 60; // ms (was 200)
+  // --- Adaptive sync_state broadcast ---
+  const BASE_SYNC_INTERVAL = 400; // ms (was 300)
+  const HIGH_DRIFT_SYNC_INTERVAL = 200; // ms (was 100)
   const DRIFT_THRESHOLD = 0.2; // seconds
   const DRIFT_WINDOW = 10000; // ms (10s)
   let lastSyncTime = Date.now();
-
-  // --- Sync batching (simple debounce per session) ---
-  const syncBatchTimers = {};
-  function batchSyncEmit(sessionId, session, io, payload) {
-    if (syncBatchTimers[sessionId]) return; // Already scheduled
-    syncBatchTimers[sessionId] = setImmediate(() => {
-      io.to(sessionId).emit('sync_state', payload);
-      syncBatchTimers[sessionId] = null;
-    });
-  }
 
   // Clean up old drift reports every minute
   setInterval(() => {
@@ -1092,14 +948,13 @@ export function setupSocket(io) {
         }
       }
       if (!highDrift) {
-        const payload = {
+        io.to(sessionId).emit('sync_state', {
           isPlaying: session.isPlaying,
           timestamp: session.timestamp,
           lastUpdated: session.lastUpdated,
           controllerId: session.controllerId,
           serverTime: Date.now()
-        };
-        batchSyncEmit(sessionId, session, io, payload);
+        });
       }
     }
   }, BASE_SYNC_INTERVAL);
@@ -1119,14 +974,13 @@ export function setupSocket(io) {
         }
       }
       if (highDrift) {
-        const payload = {
+        io.to(sessionId).emit('sync_state', {
           isPlaying: session.isPlaying,
           timestamp: session.timestamp,
           lastUpdated: session.lastUpdated,
           controllerId: session.controllerId,
           serverTime: Date.now()
-        };
-        batchSyncEmit(sessionId, session, io, payload);
+        });
       }
     }
   }, HIGH_DRIFT_SYNC_INTERVAL);
