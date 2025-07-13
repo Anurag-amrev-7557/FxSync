@@ -3,14 +3,13 @@ import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-route
 import SessionPage from './components/SessionPage'
 import CreateRoomPage from './components/CreateRoomPage'
 import useSocket from './hooks/useSocket'
-import { CalibrationProvider, useCalibration } from './contexts/CalibrationContext'
-import DeviceCalibration from './components/DeviceCalibration'
-import { getClientId } from './utils/clientId'
+import { useDefaultMetadata } from './hooks/useDefaultMetadata'
 import './App.css'
 
 // Enhanced App component with better state management and routing
-function AppContent() {
-  const { isCalibrating, hasCalibrated, isCalibrationValid, completeCalibration, failCalibration, resetCalibration } = useCalibration();
+function App() {
+  // Load default metadata when app starts
+  const { isLoading: metadataLoading, error: metadataError } = useDefaultMetadata();
   
   // Enhanced session state management
   const [currentSessionId, setCurrentSessionId] = useState(() => {
@@ -37,7 +36,7 @@ function AppContent() {
   const [sessionSyncState, setSessionSyncState] = useState(null);
 
   // Enhanced socket connection with better error handling
-  const { rtt, timeOffset, jitter, drift, forceNtpBatchSync, socket, ...socketStuff } = useSocket(currentSessionId, displayName, undefined, setSessionSyncState)
+  const { rtt, timeOffset, jitter, drift, forceNtpBatchSync, ...socketStuff } = useSocket(currentSessionId, displayName, undefined, setSessionSyncState)
 
   // Persist session data to localStorage
   useEffect(() => {
@@ -59,15 +58,6 @@ function AppContent() {
     setCurrentSessionId(sessionId)
     if (name) setDisplayName(name)
     
-    // Only reset calibration if we don't have valid calibration data
-    // This prevents unnecessary re-calibration on every session join
-    if (!isCalibrationValid) {
-      console.log('[App] Resetting calibration - no valid calibration data');
-      resetCalibration();
-    } else {
-      console.log('[App] Keeping existing calibration data - valid calibration found');
-    }
-    
     // Update URL without page reload
     if (sessionId) {
       const newUrl = `${window.location.origin}/?session=${sessionId}`
@@ -77,16 +67,6 @@ function AppContent() {
     }
   }
 
-  // Handle calibration completion
-  const handleCalibrationComplete = (calibrationData) => {
-    completeCalibration(calibrationData);
-  };
-
-  // Handle calibration failure
-  const handleCalibrationError = (error) => {
-    failCalibration(error);
-  };
-
   const handleSessionLeave = () => {
     setCurrentSessionId(null)
     window.history.pushState({}, '', window.location.origin)
@@ -95,14 +75,14 @@ function AppContent() {
   return (
     <Router>
       <div className="app-container">
-        {/* Show calibration overlay when joining a session and calibration is needed */}
-        {currentSessionId && !isCalibrationValid && !isCalibrating && (
-          <>
-            {console.log('[App] Showing calibration overlay - conditions:', { currentSessionId, isCalibrationValid, isCalibrating })}
-            <DeviceCalibration
-              onComplete={handleCalibrationComplete}
-            />
-          </>
+        {/* Show loading indicator while metadata is loading */}
+        {metadataLoading && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-neutral-900 rounded-lg p-6 flex flex-col items-center gap-4">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
+              <p className="text-white text-sm">Loading audio metadata...</p>
+            </div>
+          </div>
         )}
         
         <Routes>
@@ -159,15 +139,6 @@ function AppContent() {
         </Routes>
       </div>
     </Router>
-  )
-}
-
-// Main App component with providers
-function App() {
-  return (
-    <CalibrationProvider>
-      <AppContent />
-    </CalibrationProvider>
   )
 }
 

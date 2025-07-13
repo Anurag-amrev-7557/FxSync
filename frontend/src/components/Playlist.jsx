@@ -104,9 +104,12 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
     formData.append('clientId', getClientId());
     formData.append('sessionId', sessionId);
 
+    // Debug: log before calling jsmediatags.read
+    console.log('About to call jsmediatags.read', jsmediatags, file);
     // Extract ID3 metadata
     jsmediatags.read(file, {
       onSuccess: (tag) => {
+        console.log('jsmediatags onSuccess', tag);
         let title = tag.tags.title;
         if (!title || typeof title !== 'string' || !title.trim()) {
           // Use filename without extension as fallback
@@ -159,6 +162,7 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
         e.target.value = '';
       },
       onError: (error) => {
+        console.log('jsmediatags onError', error);
         // Fallback to filename (without extension) if metadata extraction fails
         let title = file.name.replace(/\.[^/.]+$/, "");
         try {
@@ -329,14 +333,9 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
                     onSelectTrack && onSelectTrack(existingIdx, track);
                   } else {
                     // Add to queue, then select it after confirmation
-                    socket.emit('add_to_queue', { sessionId, url: track.url, title: track.title }, (response) => {
-                      if (response && response.success && response.queue) {
-                        // Find the index of the newly added track in the updated queue
-                        const newIndex = response.queue.findIndex(q => q.url === track.url);
-                        if (newIndex !== -1) {
-                          onSelectTrack && onSelectTrack(newIndex, track);
-                        }
-                      }
+                    socket.emit('add_to_queue', { sessionId, url: track.url, title: track.title }, () => {
+                      // Use the new index (end of queue)
+                      onSelectTrack && onSelectTrack(queue.length, track);
                     });
                   }
                 }}
