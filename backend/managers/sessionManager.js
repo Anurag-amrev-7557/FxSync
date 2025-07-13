@@ -1,25 +1,5 @@
 const sessions = {};
 
-// Simple in-memory mutex for atomic operations (per session)
-const sessionLocks = {};
-function acquireLock(sessionId) {
-  if (!sessionLocks[sessionId]) sessionLocks[sessionId] = false;
-  return new Promise(resolve => {
-    const tryAcquire = () => {
-      if (!sessionLocks[sessionId]) {
-        sessionLocks[sessionId] = true;
-        resolve();
-      } else {
-        setTimeout(tryAcquire, 2);
-      }
-    };
-    tryAcquire();
-  });
-}
-function releaseLock(sessionId) {
-  sessionLocks[sessionId] = false;
-}
-
 export function getSession(sessionId) {
   return sessions[sessionId];
 }
@@ -57,28 +37,13 @@ export function removeClient(sessionId, socketId) {
   sessions[sessionId].clients.delete(socketId);
 }
 
-export async function atomicSetController(sessionId, clientId) {
-  await acquireLock(sessionId);
-  try {
-    if (!sessions[sessionId]) return;
-    sessions[sessionId].controllerClientId = clientId;
-    const socketId = getSocketIdByClientId(sessionId, clientId);
-    sessions[sessionId].controllerId = socketId;
-    sessions[sessionId].lastUpdated = Date.now();
-  } finally {
-    releaseLock(sessionId);
-  }
-}
-
-export async function atomicSetSelectedTrackIdx(sessionId, idx) {
-  await acquireLock(sessionId);
-  try {
-    if (!sessions[sessionId]) return;
-    sessions[sessionId].selectedTrackIdx = idx;
-    sessions[sessionId].lastUpdated = Date.now();
-  } finally {
-    releaseLock(sessionId);
-  }
+export function setController(sessionId, clientId) {
+  if (!sessions[sessionId]) return;
+  sessions[sessionId].controllerClientId = clientId;
+  // Find the socketId for this clientId
+  const socketId = getSocketIdByClientId(sessionId, clientId);
+  sessions[sessionId].controllerId = socketId;
+  sessions[sessionId].lastUpdated = Date.now();
 }
 
 export function getAllSessions() {
@@ -153,10 +118,6 @@ export function clearExpiredControllerRequests(sessionId) {
       sessions[sessionId].pendingControllerRequests.delete(clientId);
     }
   }
-}
-
-export function isSessionEmpty(sessionId) {
-  return sessions[sessionId] && sessions[sessionId].clients.size === 0;
 }
 
 export function setSelectedTrackIdx(sessionId, idx) {

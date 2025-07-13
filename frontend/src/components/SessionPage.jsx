@@ -20,7 +20,7 @@ import {
   clearSessionData,
   cleanupOldSessions 
 } from '../utils/persistence'
-import { useNtpTimeSync } from '../hooks/useNtpTimeSync';
+import usePeerTimeSync from '../hooks/usePeerTimeSync'
 
 function SessionPage({
   currentSessionId,
@@ -34,7 +34,7 @@ function SessionPage({
   controllerClientId,
   clients,
   clientId,
-  // getServerTime, // Remove this prop, use NTP sync instead
+  getServerTime,
   pendingControllerRequests,
   controllerRequestReceived,
   controllerOfferReceived,
@@ -563,8 +563,28 @@ function SessionPage({
     return () => socket.off('clients_update', handleClientsUpdate);
   }, [socket, clientId]);
 
-  // Use ultra-accurate NTP-like time sync
-  const { getServerTime } = useNtpTimeSync(socket);
+  // --- Peer-to-Peer Time Sync (Fixed Hooks) ---
+  const MAX_PEERS = 5;
+  const paddedPeerIds = [...peerIds.slice(0, MAX_PEERS)];
+  while (paddedPeerIds.length < MAX_PEERS) paddedPeerIds.push(null);
+
+  const peerSyncA = usePeerTimeSync(socket, clientId, paddedPeerIds[0]);
+  const peerSyncB = usePeerTimeSync(socket, clientId, paddedPeerIds[1]);
+  const peerSyncC = usePeerTimeSync(socket, clientId, paddedPeerIds[2]);
+  const peerSyncD = usePeerTimeSync(socket, clientId, paddedPeerIds[3]);
+  const peerSyncE = usePeerTimeSync(socket, clientId, paddedPeerIds[4]);
+  const peerSyncs = [peerSyncA, peerSyncB, peerSyncC, peerSyncD, peerSyncE];
+
+  // --- Combine Peer and Server Sync ---
+  const allOffsets = [
+    ...peerSyncs.map((p, i) => (p && paddedPeerIds[i] && p.connectionState === 'connected' && p.peerRtt !== null) ? { offset: p.peerOffset, rtt: p.peerRtt } : null).filter(Boolean),
+    { offset: timeOffset, rtt: rtt }
+  ];
+  const best = allOffsets.reduce((a, b) => (a.rtt < b.rtt ? a : b));
+  const ultraPreciseOffset = best.offset;
+
+  // Debug log for ultra-precise offset
+  console.log('Ultra-precise offset:', ultraPreciseOffset, 'All offsets:', allOffsets);
 
   return (
     <div className="min-h-screen bg-neutral-950 text-white">
@@ -681,9 +701,6 @@ function SessionPage({
                         rtt={rtt}
                         sessionSyncState={sessionSyncState}
                         forceNtpBatchSync={forceNtpBatchSync}
-                        queue={queue}
-                        selectedTrackIdx={selectedTrackIdx}
-                        onSelectTrack={handleSelectTrack}
                       />
                     </div>
                     <div className="p-4">
@@ -818,9 +835,6 @@ function SessionPage({
                         rtt={rtt}
                         sessionSyncState={sessionSyncState}
                         forceNtpBatchSync={forceNtpBatchSync}
-                        queue={queue}
-                        selectedTrackIdx={selectedTrackIdx}
-                        onSelectTrack={handleSelectTrack}
                       />
                     </div>
                   </div>
@@ -854,9 +868,6 @@ function SessionPage({
                         rtt={rtt}
                         sessionSyncState={sessionSyncState}
                         forceNtpBatchSync={forceNtpBatchSync}
-                        queue={queue}
-                        selectedTrackIdx={selectedTrackIdx}
-                        onSelectTrack={handleSelectTrack}
                       />
                     </div>
                   </div>

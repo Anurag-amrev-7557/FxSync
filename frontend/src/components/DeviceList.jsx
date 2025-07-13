@@ -46,15 +46,6 @@ export default function DeviceList({ clients = [], controllerClientId, clientId,
     });
   };
 
-  const uniqueClients = [];
-  const seen = new Set();
-  for (const c of clients) {
-    if (!c.clientId || !seen.has(c.clientId)) {
-      uniqueClients.push(c);
-      if (c.clientId) seen.add(c.clientId);
-    }
-  }
-
   // --- MOBILE LAYOUT ---
   if (mobile) {
     return (
@@ -71,12 +62,12 @@ export default function DeviceList({ clients = [], controllerClientId, clientId,
           </div>
           <div>
             <h3 className="text-white font-semibold text-base leading-tight">Devices</h3>
-            <p className="text-neutral-400 text-xs">{uniqueClients.length} device{uniqueClients.length !== 1 ? 's' : ''}</p>
+            <p className="text-neutral-400 text-xs">{clients.length} device{clients.length !== 1 ? 's' : ''}</p>
           </div>
         </div>
         {/* Device List */}
         <div className="bg-neutral-900/80 rounded-xl border border-neutral-800 overflow-hidden shadow-lg">
-          {uniqueClients.length === 0 ? (
+          {clients.length === 0 ? (
             <div className="p-6 text-center">
               <div className="w-12 h-12 bg-neutral-800 rounded-lg flex items-center justify-center mx-auto mb-3">
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-400">
@@ -89,7 +80,7 @@ export default function DeviceList({ clients = [], controllerClientId, clientId,
             </div>
           ) : (
             <ul className="divide-y divide-neutral-800">
-              {uniqueClients.map((c, index) => (
+              {clients.map((c, index) => (
                 <li
                   key={c.id}
                   className={`flex items-center px-3 py-3 transition-all duration-300 group gap-3 ${
@@ -165,14 +156,14 @@ export default function DeviceList({ clients = [], controllerClientId, clientId,
           </div>
           <div>
             <h3 className="text-white font-medium text-sm">Connected Devices</h3>
-            <p className="text-neutral-400 text-xs">{uniqueClients.length} device{uniqueClients.length !== 1 ? 's' : ''}</p>
+            <p className="text-neutral-400 text-xs">{clients.length} device{clients.length !== 1 ? 's' : ''}</p>
           </div>
         </div>
       </div>
 
       {/* Device List */}
       <div className="bg-neutral-900/50 rounded-lg border border-neutral-800 overflow-hidden">
-        {uniqueClients.length === 0 ? (
+        {clients.length === 0 ? (
           <div className="p-6 text-center">
             <div className="w-12 h-12 bg-neutral-800 rounded-lg flex items-center justify-center mx-auto mb-3">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-400">
@@ -185,7 +176,7 @@ export default function DeviceList({ clients = [], controllerClientId, clientId,
           </div>
         ) : (
           <ul className="divide-y divide-neutral-800">
-            {uniqueClients.map((c, index) => (
+            {clients.map((c, index) => (
               <li
                 key={c.id}
                 className={`flex items-center p-4 transition-all duration-300 group ${

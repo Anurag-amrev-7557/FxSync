@@ -131,7 +131,10 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
 
     // Helper: log diagnostics
     function logTimeSyncDiagnostics(diag) {
-      // Production logging removed
+      if (process.env.NODE_ENV !== 'production') {
+        // eslint-disable-next-line no-console
+        console.debug('[TimeSync]', diag);
+      }
     }
 
     // Helper: reset all history
@@ -239,7 +242,9 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
           // Adaptive interval: shorter if unstable, longer if stable
           if (calcJitterVal > 20 || Math.abs(driftVal) > 20) {
             adaptiveInterval = ADAPTIVE_INTERVAL_BAD; // Unstable, sync more often
-            // Production logging removed
+            if (process.env.NODE_ENV !== 'production') {
+              console.warn('[TimeSync] High jitter or drift detected:', { jitter: calcJitterVal, drift: driftVal });
+            }
           } else if (calcJitterVal < JITTER_GOOD && Math.abs(driftVal) < 5 && avgRtt < AVG_RTT_GOOD) {
             adaptiveInterval = ADAPTIVE_INTERVAL_GOOD; // Very stable, sync less often
           } else {
@@ -328,7 +333,7 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
 
   useEffect(() => {
     if (!sessionId) {
-      // Production logging removed
+      console.warn('[useSocket] No sessionId provided, skipping socket connection.');
       return;
     }
 
@@ -350,7 +355,7 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
 
     // --- Event Handlers ---
     const handleConnect = async () => {
-      // Production logging removed
+      console.info(`${logPrefix} Socket connected`);
       setConnected(true);
       reconnectAttempts = 0;
       // --- Perform NTP-like batch sync before joining session ---
@@ -359,7 +364,7 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
         if (data?.error) {
           console.error(`${logPrefix} JOIN CALLBACK ERROR:`, data.error);
         } else {
-          // Production logging removed
+          console.debug(`${logPrefix} JOIN CALLBACK DATA:`, data);
           setControllerId(data.controllerId);
           setControllerClientId(data.controllerClientId || null);
           // --- Advanced sync state ---
@@ -376,9 +381,9 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
     const handleDisconnect = (reason) => {
       setConnected(false);
       if (reason) {
-        // Production logging removed
+        console.warn(`${logPrefix} Socket disconnected:`, reason);
       } else {
-        // Production logging removed
+        console.info(`${logPrefix} Socket disconnected`);
       }
     };
 
@@ -415,7 +420,7 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
 
     // Session closed by server (e.g., timeout/cleanup)
     socket.on('session_closed', () => {
-      // Production logging removed
+      console.warn(`${logPrefix} Session closed by server.`);
       setConnected(false);
       setControllerId(null);
       setClients([]);
@@ -431,58 +436,61 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
 
     // Optional: handle server-initiated forced reload
     socket.on('force_reload', () => {
-      // Production logging removed
+      console.warn(`${logPrefix} Server requested client reload.`);
       window.location.reload();
     });
 
     // Optional: handle backend version mismatch
     socket.on('backend_version_mismatch', (serverVersion) => {
-      // Production logging removed
+      console.warn(`${logPrefix} Backend version mismatch:`, serverVersion);
       // Optionally, show UI warning or reload
     });
 
     // --- Cleanup ---
     return () => {
-      // Production logging removed
-      if (socket) {
-        socket.off('connect', handleConnect);
-        socket.off('disconnect', handleDisconnect);
-        socket.off('connect_error', handleConnectError);
-        socket.off('error', handleError);
+      console.info(`${logPrefix} Cleaning up socket connection`);
+      socket.off('connect', handleConnect);
+      socket.off('disconnect', handleDisconnect);
+      socket.off('connect_error', handleConnectError);
+      socket.off('error', handleError);
 
-        socket.off('controller_change', setControllerId);
-        socket.off('clients_update', setClients);
-        socket.off('controller_client_change', setControllerClientId);
-        socket.off('controller_requests_update', setPendingControllerRequests);
+      socket.off('controller_change', setControllerId);
+      socket.off('clients_update', setClients);
+      socket.off('controller_client_change', setControllerClientId);
+      socket.off('controller_requests_update', setPendingControllerRequests);
 
-        socket.off('controller_request_received', setControllerRequestReceived);
-        socket.off('controller_offer_received', setControllerOfferReceived);
-        socket.off('controller_offer_sent', setControllerOfferSent);
-        socket.off('controller_offer_accepted', setControllerOfferAccepted);
-        socket.off('controller_offer_declined', setControllerOfferDeclined);
+      socket.off('controller_request_received', setControllerRequestReceived);
+      socket.off('controller_offer_received', setControllerOfferReceived);
+      socket.off('controller_offer_sent', setControllerOfferSent);
+      socket.off('controller_offer_accepted', setControllerOfferAccepted);
+      socket.off('controller_offer_declined', setControllerOfferDeclined);
 
-        socket.off('session_closed');
-        socket.off('force_reload');
-        socket.off('backend_version_mismatch');
+      socket.off('session_closed');
+      socket.off('force_reload');
+      socket.off('backend_version_mismatch');
 
-        socket.disconnect();
-        setConnected(false);
-        setControllerId(null);
-        setClients([]);
-        setControllerClientId(null);
-        setPendingControllerRequests([]);
-        setControllerRequestReceived(null);
-        setControllerOfferReceived(null);
-        setControllerOfferSent(null);
-        setControllerOfferAccepted(null);
-        setControllerOfferDeclined(null);
-      }
+      socket.disconnect();
+      setConnected(false);
+      setControllerId(null);
+      setClients([]);
+      setControllerClientId(null);
+      setPendingControllerRequests([]);
+      setControllerRequestReceived(null);
+      setControllerOfferReceived(null);
+      setControllerOfferSent(null);
+      setControllerOfferAccepted(null);
+      setControllerOfferDeclined(null);
     };
   }, [sessionId, clientId]);
 
-  // Debug state changes in development
   useEffect(() => {
-    // Production logging removed
+    console.log('useSocket: State update:', {
+      controllerClientId,
+      clientId,
+      isController: controllerClientId && clientId && controllerClientId === clientId,
+      socketExists: !!socketRef.current,
+      connected
+    });
   }, [controllerClientId, clientId, connected]);
 
   // Expose a method to force immediate time sync (for use on drift)

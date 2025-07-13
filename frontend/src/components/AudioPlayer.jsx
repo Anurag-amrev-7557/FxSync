@@ -8,27 +8,13 @@ import ResyncAnalytics from './ResyncAnalytics';
 if (typeof window !== 'undefined' && !window._audioPlayerErrorHandlerAdded) {
   window.addEventListener('unhandledrejection', function(event) {
     // Remove all console.log, console.warn, and console.error statements
-    if (process.env.NODE_ENV !== 'development') {
-      if (typeof console !== 'undefined') {
-        console.log = function () {};
-        console.warn = function () {};
-        console.error = function () {};
-      }
-    }
   });
   window.addEventListener('error', function(event) {
-    if (process.env.NODE_ENV !== 'development') {
-      if (typeof console !== 'undefined') {
-        console.log = function () {};
-        console.warn = function () {};
-        console.error = function () {};
-      }
-    }
+    // Remove all console.log, console.warn, and console.error statements
   });
   window._audioPlayerErrorHandlerAdded = true;
 }
 
-// --- Drift Thresholds ---
 const DRIFT_THRESHOLD = 0.12; // seconds (was 0.3)
 const PLAY_OFFSET = 0.35; // seconds (350ms future offset for play events)
 const DEFAULT_AUDIO_LATENCY = 0.08; // 80ms fallback if not measured
@@ -221,30 +207,6 @@ function getNow(getServerTime) {
   }
 }
 
-// Debounce utility
-function debounce(fn, delay) {
-  let timer = null;
-  return function (...args) {
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(() => fn.apply(this, args), delay);
-  };
-}
-
-// Adaptive drift threshold based on RTT and playback state
-function getAdaptiveDriftThreshold(rtt, isPlaying) {
-  // Base threshold
-  let threshold = DRIFT_THRESHOLD;
-  if (typeof rtt === 'number') {
-    if (rtt > 400) threshold *= 2.2;
-    else if (rtt > 200) threshold *= 1.5;
-    else if (rtt < 80) threshold *= 0.8;
-  }
-  if (!isPlaying) threshold *= 1.5; // More tolerant when paused
-  // Clamp to reasonable range
-  threshold = Math.max(0.05, Math.min(threshold, 0.5));
-  return threshold;
-}
-
 export default function AudioPlayer({
   disabled = false,
   socket,
@@ -280,7 +242,6 @@ export default function AudioPlayer({
   const CORRECTION_COOLDOWN = 1500; // ms
   const correctionInProgressRef = useRef(false);
   const [displayedCurrentTime, setDisplayedCurrentTime] = useState(0);
-  const lastCorrectionTimeRef = useRef(0);
 
   // Use controllerClientId/clientId for sticky controller logic
   const isController = controllerClientId && clientId && controllerClientId === clientId;
@@ -414,16 +375,18 @@ export default function AudioPlayer({
     const backendUrl = import.meta.env.VITE_BACKEND_URL;
     if (!backendUrl) {
       setAudioError(
-        <span className="inline-flex items-center gap-2">
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-red-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v4.5a.75.75 0 001.5 0v-4.5zm-.75 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
-          </svg>
-          <span>
-            Audio backend URL is not configured.
-            <br />
-            Please set <span className="font-mono bg-neutral-800 px-1 rounded">VITE_BACKEND_URL</span> in your environment.
+        <>
+          <span className="inline-flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-red-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v4.5a.75.75 0 001.5 0v-4.5zm-.75 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+            </svg>
+            <span>
+              Audio backend URL is not configured.
+              <br />
+              Please set <span className="font-mono bg-neutral-800 px-1 rounded">VITE_BACKEND_URL</span> in your environment.
+            </span>
           </span>
-        </span>
+        </>
       );
       setLoading(false);
       return;
@@ -522,10 +485,6 @@ export default function AudioPlayer({
       }
     };
 
-    // --- Drift Correction Throttle ---
-    const DRIFT_CORRECTION_THRESHOLD = 0.1; // 100ms
-    const DRIFT_CORRECTION_DEBOUNCE = 1000; // 1s
-
     // Enhanced sync state handler
     const handleSyncState = ({
       isPlaying,
@@ -550,11 +509,6 @@ export default function AudioPlayer({
       const audio = audioRef.current;
       if (!audio) {
         log('warn', 'SYNC_STATE: audio element not available');
-        return;
-      }
-      // Do not update if user is seeking
-      if (isSeeking) {
-        log('log', '[SYNC_STATE] Skipping update: user is seeking');
         return;
       }
       // Use serverTime if present, else fallback
@@ -598,17 +552,25 @@ export default function AudioPlayer({
         meta,
       });
 
-      // Only correct if drift > threshold AND debounce period has passed, or playback state changes
-      const nowMs = Date.now();
-      const playbackStateChanged = (isPlaying !== !audio.paused);
-      if (
-        (drift > DRIFT_CORRECTION_THRESHOLD && (nowMs - lastCorrectionTimeRef.current > DRIFT_CORRECTION_DEBOUNCE || playbackStateChanged))
-      ) {
-        log('log', '[SYNC_STATE] Correcting drift:', drift, 'current:', audio.currentTime, 'expected:', expected);
-        setCurrentTimeSafely(audio, expected, setCurrentTime);
-        lastCorrectionTimeRef.current = nowMs;
+      // Enhanced: show drift in UI if large
+      if (drift > DRIFT_THRESHOLD) {
+        driftCountRef.current += 1;
+        if (driftCountRef.current >= DRIFT_JITTER_BUFFER) {
+          showSyncStatus('Drifted', 1000);
+          maybeCorrectDrift(audio, expected);
+          setSyncStatus('Re-syncing...');
+          if (resyncTimeout) clearTimeout(resyncTimeout);
+          resyncTimeout = setTimeout(() => setSyncStatus('In Sync'), 800);
+
+          if (typeof socket?.forceTimeSync === 'function') {
+            socket.forceTimeSync();
+          }
+          emitDriftReport(drift, expected, audio.currentTime, { ctrlId, trackId, meta });
+          driftCountRef.current = 0;
+        }
       } else {
-        log('log', '[SYNC_STATE] Drift within threshold or debounce, no correction:', drift);
+        driftCountRef.current = 0;
+        setSyncStatus('In Sync');
       }
 
       setIsPlaying(isPlaying);
@@ -632,22 +594,18 @@ export default function AudioPlayer({
       if (syncTimeout) clearTimeout(syncTimeout);
       if (resyncTimeout) clearTimeout(resyncTimeout);
     };
-  }, [socket, audioLatency, getServerTime, clientId, rtt, smoothedOffset, isPlaying, isSeeking]);
+  }, [socket, audioLatency, getServerTime, clientId, rtt, smoothedOffset]);
 
-  // --- Enhanced Periodic Drift Check (for followers) ---
+  // Enhanced periodic drift check (for followers)
   useEffect(() => {
     if (!socket || isController) return;
 
     let lastDrift = 0;
     let lastCorrection = 0;
-    let correctionCooldown = 600; // ms, more aggressive
-    let interval = null;
-    let adaptiveInterval = 700; // ms, more aggressive
-    let lastDriftValue = 0;
-    let currentInterval = adaptiveInterval;
+    let correctionCooldown = 1200; // ms, minimum time between corrections
 
-    // Debounced sync request
-    const debouncedSyncRequest = debounce(() => {
+    const interval = setInterval(() => {
+      // Defensive check: only emit if sessionId is set
       if (!socket.sessionId) {
         if (process.env.NODE_ENV === 'development') {
           console.warn('[DriftCheck] No sessionId set on socket, skipping sync_request');
@@ -672,13 +630,6 @@ export default function AudioPlayer({
 
         const audio = audioRef.current;
         if (!audio) return;
-        // Do not update if user is seeking
-        if (isSeeking) {
-          if (process.env.NODE_ENV === 'development') {
-            console.log('[DriftCheck] Skipping correction: user is seeking');
-          }
-          return;
-        }
 
         const now = getNow(getServerTime);
         const rttComp = rtt ? rtt / 2000 : 0; // ms to s, one-way
@@ -693,60 +644,62 @@ export default function AudioPlayer({
         const syncedNow = getNow(getServerTime);
         const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000 + rttComp + smoothedOffset;
         const drift = Math.abs(audio.currentTime - expectedSynced);
-        lastDriftValue = drift;
 
-        // Only correct if drift > threshold AND debounce period has passed
+        // Enhanced: log drift only if significant or in dev
+        if (drift > DRIFT_THRESHOLD || process.env.NODE_ENV === 'development') {
+          console.log(
+            '[DriftCheck] PERIODIC drift:',
+            drift.toFixed(3),
+            'current:',
+            audio.currentTime.toFixed(3),
+            'expected:',
+            expectedSynced.toFixed(3),
+            'isPlaying:', audio.paused ? 'paused' : 'playing'
+          );
+        }
+
+        // Only correct if not in cooldown
         const nowMs = Date.now();
-        if (drift > DRIFT_CORRECTION_THRESHOLD && (nowMs - lastCorrectionTimeRef.current > DRIFT_CORRECTION_DEBOUNCE)) {
-          if (process.env.NODE_ENV === 'development') {
-            console.log('[DriftCheck] Correcting drift:', drift, 'current:', audio.currentTime, 'expected:', expectedSynced);
+        const canCorrect = nowMs - lastCorrection > correctionCooldown;
+
+        if (drift > DRIFT_THRESHOLD) {
+          driftCountRef.current += 1;
+          lastDrift = drift;
+
+          if (driftCountRef.current >= DRIFT_JITTER_BUFFER && canCorrect) {
+            setSyncStatus('Drifted');
+            maybeCorrectDrift(audio, expectedSynced);
+            setSyncStatus('Re-syncing...');
+            setTimeout(() => setSyncStatus('In Sync'), 800);
+
+            if (typeof socket?.forceTimeSync === 'function') {
+              socket.forceTimeSync();
+            }
+
+            if (socket && socket.emit && socket.sessionId && typeof drift === 'number') {
+              socket.emit('drift_report', {
+                sessionId: socket.sessionId,
+                drift,
+                clientId,
+                timestamp: nowMs
+              });
+            }
+
+            driftCountRef.current = 0;
+            lastCorrection = nowMs;
           }
-          setCurrentTimeSafely(audio, expectedSynced, setCurrentTime);
-          lastCorrectionTimeRef.current = nowMs;
         } else {
-          if (process.env.NODE_ENV === 'development') {
-            console.log('[DriftCheck] Drift within threshold or debounce, no correction:', drift);
+          if (driftCountRef.current > 0 && process.env.NODE_ENV === 'development') {
+            console.log('[DriftCheck] Drift back in threshold, resetting counter');
           }
-        }
-        // --- Adaptive interval logic ---
-        if (drift > adaptiveDriftThreshold) {
-          adaptiveInterval = 700; // More frequent if drifting
-        } else if (drift < MICRO_DRIFT_THRESHOLD) {
-          adaptiveInterval = 2200; // Less frequent if in sync
-        } else {
-          adaptiveInterval = 1200;
-        }
-        // Restart interval if needed
-        if (adaptiveInterval !== currentInterval) {
-          clearInterval(interval);
-          currentInterval = adaptiveInterval;
-          startAdaptiveSync();
+          driftCountRef.current = 0;
+          setSyncStatus('In Sync');
         }
       });
-    }, 350); // Debounce delay
+    }, 1200);
 
-    // Periodic sync with adaptive interval
-    function startAdaptiveSync() {
-      if (interval) clearInterval(interval);
-      interval = setInterval(() => {
-        if (!isPlaying) return; // Skip if paused
-        debouncedSyncRequest();
-      }, adaptiveInterval);
-      currentInterval = adaptiveInterval;
-    }
-
-    startAdaptiveSync();
-
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [socket, isController, getServerTime, audioLatency, clientId, rtt, smoothedOffset, isPlaying, isSeeking]);
-
-  // --- Trigger sync request on user actions (play, pause, seek) ---
-  const triggerSyncRequest = debounce(() => {
-    if (!socket || isController || !socket.sessionId) return;
-    socket.emit('sync_request', { sessionId: socket.sessionId }, () => {});
-  }, 350);
+    return () => clearInterval(interval);
+  }, [socket, isController, getServerTime, audioLatency, clientId, rtt, smoothedOffset]);
 
   // Enhanced: On mount, immediately request sync state on join, with improved error handling, logging, and edge case resilience
   useEffect(() => {
@@ -951,7 +904,6 @@ export default function AudioPlayer({
       }
       setIsPlaying(true);
       emitPlay();
-      triggerSyncRequest(); // Trigger sync on play
       if (process.env.NODE_ENV === 'development') {
         // eslint-disable-next-line no-console
         console.log('[AudioPlayer][handlePlay] Play triggered successfully');
@@ -978,7 +930,6 @@ export default function AudioPlayer({
       audio.pause();
       setIsPlaying(false);
       emitPause();
-      triggerSyncRequest(); // Trigger sync on pause
       if (process.env.NODE_ENV === 'development') {
         // eslint-disable-next-line no-console
         console.log('[AudioPlayer][handlePause] Pause triggered successfully');
@@ -1013,12 +964,6 @@ export default function AudioPlayer({
       return;
     }
 
-    // Clamp time to [0, duration]
-    let clampedTime = time;
-    if (isFinite(duration) && duration > 0) {
-      clampedTime = Math.max(0, Math.min(time, duration));
-    }
-
     setIsSeeking(true);
     const audio = audioRef.current;
     if (!audio) {
@@ -1030,20 +975,19 @@ export default function AudioPlayer({
       return;
     }
 
-    setCurrentTimeSafely(audio, clampedTime, setCurrentTime);
-    emitSeek(clampedTime);
-    triggerSyncRequest(); // Trigger sync on seek
+    setCurrentTimeSafely(audio, time, setCurrentTime);
+    emitSeek(time);
 
     // If the user seeks while paused, update UI immediately
     if (audio.paused) {
-      setCurrentTime(clampedTime);
+      setCurrentTime(time);
     }
 
     setTimeout(() => setIsSeeking(false), 200);
 
     if (process.env.NODE_ENV === 'development') {
       // eslint-disable-next-line no-console
-      console.log('[AudioPlayer][handleSeek] Seeked to', clampedTime);
+      console.log('[AudioPlayer][handleSeek] Seeked to', time);
     }
   };
 
@@ -1179,33 +1123,6 @@ export default function AudioPlayer({
       if (ctx && typeof ctx.close === 'function') ctx.close();
     }
   }, []);
-
-  // Periodically re-measure audio latency every 60 seconds
-  useEffect(() => {
-    const interval = setInterval(() => {
-      let ctx;
-      try {
-        ctx = new (window.AudioContext || window.webkitAudioContext)();
-        if (ctx.baseLatency && ctx.baseLatency > 0 && ctx.baseLatency < 1) {
-          setAudioLatency(ctx.baseLatency);
-        }
-      } catch (e) {
-        // Ignore, fallback to previous value
-      } finally {
-        if (ctx && typeof ctx.close === 'function') ctx.close();
-      }
-    }, 60000); // every 60 seconds
-    return () => clearInterval(interval);
-  }, []);
-
-  // Periodically re-run NTP/time sync every 3 minutes
-  useEffect(() => {
-    if (typeof forceNtpBatchSync !== 'function') return;
-    const interval = setInterval(() => {
-      forceNtpBatchSync();
-    }, 180000); // every 3 minutes
-    return () => clearInterval(interval);
-  }, [forceNtpBatchSync]);
 
   // Smoothly animate displayedCurrentTime toward audio.currentTime
   useEffect(() => {
@@ -1351,13 +1268,10 @@ export default function AudioPlayer({
       const drift = audio.currentTime - expected;
       // Only apply micro-correction for small drifts
       if (Math.abs(drift) > MICRO_DRIFT_MIN && Math.abs(drift) < MICRO_DRIFT_MAX) {
-        // Make rate cap adaptive based on drift and playback state
-        let dynamicCap = MICRO_RATE_CAP_MICRO;
-        if (Math.abs(drift) > 0.05) dynamicCap *= 2;
-        if (!isPlaying) dynamicCap /= 2;
-        let rateAdj = 1 - Math.max(-dynamicCap, Math.min(dynamicCap, drift / MICRO_DRIFT_MAX * dynamicCap));
-        // Clamp to [1-dynamicCap, 1+dynamicCap]
-        rateAdj = Math.max(1 - dynamicCap, Math.min(1 + dynamicCap, rateAdj));
+        // Calculate playbackRate adjustment
+        let rateAdj = 1 - Math.max(-MICRO_RATE_CAP_MICRO, Math.min(MICRO_RATE_CAP_MICRO, drift / MICRO_DRIFT_MAX * MICRO_RATE_CAP_MICRO));
+        // Clamp to [1-MICRO_RATE_CAP_MICRO, 1+MICRO_RATE_CAP_MICRO]
+        rateAdj = Math.max(1 - MICRO_RATE_CAP_MICRO, Math.min(1 + MICRO_RATE_CAP_MICRO, rateAdj));
         if (Math.abs(audio.playbackRate - rateAdj) > 0.0005) {
           audio.playbackRate = rateAdj;
           if (process.env.NODE_ENV === 'development') {
@@ -1365,10 +1279,6 @@ export default function AudioPlayer({
             console.log('[MicroDrift] Adjusting playbackRate to', rateAdj.toFixed(5), 'for drift', drift.toFixed(4));
           }
         }
-        // Always reset playbackRate after a short window
-        setTimeout(() => {
-          if (audio.playbackRate !== 1) audio.playbackRate = 1;
-        }, MICRO_CORRECTION_WINDOW + 50);
       } else {
         // Restore playbackRate to normal if in sync or drift is too large
         if (audio.playbackRate !== 1) {
@@ -1382,7 +1292,7 @@ export default function AudioPlayer({
     }
     interval = setInterval(correctMicroDrift, MICRO_CORRECTION_WINDOW);
     return () => clearInterval(interval);
-  }, [isController, sessionSyncState, audioLatency, rtt, smoothedOffset, getServerTime, isPlaying]);
+  }, [isController, sessionSyncState, audioLatency, rtt, smoothedOffset, getServerTime]);
 
   // --- MOBILE REDESIGN ---
   if (mobile) {

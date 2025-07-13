@@ -2,17 +2,9 @@ import express from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
-import { fileURLToPath } from 'url';
-import { dirname } from 'path';
 import { addSessionFile } from '../managers/fileManager.js';
 import dotenv from 'dotenv';
-import * as mm from 'music-metadata';
-
 dotenv.config();
-
-// Polyfill __dirname for ES modules
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 const router = express.Router();
 
@@ -46,51 +38,6 @@ const upload = multer({ storage });
 
 router.get('/audio-url', (req, res) => {
   res.json({ url: AUDIO_URL });
-});
-
-// Endpoint to get all metadata (including cover image as base64) for an audio file
-router.get('/metadata/:filename(*)', async (req, res) => {
-  const { filename } = req.params;
-  // Security: prevent directory traversal
-  if (filename.includes('..')) {
-    return res.status(400).json({ error: 'Invalid filename' });
-  }
-  const filePath = path.join(__dirname, '../', filename);
-  try {
-    const metadata = await mm.parseFile(filePath);
-    let cover = null;
-    if (metadata.common.picture && metadata.common.picture[0]) {
-      const pic = metadata.common.picture[0];
-      
-      // Ensure we have valid image data
-      if (pic.data && pic.format && /^image\//.test(pic.format)) {
-        let base64Data;
-        if (Buffer.isBuffer(pic.data)) {
-          base64Data = pic.data.toString('base64');
-        } else if (Array.isArray(pic.data)) {
-          base64Data = Buffer.from(pic.data).toString('base64');
-        } else {
-          base64Data = null;
-        }
-        
-        if (base64Data && base64Data.length > 0) {
-          cover = {
-            format: pic.format,
-            data: base64Data,
-          };
-        }
-      }
-    }
-    res.json({
-      format: metadata.format,
-      common: metadata.common,
-      native: metadata.native,
-      cover,
-    });
-  } catch (err) {
-    console.error('Error reading audio file:', err);
-    res.status(500).json({ error: 'Error reading audio file', details: err.message });
-  }
 });
 
 // Upload endpoint
@@ -138,4 +85,4 @@ router.get('/all-tracks', (req, res) => {
   res.json(tracks);
 });
 
-export default router; 
+export default router;

@@ -1,4 +1,4 @@
-import { getSession, createSession, deleteSession, addClient, removeClient, atomicSetController, getAllSessions, getClients, updatePlayback, updateTimestamp, getClientIdBySocket, getSocketIdByClientId, addControllerRequest, removeControllerRequest, getPendingControllerRequests, clearExpiredControllerRequests } from './managers/sessionManager.js';
+import { getSession, createSession, deleteSession, addClient, removeClient, setController, getAllSessions, getClients, updatePlayback, updateTimestamp, getClientIdBySocket, getSocketIdByClientId, addControllerRequest, removeControllerRequest, getPendingControllerRequests, clearExpiredControllerRequests } from './managers/sessionManager.js';
 import { addToQueue, removeFromQueue, getQueue } from './managers/queueManager.js';
 import { formatChatMessage, formatReaction } from './managers/chatManager.js';
 import { log } from './utils/utils.js';
@@ -79,25 +79,8 @@ export function setupSocket(io) {
       if (becameController) {
         io.to(sessionId).emit('controller_change', socket.id);
         io.to(sessionId).emit('controller_client_change', clientId);
-        // Emit sync_state after controller change
-        io.to(sessionId).emit('sync_state', {
-          isPlaying: session.isPlaying,
-          timestamp: session.timestamp,
-          lastUpdated: session.lastUpdated,
-          controllerId: session.controllerId,
-          serverTime: Date.now(),
-        });
       }
       log('Client joined session', sessionId, 'Current queue:', getQueue(sessionId));
-
-      // --- Emit sync_state to all clients after join (for robust initial sync) ---
-      io.to(sessionId).emit('sync_state', {
-        isPlaying: session.isPlaying,
-        timestamp: session.timestamp,
-        lastUpdated: session.lastUpdated,
-        controllerId: session.controllerId,
-        serverTime: Date.now(),
-      });
     });
 
     socket.on('play', ({ sessionId, timestamp } = {}) => {
@@ -226,7 +209,7 @@ export function setupSocket(io) {
       typeof callback === "function" && callback({ success: true, message: 'Request sent to current controller' });
     });
 
-    socket.on('approve_controller_request', async ({ sessionId, requesterClientId } = {}, callback) => {
+    socket.on('approve_controller_request', ({ sessionId, requesterClientId } = {}, callback) => {
       if (!sessionId) return typeof callback === "function" && callback({ error: 'No sessionId provided' });
       if (!requesterClientId) return typeof callback === "function" && callback({ error: 'No requesterClientId provided' });
       
@@ -245,7 +228,7 @@ export function setupSocket(io) {
       
       // Remove the request and transfer controller role
       removeControllerRequest(sessionId, requesterClientId);
-      await atomicSetController(sessionId, requesterClientId);
+      setController(sessionId, requesterClientId);
       
       log('Controller transferred to client', requesterClientId, 'in session', sessionId);
       
@@ -360,7 +343,7 @@ export function setupSocket(io) {
       typeof callback === "function" && callback({ success: true, message: `Controller offer sent to ${targetName}` });
     });
 
-    socket.on('accept_controller_offer', async ({ sessionId, offererClientId } = {}, callback) => {
+    socket.on('accept_controller_offer', ({ sessionId, offererClientId } = {}, callback) => {
       if (!sessionId) return typeof callback === "function" && callback({ error: 'No sessionId provided' });
       if (!offererClientId) return typeof callback === "function" && callback({ error: 'No offererClientId provided' });
       
@@ -376,7 +359,7 @@ export function setupSocket(io) {
       }
       
       // Transfer controller role
-      await atomicSetController(sessionId, accepterClientId);
+      setController(sessionId, accepterClientId);
       
       log('Controller transferred to client', accepterClientId, 'in session', sessionId);
       
@@ -775,16 +758,6 @@ export function setupSocket(io) {
       }
     });
 
-    // NTP-like time sync event for ultra-accurate client-server time alignment
-    socket.on('time:sync', (clientSentAt, callback) => {
-      if (typeof callback === 'function') {
-        callback({
-          serverTime: Date.now(),
-          clientSentAt
-        });
-      }
-    });
-
     // Store per-client drift for diagnostics/adaptive correction
     const clientDriftMap = {};
 
@@ -929,9 +902,8 @@ export function setupSocket(io) {
   }, 60 * 1000);
 
   // --- Adaptive sync_state broadcast ---
-  // Increased intervals for smoother frontend corrections
-  const BASE_SYNC_INTERVAL = 400; // ms (was 300)
-  const HIGH_DRIFT_SYNC_INTERVAL = 200; // ms (was 100)
+  const BASE_SYNC_INTERVAL = 300; // ms (was 500)
+  const HIGH_DRIFT_SYNC_INTERVAL = 100; // ms (was 200)
   const DRIFT_THRESHOLD = 0.2; // seconds
   const DRIFT_WINDOW = 10000; // ms (10s)
   const clientDriftMap = {}; // sessionId -> { clientId: { drift, timestamp } }
