@@ -1,4 +1,4 @@
-import { getSession, createSession, deleteSession, addClient, removeClient, getAllSessions, getClients, updatePlayback, updateTimestamp, getClientIdBySocket, getSocketIdByClientId, addControllerRequest, removeControllerRequest, getPendingControllerRequests, clearExpiredControllerRequests, atomicSetController, atomicSetSelectedTrackIdx, isSessionEmpty } from './managers/sessionManager.js';
+import { getSession, createSession, deleteSession, addClient, removeClient, atomicSetController, getAllSessions, getClients, updatePlayback, updateTimestamp, getClientIdBySocket, getSocketIdByClientId, addControllerRequest, removeControllerRequest, getPendingControllerRequests, clearExpiredControllerRequests } from './managers/sessionManager.js';
 import { addToQueue, removeFromQueue, getQueue } from './managers/queueManager.js';
 import { formatChatMessage, formatReaction } from './managers/chatManager.js';
 import { log } from './utils/utils.js';
@@ -28,11 +28,10 @@ function buildSessionSyncState(session) {
 }
 
 export function setupSocket(io) {
-  const clientDriftMap = {}; // sessionId -> { clientId: { drift, timestamp } }
   io.on('connection', (socket) => {
     console.log('Socket connected:', socket.id);
 
-    socket.on('join_session', async ({ sessionId, displayName, deviceInfo, clientId } = {}, callback) => {
+    socket.on('join_session', ({ sessionId, displayName, deviceInfo, clientId } = {}, callback) => {
       console.log('join_session event received', { sessionId, clientId });
       if (!sessionId || typeof sessionId !== 'string') {
         log('join_session: missing or invalid sessionId');
@@ -49,12 +48,13 @@ export function setupSocket(io) {
       // Ensure controllerClientId is set (first joiner becomes controller)
       let becameController = false;
       if (!session.controllerClientId) {
-        await atomicSetController(sessionId, clientId);
+        session.controllerClientId = clientId;
+        session.controllerId = socket.id;
         becameController = true;
       }
       // If this clientId is the controller, update controllerId to this socket
       if (session.controllerClientId === clientId) {
-        await atomicSetController(sessionId, clientId);
+        session.controllerId = socket.id;
         becameController = true;
       }
       // Debug log for controller assignment
@@ -226,7 +226,7 @@ export function setupSocket(io) {
       typeof callback === "function" && callback({ success: true, message: 'Request sent to current controller' });
     });
 
-    socket.on('approve_controller_request', ({ sessionId, requesterClientId } = {}, callback) => {
+    socket.on('approve_controller_request', async ({ sessionId, requesterClientId } = {}, callback) => {
       if (!sessionId) return typeof callback === "function" && callback({ error: 'No sessionId provided' });
       if (!requesterClientId) return typeof callback === "function" && callback({ error: 'No requesterClientId provided' });
       
@@ -245,7 +245,7 @@ export function setupSocket(io) {
       
       // Remove the request and transfer controller role
       removeControllerRequest(sessionId, requesterClientId);
-      atomicSetController(sessionId, requesterClientId);
+      await atomicSetController(sessionId, requesterClientId);
       
       log('Controller transferred to client', requesterClientId, 'in session', sessionId);
       
@@ -360,7 +360,7 @@ export function setupSocket(io) {
       typeof callback === "function" && callback({ success: true, message: `Controller offer sent to ${targetName}` });
     });
 
-    socket.on('accept_controller_offer', ({ sessionId, offererClientId } = {}, callback) => {
+    socket.on('accept_controller_offer', async ({ sessionId, offererClientId } = {}, callback) => {
       if (!sessionId) return typeof callback === "function" && callback({ error: 'No sessionId provided' });
       if (!offererClientId) return typeof callback === "function" && callback({ error: 'No offererClientId provided' });
       
@@ -376,7 +376,7 @@ export function setupSocket(io) {
       }
       
       // Transfer controller role
-      atomicSetController(sessionId, accepterClientId);
+      await atomicSetController(sessionId, accepterClientId);
       
       log('Controller transferred to client', accepterClientId, 'in session', sessionId);
       
@@ -539,7 +539,7 @@ export function setupSocket(io) {
      * - Returns detailed result in callback.
      * - Logs for debugging.
      */
-    socket.on('remove_from_queue', async ({ sessionId, index } = {}, callback) => {
+    socket.on('remove_from_queue', ({ sessionId, index } = {}, callback) => {
       // Validate input
       if (!sessionId || typeof sessionId !== 'string' || typeof index !== 'number' || index < 0) {
         return typeof callback === "function" && callback({ error: 'Invalid input' });
@@ -568,7 +568,7 @@ export function setupSocket(io) {
         // If queue is not empty, select next track (or previous if last was removed), else null
         let newIdx = 0;
         if (updatedQueue.length === 0) {
-          await atomicSetSelectedTrackIdx(sessionId, null);
+          session.selectedTrackIdx = 0;
           trackChangePayload = {
             idx: null,
             track: null,
@@ -579,7 +579,7 @@ export function setupSocket(io) {
         } else {
           // If we removed the last track, move to previous; else, stay at same index
           newIdx = Math.min(index, updatedQueue.length - 1);
-          await atomicSetSelectedTrackIdx(sessionId, newIdx);
+          session.selectedTrackIdx = newIdx;
           trackChangePayload = {
             idx: newIdx,
             track: updatedQueue[newIdx],
@@ -594,7 +594,7 @@ export function setupSocket(io) {
         index < session.selectedTrackIdx
       ) {
         // If a track before the current was removed, decrement selectedTrackIdx
-        await atomicSetSelectedTrackIdx(sessionId, Math.max(0, session.selectedTrackIdx - 1));
+        session.selectedTrackIdx = Math.max(0, session.selectedTrackIdx - 1);
       }
 
       io.to(sessionId).emit('queue_update', updatedQueue);
@@ -620,7 +620,7 @@ export function setupSocket(io) {
      * - Optionally updates session.selectedTrackIdx for server-side state.
      * - Optionally emits a "track_change_failed" event for error cases.
      */
-    socket.on('track_change', async (data, callback) => {
+    socket.on('track_change', (data, callback) => {
       data = data || {};
       let { sessionId, idx, reason, extra, autoAdvance, force, track: customTrack } = data;
 
@@ -662,21 +662,20 @@ export function setupSocket(io) {
 
       // Defensive: If idx is out of bounds, clamp to valid range or null
       if (typeof newIdx === 'number' && (newIdx < 0 || newIdx >= queue.length)) {
-        io.to(socket.id).emit('track_change_failed', {
-          error: 'Index out of bounds',
-          sessionId,
-          attemptedBy: clientId,
-          timestamp: Date.now()
-        });
-        if (typeof callback === "function") callback({ error: 'Index out of bounds' });
-        return;
+        if (queue.length === 0) {
+          newIdx = null;
+          track = null;
+        } else {
+          newIdx = Math.max(0, Math.min(newIdx, queue.length - 1));
+          track = queue[newIdx];
+        }
       }
 
       // Optionally update session.selectedTrackIdx for server-side state
       if (typeof newIdx === 'number' && newIdx !== null) {
-        await atomicSetSelectedTrackIdx(sessionId, newIdx);
+        session.selectedTrackIdx = newIdx;
       } else {
-        await atomicSetSelectedTrackIdx(sessionId, 0);
+        session.selectedTrackIdx = 0;
       }
 
       // Optionally support autoAdvance (e.g., for next/prev track)
@@ -787,6 +786,8 @@ export function setupSocket(io) {
     });
 
     // Store per-client drift for diagnostics/adaptive correction
+    const clientDriftMap = {};
+
     socket.on('drift_report', ({ sessionId, drift, clientId, timestamp, manual, resyncDuration, beforeDrift, afterDrift, improvement } = {}) => {
       if (!sessionId || typeof drift !== 'number' || !clientId) return;
       if (!clientDriftMap[sessionId]) clientDriftMap[sessionId] = {};
@@ -830,15 +831,23 @@ export function setupSocket(io) {
       }
       
       // (Optional) Adaptive correction logic can be added here
-      if (Math.abs(drift) > DRIFT_THRESHOLD) {
-        io.to(getSocketIdByClientId(sessionId, clientId)).emit('drift_warning', { drift, threshold: DRIFT_THRESHOLD });
-      }
     });
 
     socket.on('disconnect', () => {
-      setTimeout(() => {
-        for (const [sessionId, session] of Object.entries(getAllSessions())) {
-          if (!isSessionEmpty(sessionId)) continue;
+      for (const [sessionId, session] of Object.entries(getAllSessions())) {
+        const clientId = getClientIdBySocket(sessionId, socket.id);
+        removeClient(sessionId, socket.id);
+        // Clean up any pending controller requests from this client
+        if (clientId) {
+          removeControllerRequest(sessionId, clientId);
+        }
+        if (session.controllerId === socket.id) {
+          const newSocketId = getSocketIdByClientId(sessionId, session.controllerClientId);
+          session.controllerId = newSocketId;
+          io.to(sessionId).emit('controller_change', newSocketId);
+        }
+        // Only delete files if the session is now empty
+        if (getClients(sessionId).length === 0) {
           // Delete all files for this session (user uploads only)
           const sessionFiles = getSessionFiles(sessionId);
           const uploadsDir = path.join(process.cwd(), 'uploads');
@@ -865,7 +874,9 @@ export function setupSocket(io) {
           deleteSession(sessionId);
           log(`[CLEANUP] Session deleted (empty): ${sessionId}`);
         }
-      }, 100);
+        io.to(sessionId).emit('clients_update', getClients(sessionId));
+        io.to(sessionId).emit('controller_requests_update', getPendingControllerRequests(sessionId));
+      }
       log('Socket disconnected:', socket.id);
     });
 
@@ -918,11 +929,12 @@ export function setupSocket(io) {
   }, 60 * 1000);
 
   // --- Adaptive sync_state broadcast ---
+  // Increased intervals for smoother frontend corrections
   const BASE_SYNC_INTERVAL = 400; // ms (was 300)
   const HIGH_DRIFT_SYNC_INTERVAL = 200; // ms (was 100)
   const DRIFT_THRESHOLD = 0.2; // seconds
   const DRIFT_WINDOW = 10000; // ms (10s)
-  let lastSyncTime = Date.now();
+  const clientDriftMap = {}; // sessionId -> { clientId: { drift, timestamp } }
 
   // Clean up old drift reports every minute
   setInterval(() => {
@@ -943,10 +955,6 @@ export function setupSocket(io) {
   setInterval(() => {
     const sessions = getAllSessions();
     const now = Date.now();
-    if (now - lastSyncTime > BASE_SYNC_INTERVAL * 2) {
-      log('[SYNC WARNING] sync_state interval delayed:', now - lastSyncTime, 'ms');
-    }
-    lastSyncTime = now;
     for (const [sessionId, session] of Object.entries(sessions)) {
       let highDrift = false;
       if (clientDriftMap[sessionId]) {
