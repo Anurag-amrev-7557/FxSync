@@ -9,6 +9,7 @@ import Playlist from './Playlist'
 import ResizableLayout from './ResizableLayout'
 import ExitRoomModal from './ExitRoomModal'
 import BottomTabBar from './BottomTabBar'
+import CalibrationStatus from './CalibrationStatus'
 import useSmoothAppearance from '../hooks/useSmoothAppearance'
 import { 
   saveMessages, 
@@ -626,6 +627,8 @@ function SessionPage({
                     Controller
                   </div>
                 )}
+                
+                <CalibrationStatus />
                 
                 <button
                   onClick={() => {

@@ -4,6 +4,7 @@ import useSmoothAppearance from '../hooks/useSmoothAppearance';
 import LoadingSpinner from './LoadingSpinner';
 import ResyncAnalytics from './ResyncAnalytics';
 import metadataCache from '../utils/metadataCache';
+import { useCalibration } from '../contexts/CalibrationContext';
 
 // Add global error handlers
 if (typeof window !== 'undefined' && !window._audioPlayerErrorHandlerAdded) {
@@ -58,12 +59,7 @@ function RippleButton({ children, className = '', style = {}, ...props }) {
   );
 }
 
-const DRIFT_THRESHOLD = 0.05; // seconds - reduced for better detection (was 0.12)
-const PLAY_OFFSET = 0.35; // seconds (350ms future offset for play events)
-const DEFAULT_AUDIO_LATENCY = 0.08; // 80ms fallback if not measured
-const MICRO_DRIFT_THRESHOLD = 0.04; // seconds (was 0.08)
-const MICRO_RATE_CAP = 0.03; // max playbackRate delta (was 0.07)
-const MICRO_CORRECTION_WINDOW = 250; // ms (was 420)
+// Dynamic constants based on calibration data - will be defined inside component
 const DRIFT_JITTER_BUFFER = 1; // consecutive drift detections before correction (reduced from 2)
 const RESYNC_COOLDOWN_MS = 2000; // minimum time between manual resyncs
 const RESYNC_HISTORY_SIZE = 5; // number of recent resyncs to track
@@ -83,13 +79,7 @@ const SEEK_FALLBACK_THRESHOLD = 1.0; // seconds - only seek for very large drift
 const LARGE_GAP_THRESHOLD = 5.0; // seconds - for gaps larger than 5 seconds, force immediate correction
 const EMERGENCY_SEEK_THRESHOLD = 10.0; // seconds - for gaps larger than 10 seconds, force immediate seek
 
-// Enhanced sync optimization constants
-const ADAPTIVE_SYNC_INTERVALS = {
-  excellent: 1500, // 1.5s for excellent network
-  good: 1000,      // 1s for good network  
-  fair: 800,       // 800ms for fair network
-  poor: 600        // 600ms for poor network
-};
+// Enhanced sync optimization constants - will be defined inside component
 
 const RATE_TRANSITION_STEPS = 5; // Number of steps for gradual rate transitions
 const RATE_TRANSITION_DURATION = 300; // ms per step
@@ -1504,6 +1494,38 @@ export default function AudioPlayer({
   selectedTrackIdx = 0,
   onSelectTrack = null,
 }) {
+  // Get calibration data for optimized sync
+  const { getOptimizedSyncParams, isCalibrationValid } = useCalibration();
+  const optimizedParams = getOptimizedSyncParams();
+  
+  // Log calibration data usage for debugging
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[AudioPlayer] Calibration data:', {
+      isCalibrationValid: isCalibrationValid,
+      optimizedParams,
+      audioLatency: optimizedParams.audioLatency,
+      driftThreshold: optimizedParams.driftThreshold,
+      syncInterval: optimizedParams.syncInterval,
+      correctionStrength: optimizedParams.correctionStrength
+    });
+  }
+  
+  // Dynamic constants based on calibration data
+  const getDriftThreshold = () => optimizedParams.driftThreshold;
+  const getPlayOffset = () => optimizedParams.audioLatency / 1000 + 0.35; // audio latency + buffer
+  const getDefaultAudioLatency = () => optimizedParams.audioLatency / 1000;
+  const getMicroDriftThreshold = () => Math.max(0.02, getDriftThreshold() * 0.8);
+  const getMicroRateCap = () => Math.min(0.05, optimizedParams.correctionStrength * 0.1);
+  const getMicroCorrectionWindow = () => Math.max(200, optimizedParams.syncInterval * 0.3);
+  
+  // Enhanced sync optimization constants
+  const ADAPTIVE_SYNC_INTERVALS = {
+    excellent: Math.max(800, optimizedParams.syncInterval * 0.8), // Dynamic based on calibration
+    good: optimizedParams.syncInterval,                           // Base interval from calibration
+    fair: Math.min(1200, optimizedParams.syncInterval * 1.2),    // Slightly higher for fair network
+    poor: Math.min(1500, optimizedParams.syncInterval * 1.5)     // Higher for poor network
+  };
+  
   const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
   const [audioUrl, setAudioUrl] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -1516,7 +1538,7 @@ export default function AudioPlayer({
   const audioRef = useRef(null);
   const [isSeeking, setIsSeeking] = useState(false);
   const [shouldAnimate, setShouldAnimate] = useState(false);
-  const [audioLatency, setAudioLatency] = useState(DEFAULT_AUDIO_LATENCY); // measured latency in seconds
+  const [audioLatency, setAudioLatency] = useState(getDefaultAudioLatency()); // measured latency in seconds
   const playRequestedAt = useRef(null);
   const audioContextRef = useRef(null);
   const lastCorrectionRef = useRef(0);
@@ -1673,7 +1695,7 @@ useEffect(() => {
     driftVelocity: 0, // rate of drift change
     consecutiveCorrections: 0,
     lastCorrectionTime: 0,
-    adaptiveThreshold: DRIFT_THRESHOLD,
+            adaptiveThreshold: getDriftThreshold(),
     syncQuality: 1.0, // 0-1, higher = better sync
     networkStability: 1.0, // 0-1, higher = more stable
     correctionSuccessRate: 1.0, // 0-1, success rate of recent corrections
@@ -1880,7 +1902,7 @@ useEffect(() => {
           autoSyncRef.current.driftHistory = [];
           autoSyncRef.current.consecutiveCorrections = 0;
           autoSyncRef.current.lastCorrectionTime = 0;
-          autoSyncRef.current.adaptiveThreshold = DRIFT_THRESHOLD;
+          autoSyncRef.current.adaptiveThreshold = getDriftThreshold();
         }
         
         // Reset displayed time and current time, but don't reset duration immediately
@@ -2698,7 +2720,7 @@ useEffect(() => {
     if (isController && socket && getServerTime) {
       const now = getNow(getServerTime);
       const audio = audioRef.current;
-      const playAt = (audio ? audio.currentTime : 0) + PLAY_OFFSET;
+      const playAt = (audio ? audio.currentTime : 0) + getPlayOffset();
       const payload = {
         sessionId: socket.sessionId,
         timestamp: playAt,
@@ -3770,11 +3792,11 @@ useEffect(() => {
       // Adjust sync strategy based on enhanced network quality
       if (networkQuality.overall < 0.5) {
         // Poor network - be more conservative
-        autoSync.adaptiveThreshold = (autoSync.adaptiveThreshold || DRIFT_THRESHOLD) * 1.3;
+        autoSync.adaptiveThreshold = (autoSync.adaptiveThreshold || getDriftThreshold()) * 1.3;
         autoSync.syncMode = 'conservative';
       } else if (networkQuality.overall > 0.8) {
         // Good network - can be more aggressive
-        autoSync.adaptiveThreshold = (autoSync.adaptiveThreshold || DRIFT_THRESHOLD) * 0.9;
+        autoSync.adaptiveThreshold = (autoSync.adaptiveThreshold || getDriftThreshold()) * 0.9;
         if ((autoSync.syncQuality || 1.0) > 0.7) {
           autoSync.syncMode = 'aggressive';
         }
@@ -3873,7 +3895,7 @@ useEffect(() => {
       return {
         trend: 0,
         velocity: 0,
-        adaptiveThreshold: DRIFT_THRESHOLD,
+        adaptiveThreshold: getDriftThreshold(),
         syncQuality: 1.0,
         syncMode: 'normal',
         avgDrift: 0,
@@ -4322,7 +4344,7 @@ useEffect(() => {
     }
 
     // Tier 1: Music-optimized micro-correction for very small drifts
-    if (absDrift < MUSIC_SYNC_OPTIMIZATIONS.microDriftThreshold) {
+    if (absDrift < getMicroDriftThreshold()) {
       correctionInProgressRef.current = true;
       setCorrectionInProgress(true);
       
@@ -4352,7 +4374,7 @@ useEffect(() => {
     }
 
     // Tier 2: Music-optimized rate correction for medium drifts
-    if (absDrift < MUSIC_SYNC_OPTIMIZATIONS.mediumDriftThreshold) {
+    if (absDrift < getDriftThreshold()) {
       correctionInProgressRef.current = true;
       setCorrectionInProgress(true);
       lastCorrectionRef.current = now;
@@ -4560,7 +4582,7 @@ useEffect(() => {
         }
       }
     }
-    interval = setInterval(correctMicroDrift, MICRO_CORRECTION_WINDOW);
+            interval = setInterval(correctMicroDrift, getMicroCorrectionWindow());
     return () => clearInterval(interval);
   }, [isController, sessionSyncState, audioLatency, syncCompensation, getServerTime]);
 
