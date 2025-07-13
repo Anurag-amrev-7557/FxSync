@@ -323,8 +323,7 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
                 className="group p-2 hover:bg-primary/10 transition-all duration-200 cursor-pointer flex items-center gap-3"
                 onClick={() => {
                   if (!isController || !socket || !sessionId) {
-                    // Just preview for non-controller or if missing socket/session
-                    onSelectTrack && onSelectTrack(null, track);
+                    // For listeners, do nothing (no preview/select)
                     return;
                   }
                   // If already in queue, select it
@@ -500,7 +499,10 @@ export default function Playlist({ queue = [], isController, socket, sessionId, 
               <div
                 key={idx}
                 className={`group flex items-center gap-3 p-4 hover:bg-primary/10 transition-all duration-200 cursor-pointer ${selectedTrackIdx === idx ? 'bg-primary/20 border-l-4 border-primary' : ''}`}
-                onClick={() => onSelectTrack && onSelectTrack(idx)}
+                onClick={() => {
+                  if (!isController) return; // Only controller can select track
+                  onSelectTrack && onSelectTrack(idx);
+                }}
                 title={selectedTrackIdx === idx ? 'Currently Playing' : 'Click to play'}
               >
                 {/* Album Cover Art */}

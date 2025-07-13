@@ -19,6 +19,7 @@
     "music-metadata": "^11.6.0",
     "nodemon": "^3.1.10",
     "ntp-client": "^0.5.3",
+    "redis": "^4.7.1",
     "socket.io": "^4.7.5"
   }
 }

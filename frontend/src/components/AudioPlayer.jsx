@@ -59,7 +59,6 @@ function RippleButton({ children, className = '', style = {}, ...props }) {
 }
 
 const DRIFT_THRESHOLD = 0.05; // seconds - reduced for better detection (was 0.12)
-const PLAY_OFFSET = 0.35; // seconds (350ms future offset for play events)
 const DEFAULT_AUDIO_LATENCY = 0.08; // 80ms fallback if not measured
 const MICRO_DRIFT_THRESHOLD = 0.04; // seconds (was 0.08)
 const MICRO_RATE_CAP = 0.03; // max playbackRate delta (was 0.07)
@@ -1503,6 +1502,9 @@ export default function AudioPlayer({
   queue = [],
   selectedTrackIdx = 0,
   onSelectTrack = null,
+  getHighResServerTime = null,
+  highResOffset = null,
+  jitter = null,
 }) {
   const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
   const [audioUrl, setAudioUrl] = useState(null);
@@ -1536,6 +1538,7 @@ const [isTransitioning, setIsTransitioning] = useState(false);
 const [transitionKey, setTransitionKey] = useState('');
 
 function handleNext() {
+  if (!isController) return; // Only controller can change track
   if (!Array.isArray(queue) || queue.length === 0) return;
   if (typeof onSelectTrack !== "function") return;
   let nextIdx = selectedTrackIdx + 1;
@@ -1544,6 +1547,7 @@ function handleNext() {
 }
 
 function handlePrev() {
+  if (!isController) return; // Only controller can change track
   if (!Array.isArray(queue) || queue.length === 0) return;
   if (typeof onSelectTrack !== "function") return;
   let prevIdx = selectedTrackIdx - 1;
@@ -1740,60 +1744,90 @@ useEffect(() => {
   // Update sync compensation when RTT, jitter, or offset data changes
   useEffect(() => {
     // Calculate optimized RTT compensation
-    const rttData = rtt && rtt > 0 ? SyncCompensationUtils.calculateOptimizedRTT(rttHistory, rtt) : null;
+    const rttData = rtt && isFiniteNumber(rtt) && rtt > 0 ? SyncCompensationUtils.calculateOptimizedRTT(rttHistory, rtt) : null;
     
     // Calculate optimized jitter compensation
     const jitterData = timingHistory.length >= 3 ? SyncCompensationUtils.calculateOptimizedJitter(timingHistory) : null;
     
     // Calculate optimized offset compensation using smoothed offset instead of recalculating
     const offsetData = offsetHistory.length > 0 ? {
-      offset: smoothedOffset,
+      offset: isFiniteNumber(smoothedOffset) ? smoothedOffset : 0,
       stability: 1.0,
       isStable: true,
       driftRate: 0,
       sampleCount: offsetHistory.length,
-      meanOffset: smoothedOffset,
+      meanOffset: isFiniteNumber(smoothedOffset) ? smoothedOffset : 0,
       offsetStdDev: 0
     } : null;
-    
-    // Calculate network quality
-    const networkQuality = SyncCompensationUtils.calculateNetworkQuality(
-      rttData, 
-      jitterData, 
-      packetLossRate, 
-      connectionStability
-    );
-    
-    // Calculate music-optimized sync compensation
+
+    // --- Fix: Validate all compensation components before use ---
+    const safeAudioLatency = isFiniteNumber(audioLatency) && audioLatency >= 0 ? audioLatency : DEFAULT_AUDIO_LATENCY;
+    const safeRttData = rttData && isFiniteNumber(rttData.compensatedRTT) ? rttData : { compensatedRTT: 0, quality: 1.0, stability: 1.0 };
+    const safeJitterData = jitterData && isFiniteNumber(jitterData.bufferSize) ? jitterData : { bufferSize: 0, quality: 1.0 };
+    const safeOffsetData = offsetData && isFiniteNumber(offsetData.offset) ? offsetData : { offset: 0, stability: 1.0 };
+
+    // --- Fix: Prevent double-application of compensation ---
+    // If the server already applies compensation, skip or log a warning (assume a prop: serverAppliesCompensation)
+    if (typeof window !== 'undefined' && window.serverAppliesCompensation) {
+      if (process.env.NODE_ENV === 'development') {
+        console.warn('[AudioPlayer] Skipping client-side compensation because serverAppliesCompensation is set.');
+      }
+      setSyncCompensation({
+        totalCompensation: 0,
+        compensationQuality: 1.0,
+        components: { rtt: 0, jitter: 0, offset: 0, audioLatency: 0 },
+        quality: { rtt: 1.0, jitter: 1.0, offset: 1.0 },
+        musicOptimized: true
+      });
+      return;
+    }
+
+    // --- Fix: Add fallback and logging for invalid compensation values ---
     const compensation = MusicSyncUtils.calculateMusicSyncCompensation(
-      rttData, 
-      jitterData, 
-      offsetData, 
-      audioLatency
+      safeRttData, 
+      safeJitterData, 
+      safeOffsetData, 
+      safeAudioLatency
     );
-    
-    // Validate compensation before updating state
-    if (!isFiniteNumber(compensation.totalCompensation)) {
+    if (!isFiniteNumber(compensation.totalCompensation) || isNaN(compensation.totalCompensation)) {
       if (process.env.NODE_ENV === 'development') {
         console.warn('[AudioPlayer] Invalid compensation calculated, using fallback:', compensation);
       }
       // Use fallback compensation
-      const fallbackCompensation = {
+      setSyncCompensation({
         totalCompensation: 0,
         compensationQuality: 0.1,
         components: { rtt: 0, jitter: 0, offset: 0, audioLatency: 0 },
         quality: { rtt: 1.0, jitter: 1.0, offset: 1.0 },
         musicOptimized: true
-      };
-      setSyncCompensation(fallbackCompensation);
+      });
+    } else if (compensation.totalCompensation === 0) {
+      // Warn if compensation is zero (may indicate missing data)
+      if (process.env.NODE_ENV === 'development') {
+        console.warn('[AudioPlayer] Compensation is zero. Check if all sync parameters are being updated.');
+      }
+      setSyncCompensation(compensation);
     } else {
       // Update sync compensation state
       setSyncCompensation(compensation);
     }
-    
+    // --- Fix: Warn if offset is stale ---
+    if (offsetHistory.length > 0) {
+      const lastOffset = offsetHistory[offsetHistory.length - 1];
+      if (Date.now() - lastOffset.timestamp > OFFSET_VALIDITY_WINDOW) {
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('[AudioPlayer] Offset has not been updated for a long time. This may cause sync drift.');
+        }
+      }
+    }
     // Update network quality ref for backward compatibility
+    const networkQuality = SyncCompensationUtils.calculateNetworkQuality(
+      safeRttData, 
+      safeJitterData, 
+      0, // packetLossRate
+      1.0 // connectionStability
+    );
     networkQualityRef.current = networkQuality.overall;
-    
     if (process.env.NODE_ENV === 'development') {
       console.log('[AudioPlayer] Music-optimized sync compensation:', {
         totalCompensation: compensation.totalCompensation,
@@ -1804,7 +1838,7 @@ useEffect(() => {
         musicOptimized: compensation.musicOptimized
       });
     }
-  }, [rtt, rttHistory, timingHistory, packetLossRate, connectionStability, audioLatency, smoothedOffset]);
+  }, [rtt, rttHistory, timingHistory, packetLossRate, connectionStability, audioLatency, smoothedOffset, offsetHistory]);
 
   useEffect(() => {
     if ((currentTrack?.title || '') !== displayedTitle) {
@@ -2114,311 +2148,6 @@ useEffect(() => {
     }
   }, [isController, isPlaying]);
 
-  // Enhanced Socket event listeners with improved logging, error handling, and drift analytics
-  useEffect(() => {
-    if (!socket) return;
-
-    let syncTimeout = null;
-    let resyncTimeout = null;
-
-    // Helper: log with context and level
-    const log = (level, ...args) => {
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
-        console[level]?.('[AudioPlayer][sync_state]', ...args);
-      }
-    };
-
-    // Helper: show sync status for a limited time, then revert to "In Sync"
-    const showSyncStatus = (status, duration = 1200) => {
-      setSyncStatus(status);
-      if (syncTimeout) clearTimeout(syncTimeout);
-      syncTimeout = setTimeout(() => setSyncStatus('In Sync'), duration);
-    };
-
-    // Helper: emit drift report with more context
-    const emitDriftReport = (drift, expected, current, extra = {}) => {
-      if (socket && socket.emit && socket.sessionId && typeof drift === 'number') {
-        socket.emit('drift_report', {
-          sessionId: socket.sessionId,
-          drift,
-          expected,
-          current,
-          clientId,
-          timestamp: typeof TimingUtils !== 'undefined' && typeof TimingUtils.getTimeFor === 'function' 
-            ? TimingUtils.getTimeFor('network') 
-            : Date.now(),
-          ...extra,
-        });
-      }
-    };
-
-    // Enhanced sync state handler with improved validation
-    const handleSyncState = ({
-      isPlaying,
-      timestamp,
-      lastUpdated,
-      controllerId: ctrlId,
-      trackId,
-      meta,
-      serverTime,
-    }) => {
-      // Add race condition protection
-      if (correctionInProgressRef.current || audioState.resyncInProgress) {
-        if (process.env.NODE_ENV === 'development') {
-          console.log('[AudioPlayer] Skipping sync state - correction in progress');
-        }
-        return;
-      }
-
-      // Track change detection and validation
-      const syncCurrentTrackId = currentTrack?.id;
-      const trackChanged = trackId && syncCurrentTrackId && trackId !== syncCurrentTrackId;
-      
-      if (trackChanged) {
-        if (process.env.NODE_ENV === 'development') {
-          console.log('[AudioPlayer] Track change detected in sync state:', {
-            receivedTrackId: trackId,
-            currentTrackId: syncCurrentTrackId,
-            currentTrackTitle: currentTrack?.title
-          });
-        }
-        
-        // Reset all sync-related state for track change
-        driftCountRef.current = 0;
-        lastCorrectionRef.current = 0;
-        if (rateCorrectionRef.current.active) {
-          rateCorrectionRef.current.active = false;
-          setRateCorrectionActive(false);
-        }
-        
-        // For track changes, we need to reset sync state and wait for the new track to load
-        // Don't process sync state until the track is properly loaded
-        if (!audioRef.current || audioRef.current.readyState < 2) {
-          if (process.env.NODE_ENV === 'development') {
-            console.log('[AudioPlayer] Skipping sync state for track change - audio not ready');
-          }
-          return;
-        }
-      }
-      
-      // Synchronous validation to prevent race conditions
-      const validationResult = {
-        valid: true,
-        reason: null
-      };
-      
-      // Basic structure validation
-      if (typeof isPlaying !== 'boolean') {
-        validationResult.valid = false;
-        validationResult.reason = 'invalid_isPlaying';
-      }
-      
-      if (typeof timestamp !== 'number' || typeof lastUpdated !== 'number') {
-        validationResult.valid = false;
-        validationResult.reason = 'invalid_timestamps';
-      }
-      
-      if (!isFinite(timestamp) || !isFinite(lastUpdated)) {
-        validationResult.valid = false;
-        validationResult.reason = 'non_finite_timestamps';
-      }
-      
-      if (timestamp < 0 || lastUpdated < 0) {
-        validationResult.valid = false;
-        validationResult.reason = 'negative_timestamps';
-      }
-      
-      if (!validationResult.valid) {
-        log('warn', 'SYNC_STATE: validation failed', { 
-          reason: validationResult.reason, 
-          isPlaying, 
-          timestamp, 
-          lastUpdated, 
-          ctrlId, 
-          trackId, 
-          meta 
-        });
-        showSyncStatus('Sync failed');
-        return;
-      }
-      const audio = audioRef.current;
-      if (!audio) {
-        log('warn', 'SYNC_STATE: audio element not available');
-        return;
-      }
-      // Use serverTime if present, else fallback
-      let now = null;
-      if (typeof serverTime === 'number' && isFinite(serverTime)) {
-        now = serverTime;
-      } else {
-        now = getNow(getServerTime);
-        log('warn', 'SYNC_STATE: serverTime missing, using getNow(getServerTime)', { now });
-      }
-      // Enhanced sync compensation with optimized RTT, jitter, and offset
-      const expected = timestamp + (now - lastUpdated) / 1000 - audioLatency + syncCompensation.totalCompensation;
-      
-      // Enhanced validation with detailed debugging
-      if (!isFiniteNumber(expected)) {
-        log('warn', 'SYNC_STATE: expected is not finite', { 
-          expected, 
-          timestamp, 
-          lastUpdated, 
-          now,
-          audioLatency,
-          syncCompensation: {
-            totalCompensation: syncCompensation.totalCompensation,
-            compensationQuality: syncCompensation.compensationQuality,
-            components: syncCompensation.components
-          },
-          calculation: {
-            base: timestamp + (now - lastUpdated) / 1000,
-            afterLatency: timestamp + (now - lastUpdated) / 1000 - audioLatency,
-            final: expected
-          }
-        });
-        showSyncStatus('Sync failed');
-        return;
-      }
-      
-      // Additional validation for reasonable time values
-      if (expected < 0) {
-        log('warn', 'SYNC_STATE: expected time is negative', { 
-          expected, 
-          timestamp, 
-          lastUpdated, 
-          now,
-          audioLatency,
-          syncCompensation: syncCompensation.totalCompensation
-        });
-        showSyncStatus('Sync failed');
-        return;
-      }
-      
-      if (expected > 86400) { // More than 24 hours
-        log('warn', 'SYNC_STATE: expected time seems unreasonable (>24h)', { 
-          expected, 
-          timestamp, 
-          lastUpdated, 
-          now,
-          audioLatency,
-          syncCompensation: syncCompensation.totalCompensation
-        });
-        showSyncStatus('Sync failed');
-        return;
-      }
-      const drift = Math.abs(audio.currentTime - expected);
-      const driftTimestamp = typeof TimingUtils !== 'undefined' && typeof TimingUtils.getTimeFor === 'function' 
-        ? TimingUtils.getTimeFor('sync') 
-        : Date.now();
-
-      // Enhanced: keep drift history for analytics (last 10 drifts)
-      if (!window._audioDriftHistory) window._audioDriftHistory = [];
-      
-      // Only track drift for the current track
-      const localCurrentTrackId = currentTrack?.id;
-      if (trackId === localCurrentTrackId) {
-        // Clean up old entries to prevent memory leaks
-        const maxHistorySize = 20; // Increased from 10 for better analytics
-        if (window._audioDriftHistory.length >= maxHistorySize) {
-          window._audioDriftHistory = window._audioDriftHistory.slice(-maxHistorySize + 1);
-        }
-        
-        window._audioDriftHistory.push({
-          drift,
-          current: audio.currentTime,
-          expected,
-          timestamp: driftTimestamp,
-          isPlaying,
-          ctrlId,
-          trackId,
-        });
-      }
-
-      // Intelligent drift analysis
-      const analysis = analyzeDriftPattern(drift, driftTimestamp);
-      const predictedDrift = predictDrift(5); // 5 seconds ahead
-      
-      // Enhanced: show drift in UI if large
-      const shouldCorrect = drift > analysis.adaptiveThreshold || 
-                           (predictedDrift > LARGE_GAP_THRESHOLD && analysis.syncMode === 'aggressive');
-      
-      if (shouldCorrect) {
-        driftCountRef.current += 1;
-        const requiredDetections = analysis.syncMode === 'aggressive' ? 1 : DRIFT_JITTER_BUFFER;
-        
-        if (driftCountRef.current >= requiredDetections) {
-          const beforeDrift = drift;
-          
-          showSyncStatus('Drifted', 1000);
-          const result = maybeCorrectDrift(audio, expected);
-          
-          // Track correction success
-          setTimeout(() => {
-            const afterDrift = Math.abs(audio.currentTime - expected);
-            trackCorrectionSuccess(beforeDrift, afterDrift, result?.type || 'unknown');
-          }, 1000);
-          
-          setSyncStatus('Re-syncing...');
-          if (resyncTimeout) clearTimeout(resyncTimeout);
-          resyncTimeout = setTimeout(() => setSyncStatus('In Sync'), 800);
-
-          if (typeof socket?.forceTimeSync === 'function') {
-            socket.forceTimeSync();
-          }
-          emitDriftReport(drift, expected, audio.currentTime, { 
-            ctrlId, 
-            trackId, 
-            meta,
-            analysis,
-            predictedDrift,
-            syncMode: analysis.syncMode
-          });
-          driftCountRef.current = 0;
-        }
-      } else {
-        driftCountRef.current = 0;
-        setSyncStatus('In Sync');
-      }
-
-      // Log drift for debugging (dev only) with enhanced analysis
-      log('log', '[DriftCheck] SYNC_STATE drift:', drift, {
-        current: audio.currentTime,
-        expected,
-        isPlaying,
-        ctrlId,
-        trackId,
-        meta,
-        analysis,
-        predictedDrift,
-        adaptiveThreshold: analysis.adaptiveThreshold
-      });
-
-      setIsPlaying(isPlaying);
-
-      // Only play/pause if state differs
-      if (isPlaying && audio.paused) {
-        audio.play().catch(e => {
-          log('warn', 'SYNC_STATE: failed to play audio', e);
-        });
-      } else if (!isPlaying && !audio.paused) {
-        audio.pause();
-        // Do not seek to correct drift if paused
-      }
-      setLastSync(typeof TimingUtils !== 'undefined' && typeof TimingUtils.getTimeFor === 'function' 
-        ? TimingUtils.getTimeFor('sync') 
-        : Date.now());
-    };
-
-    socket.on('sync_state', handleSyncState);
-
-    return () => {
-      socket.off('sync_state', handleSyncState);
-      if (syncTimeout) clearTimeout(syncTimeout);
-      if (resyncTimeout) clearTimeout(resyncTimeout);
-    };
-  }, [socket, audioLatency, getServerTime, clientId, syncCompensation]);
-
   // Enhanced periodic drift check with continuous sync monitoring
   useEffect(() => {
     if (!socket || isController) return;
@@ -2698,7 +2427,7 @@ useEffect(() => {
     if (isController && socket && getServerTime) {
       const now = getNow(getServerTime);
       const audio = audioRef.current;
-      const playAt = (audio ? audio.currentTime : 0) + PLAY_OFFSET;
+      const playAt = audio ? audio.currentTime : 0; // No offset, play immediately
       const payload = {
         sessionId: socket.sessionId,
         timestamp: playAt,
@@ -2770,7 +2499,7 @@ useEffect(() => {
 
   // Enhanced Play/Pause/Seek handlers with improved error handling, logging, and edge case resilience
 
-  const handlePlay = async () => {
+  const handlePlay = () => {
     const audio = audioRef.current;
     if (!audio) {
       if (process.env.NODE_ENV === 'development') {
@@ -2780,87 +2509,24 @@ useEffect(() => {
       return;
     }
 
-    // iOS-specific audio context resume
-    if (isIOS && audioContext && audioContext.state === 'suspended') {
-      try {
-        await audioContext.resume();
-        if (process.env.NODE_ENV === 'development') {
-          console.log('[AudioPlayer][handlePlay] iOS AudioContext resumed before play');
-        }
-      } catch (e) {
-        if (process.env.NODE_ENV === 'development') {
-          console.warn('[AudioPlayer][handlePlay] Failed to resume iOS AudioContext:', e);
-        }
-      }
-    }
-
-    playRequestedAt.current = typeof TimingUtils !== 'undefined' && typeof TimingUtils.getTimeFor === 'function' 
-      ? TimingUtils.getTimeFor('audio') 
-      : Date.now();
-    
+    // Update UI and local state immediately
+    setIsPlaying(true);
     try {
-      // iOS-specific play optimizations
-      if (isIOS) {
-        // Set audio properties for iOS
-        audio.preload = 'auto';
-        audio.autoplay = false;
-        
-        // iOS-specific play strategy
-        const playPromise = audio.play();
-        if (playPromise && typeof playPromise.then === 'function') {
-          await playPromise;
-        }
-      } else {
-        // Standard play for other platforms
-        const playPromise = audio.play();
-        if (playPromise && typeof playPromise.then === 'function') {
-          await playPromise;
-        }
-      }
-      
-      setIsPlaying(true);
-      emitPlay();
-      
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
-        console.log('[AudioPlayer][handlePlay] Play triggered successfully', {
-          isIOS,
-          audioContextState: audioContext?.state
-        });
-      }
+      audio.play().catch(() => setIsPlaying(false)); // fallback if play fails
     } catch (err) {
       setIsPlaying(false);
       if (process.env.NODE_ENV === 'development') {
         // eslint-disable-next-line no-console
-        console.error('[AudioPlayer][handlePlay] Failed to play audio', err, {
-          isIOS,
-          audioContextState: audioContext?.state,
-          audioReadyState: audio.readyState
-        });
+        console.error('[AudioPlayer][handlePlay] Failed to play audio', err);
       }
-      
-      // iOS-specific error recovery
-      if (isIOS && audioContext && audioContext.state === 'suspended') {
-        try {
-          await audioContext.resume();
-          // Retry play after resume
-          setTimeout(async () => {
-            try {
-              await audio.play();
-              setIsPlaying(true);
-              emitPlay();
-            } catch (retryErr) {
-              if (process.env.NODE_ENV === 'development') {
-                console.error('[AudioPlayer][handlePlay] Retry failed:', retryErr);
-              }
-            }
-          }, 100);
-        } catch (resumeErr) {
-          if (process.env.NODE_ENV === 'development') {
-            console.error('[AudioPlayer][handlePlay] Failed to resume AudioContext:', resumeErr);
-          }
-        }
-      }
+    }
+
+    // Emit play event (don't await)
+    emitPlay();
+
+    // iOS-specific audio context resume (can be async, but don't block UI)
+    if (isIOS && audioContext && audioContext.state === 'suspended') {
+      audioContext.resume().catch(() => {});
     }
   };
 
@@ -2873,23 +2539,22 @@ useEffect(() => {
       }
       return;
     }
+    // Update UI and local state immediately
+    setIsPlaying(false);
     try {
       audio.pause();
-      setIsPlaying(false);
-      emitPause();
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
-        console.log('[AudioPlayer][handlePause] Pause triggered successfully');
-      }
     } catch (err) {
       if (process.env.NODE_ENV === 'development') {
         // eslint-disable-next-line no-console
         console.error('[AudioPlayer][handlePause] Failed to pause audio', err);
       }
     }
+    // Emit pause event (don't await)
+    emitPause();
   };
 
   const handleSeek = async (e) => {
+    if (!isController) return; // Only controller can seek
     let time;
     if (typeof e === 'number') {
       time = e;
@@ -2911,6 +2576,9 @@ useEffect(() => {
       return;
     }
 
+    // Emit seek event immediately for speed
+    emitSeek(time);
+
     const audio = audioRef.current;
     if (!audio) {
       if (process.env.NODE_ENV === 'development') {
@@ -2920,11 +2588,9 @@ useEffect(() => {
       return;
     }
 
-    // Update state atomically
     updateAudioState({ isSeeking: true });
 
     try {
-      // Use enhanced seeking with state preservation
       const seekResult = await SeekSyncUtils.smartSeek(audio, time, setCurrentTime, {
         preservePlayback: true,
         validateBefore: true,
@@ -2932,12 +2598,7 @@ useEffect(() => {
       });
 
       if (seekResult.success) {
-        // Emit seek event for controller
-        emitSeek(time);
-        
-        // Update displayed time immediately for better UX
         setDisplayedCurrentTime(time);
-        
         if (process.env.NODE_ENV === 'development') {
           // eslint-disable-next-line no-console
           console.log('[AudioPlayer][handleSeek] Seek successful:', {
@@ -2958,7 +2619,6 @@ useEffect(() => {
         console.error('[AudioPlayer][handleSeek] Seek error:', error);
       }
     } finally {
-      // Reset seeking state after a short delay
       setTimeout(() => {
         updateAudioState({ isSeeking: false });
       }, 100);
@@ -3413,326 +3073,6 @@ useEffect(() => {
   useEffect(() => {
     if (process.env.NODE_ENV === 'development') {
       window.debugAudioDrift = debugCurrentDrift;
-      
-      // Debug duration issues
-      window.debugAudioDuration = () => {
-        const audio = audioRef.current;
-        console.log('[DebugDuration] Audio duration debug info:', {
-          audio: audio ? {
-            duration: audio.duration,
-            readyState: audio.readyState,
-            networkState: audio.networkState,
-            currentSrc: audio.currentSrc,
-            src: audio.src,
-            preload: audio.preload,
-            paused: audio.paused,
-            ended: audio.ended,
-            seeking: audio.seeking
-          } : null,
-          state: {
-            duration,
-            currentTime,
-            displayedCurrentTime,
-            audioUrl,
-            currentTrack: currentTrack ? {
-              title: currentTrack.title,
-              id: currentTrack.id,
-              url: currentTrack.url
-            } : null
-          },
-          system: {
-            isIOS,
-            isController,
-            loading,
-            audioError
-          }
-        });
-        
-        // Try to force duration check
-        if (audio && audio.readyState >= 1) {
-          const forcedDuration = audio.duration;
-          console.log('[DebugDuration] Forced duration check:', forcedDuration);
-          if (forcedDuration && isFinite(forcedDuration) && forcedDuration > 0) {
-            setDuration(forcedDuration);
-            console.log('[DebugDuration] Duration set via debug:', forcedDuration);
-          }
-        }
-      };
-      
-      // Enhanced sync system test
-      window.testSyncSystem = () => {
-        console.log('[TestSync] Testing enhanced sync compensation system...');
-        const audio = audioRef.current;
-        if (!audio) {
-          console.error('[TestSync] No audio element available');
-          return;
-        }
-        
-        console.log('[TestSync] Current audio state:', {
-          currentTime: audio.currentTime,
-          duration: audio.duration,
-          isPlaying: !audio.paused,
-          playbackRate: audio.playbackRate,
-          readyState: audio.readyState
-        });
-        
-        console.log('[TestSync] Enhanced sync compensation state:', {
-          totalCompensation: syncCompensation.totalCompensation,
-          compensationQuality: syncCompensation.compensationQuality,
-          components: syncCompensation.components,
-          quality: syncCompensation.quality,
-          rttHistory: rttHistory.length,
-          timingHistory: timingHistory.length,
-          offsetHistory: offsetHistory.length,
-          packetLossRate,
-          connectionStability
-        });
-        
-        console.log('[TestSync] Enhanced system state:', {
-          isController,
-          socketConnected: socket?.connected,
-          sessionId: socket?.sessionId,
-          audioState: audioState,
-          isIOS,
-          audioContextState: audioContext?.state,
-          autoSync: autoSyncRef.current || 'Not initialized'
-        });
-        
-        // Test enhanced time calculation
-        const testNow = getNow(getServerTime);
-        console.log('[TestSync] Enhanced time calculation test:', {
-          testNow,
-          isValid: isFiniteNumber(testNow),
-          type: typeof testNow,
-          timingReliable: TimingUtils.isTimingReliable()
-        });
-        
-        // Test enhanced drift prediction
-        if (autoSyncRef.current.driftHistory.length >= 3) {
-          const enhancedPrediction = EnhancedSyncUtils.predictDriftEnhanced(
-            autoSyncRef.current.driftHistory, 
-            5
-          );
-          console.log('[TestSync] Enhanced drift prediction:', {
-            prediction: enhancedPrediction,
-            historyLength: autoSyncRef.current.driftHistory.length,
-            recentDrifts: autoSyncRef.current.driftHistory.slice(-5).map(d => d.drift)
-          });
-        }
-        
-        // Test adaptive sync interval
-        const analysis = analyzeDriftPattern(0, Date.now());
-        const adaptiveInterval = EnhancedSyncUtils.getAdaptiveSyncInterval(
-          autoSyncRef.current.networkStability,
-          analysis.syncQuality,
-          analysis.driftVariance
-        );
-        console.log('[TestSync] Adaptive sync interval:', {
-          interval: adaptiveInterval,
-          networkStability: autoSyncRef.current.networkStability,
-          syncQuality: analysis.syncQuality,
-          driftVariance: analysis.driftVariance
-        });
-        
-        // Test sync request with enhanced validation
-        if (socket && socket.sessionId) {
-          socket.emit('sync_request', { sessionId: socket.sessionId }, async (state) => {
-            const validationResult = await EnhancedSyncUtils.validateSyncState(state);
-            console.log('[TestSync] Enhanced sync request result:', {
-              state,
-              validation: validationResult
-            });
-          });
-        } else {
-          console.error('[TestSync] Cannot test sync request - missing socket or sessionId');
-        }
-      };
-      
-      // Test enhanced sync compensation
-      window.testSyncCompensation = () => {
-        console.log('[TestCompensation] Testing enhanced sync compensation...');
-        
-        // Test RTT calculation
-        if (rtt && rtt > 0) {
-          const rttData = SyncCompensationUtils.calculateOptimizedRTT(rttHistory, rtt);
-          console.log('[TestCompensation] RTT calculation:', rttData);
-        }
-        
-        // Test jitter calculation
-        if (timingHistory.length >= 3) {
-          const jitterData = SyncCompensationUtils.calculateOptimizedJitter(timingHistory);
-          console.log('[TestCompensation] Jitter calculation:', jitterData);
-        }
-        
-        // Test offset calculation
-        const offsetData = SyncCompensationUtils.calculateOptimizedOffset(offsetHistory, timeOffset, ultraPreciseOffset);
-        console.log('[TestCompensation] Offset calculation:', offsetData);
-        
-        // Test network quality
-        const networkQuality = SyncCompensationUtils.calculateNetworkQuality(
-          rtt && rtt > 0 ? SyncCompensationUtils.calculateOptimizedRTT(rttHistory, rtt) : null,
-          timingHistory.length >= 3 ? SyncCompensationUtils.calculateOptimizedJitter(timingHistory) : null,
-          packetLossRate,
-          connectionStability
-        );
-        console.log('[TestCompensation] Network quality:', networkQuality);
-        
-        // Test music-optimized compensation
-        const musicCompensation = MusicSyncUtils.calculateMusicSyncCompensation(
-          rtt && rtt > 0 ? SyncCompensationUtils.calculateOptimizedRTT(rttHistory, rtt) : null,
-          timingHistory.length >= 3 ? SyncCompensationUtils.calculateOptimizedJitter(timingHistory) : null,
-          offsetData,
-          audioLatency
-        );
-        console.log('[TestCompensation] Music-optimized compensation:', musicCompensation);
-        
-        // Test music sync interval
-        const musicInterval = MusicSyncUtils.getMusicSyncInterval(networkQuality.overall);
-        console.log('[TestCompensation] Music sync interval:', musicInterval, 'ms');
-      };
-      
-      // Debug sync compensation issues
-      window.debugSyncCompensation = () => {
-        console.log('[DebugSyncCompensation] Current sync compensation state:', {
-          syncCompensation,
-          rtt,
-          rttHistory: rttHistory.length,
-          timingHistory: timingHistory.length,
-          offsetHistory: offsetHistory.length,
-          audioLatency,
-          timeOffset,
-          ultraPreciseOffset
-        });
-        
-        // Test music compensation calculation
-        const rttData = rtt && rtt > 0 ? SyncCompensationUtils.calculateOptimizedRTT(rttHistory, rtt) : null;
-        const jitterData = timingHistory.length >= 3 ? SyncCompensationUtils.calculateOptimizedJitter(timingHistory) : null;
-        const offsetData = offsetHistory.length > 0 ? {
-          offset: smoothedOffset,
-          stability: 1.0,
-          isStable: true,
-          driftRate: 0,
-          sampleCount: offsetHistory.length,
-          meanOffset: smoothedOffset,
-          offsetStdDev: 0
-        } : null;
-        
-        const testCompensation = MusicSyncUtils.calculateMusicSyncCompensation(
-          rttData, 
-          jitterData, 
-          offsetData, 
-          audioLatency
-        );
-        
-        console.log('[DebugSyncCompensation] Test calculation result:', testCompensation);
-      };
-      
-      // Test music-specific optimizations
-      window.testMusicSync = () => {
-        console.log('[TestMusicSync] Testing music-specific sync optimizations...');
-        
-        const audio = audioRef.current;
-        if (!audio) {
-          console.error('[TestMusicSync] No audio element available');
-          return;
-        }
-        
-        // Test music drift correction with different drift values
-        const testDrifts = [
-          { drift: 0.015, expected: audio.currentTime + 0.015, description: 'Micro drift (15ms)' },
-          { drift: 0.035, expected: audio.currentTime + 0.035, description: 'Small drift (35ms)' },
-          { drift: 0.1, expected: audio.currentTime + 0.1, description: 'Medium drift (100ms)' },
-          { drift: 0.2, expected: audio.currentTime + 0.2, description: 'Large drift (200ms)' }
-        ];
-        
-        testDrifts.forEach((test, index) => {
-          setTimeout(() => {
-            console.log(`[TestMusicSync] Testing ${test.description}...`);
-            const correction = MusicSyncUtils.correctMusicDrift(audio, test.expected, audio.currentTime);
-            console.log(`[TestMusicSync] ${test.description} result:`, correction);
-            
-            // Restore rate after test
-            setTimeout(() => {
-              audio.playbackRate = 1.0;
-            }, 1000);
-          }, index * 2000);
-        });
-        
-        // Test music sync intervals
-        const testNetworkQualities = [0.9, 0.7, 0.5, 0.3];
-        testNetworkQualities.forEach(quality => {
-          const interval = MusicSyncUtils.getMusicSyncInterval(quality);
-          console.log(`[TestMusicSync] Network quality ${quality}: ${interval}ms interval`);
-        });
-        
-        // Test music compensation weights
-        console.log('[TestMusicSync] Music compensation weights:', {
-          rttWeight: MUSIC_SYNC_OPTIMIZATIONS.rttWeight,
-          jitterWeight: MUSIC_SYNC_OPTIMIZATIONS.jitterWeight,
-          offsetWeight: MUSIC_SYNC_OPTIMIZATIONS.offsetWeight,
-          latencyWeight: MUSIC_SYNC_OPTIMIZATIONS.latencyWeight
-        });
-      };
-      
-      // iOS-specific debug function
-      window.debugIOSAudio = () => {
-        if (!isIOS) {
-          console.log('[DebugIOS] Not running on iOS');
-          return;
-        }
-        
-        const audio = audioRef.current;
-        console.log('[DebugIOS] iOS Audio Debug Info:', {
-          // Audio element state
-          audio: audio ? {
-            currentTime: audio.currentTime,
-            duration: audio.duration,
-            isPlaying: !audio.paused,
-            playbackRate: audio.playbackRate,
-            readyState: audio.readyState,
-            networkState: audio.networkState,
-            volume: audio.volume,
-            muted: audio.muted,
-            preload: audio.preload,
-            playsInline: audio.playsInline
-          } : null,
-          
-          // AudioContext state
-          audioContext: audioContext ? {
-            state: audioContext.state,
-            sampleRate: audioContext.sampleRate,
-            baseLatency: audioContext.baseLatency,
-            outputLatency: audioContext.outputLatency
-          } : null,
-          
-          // System state
-          system: {
-            isAudioContextReady,
-            audioLatency,
-            smoothedOffset,
-            isController
-          },
-          
-          // Sync state
-          sync: {
-            syncStatus: audioState.syncStatus,
-            isSeeking: audioState.isSeeking,
-            correctionInProgress: audioState.correctionInProgress,
-            rateCorrectionActive: audioState.rateCorrectionActive,
-            resyncInProgress: audioState.resyncInProgress
-          }
-        });
-        
-        // Test audio context resume
-        if (audioContext && audioContext.state === 'suspended') {
-          console.log('[DebugIOS] Attempting to resume AudioContext...');
-          audioContext.resume().then(() => {
-            console.log('[DebugIOS] AudioContext resumed successfully');
-          }).catch(err => {
-            console.error('[DebugIOS] Failed to resume AudioContext:', err);
-          });
-        }
-      };
     }
   }, []);
 
@@ -4216,7 +3556,6 @@ useEffect(() => {
       }
       return { corrected: false, reason: 'audio_invalid' };
     }
-    
     // Check if audio is ready for the current track
     if (audio.readyState < 2) {
       if (process.env.NODE_ENV === 'development') {
@@ -4243,38 +3582,65 @@ useEffect(() => {
       }
       return { corrected: false, reason: 'expected_invalid' };
     }
-    if (correctionInProgressRef.current) {
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
-        console.log('[DriftCorrection] Correction already in progress');
-      }
-      return { corrected: false, reason: 'in_progress' };
-    }
     const now = Date.now();
-    if (now - lastCorrectionRef.current < CORRECTION_COOLDOWN) {
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
-        console.log('[DriftCorrection] Correction cooldown active');
-      }
-      return { corrected: false, reason: 'cooldown' };
-    }
-
-    // Only correct if audio is playing (never pause to correct drift)
-    if (audio.paused) {
-      if (process.env.NODE_ENV === 'development') {
-        // eslint-disable-next-line no-console
-        console.log('[DriftCorrection] Audio is paused, not correcting drift');
-      }
-      return { corrected: false, reason: 'paused' };
-    }
-
     const before = audio.currentTime;
     const drift = expected - before;
     const absDrift = Math.abs(drift);
 
-    // Cancel any existing rate correction
+    // --- Fix: Correction cooldown logic ---
+    // Allow larger corrections to override smaller ones, even during cooldown
+    if (correctionInProgressRef.current) {
+      // If a much larger drift is detected, allow override
+      if (absDrift > LARGE_GAP_THRESHOLD) {
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('[DriftCorrection] Overriding in-progress correction due to large drift:', absDrift);
+        }
+        correctionInProgressRef.current = false;
+        setCorrectionInProgress(false);
+      } else {
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[DriftCorrection] Correction already in progress, skipping new correction.');
+        }
+        return { corrected: false, reason: 'in_progress' };
+      }
+    }
+    if (now - lastCorrectionRef.current < CORRECTION_COOLDOWN) {
+      // If a much larger drift is detected, allow override
+      if (absDrift > LARGE_GAP_THRESHOLD) {
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('[DriftCorrection] Overriding cooldown due to large drift:', absDrift);
+        }
+      } else {
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[DriftCorrection] Correction cooldown active, skipping correction.');
+        }
+        return { corrected: false, reason: 'cooldown' };
+      }
+    }
+
+    // --- Fix: If audio is paused but correction is needed, schedule correction for resume ---
+    if (audio.paused) {
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[DriftCorrection] Audio is paused, scheduling correction for resume.');
+      }
+      // Schedule correction for when playback resumes
+      const onPlay = () => {
+        maybeCorrectDrift(audio, expected);
+        audio.removeEventListener('play', onPlay);
+      };
+      audio.addEventListener('play', onPlay);
+      return { corrected: false, reason: 'paused_scheduled' };
+    }
+
+    // Cancel any existing rate correction and always restore to 1.0
     if (rateCorrectionRef.current.active) {
-      audio.playbackRate = rateCorrectionRef.current.originalRate;
+      if (rateCorrectionRef.current.cleanupTransition) {
+        rateCorrectionRef.current.cleanupTransition();
+        rateCorrectionRef.current.cleanupTransition = null;
+      }
+      try {
+        audio.playbackRate = 1.0;
+      } catch (e) {}
       rateCorrectionRef.current.active = false;
       setRateCorrectionActive(false);
     }
@@ -4284,51 +3650,45 @@ useEffect(() => {
       correctionInProgressRef.current = true;
       setCorrectionInProgress(true);
       lastCorrectionRef.current = now;
-      
       setCurrentTimeSafely(audio, expected, setCurrentTime);
-      
       if (process.env.NODE_ENV === 'development') {
         // eslint-disable-next-line no-console
         console.log('[DriftCorrection] EMERGENCY seek for massive drift', drift.toFixed(3), 'seconds');
       }
-      
       setTimeout(() => {
         correctionInProgressRef.current = false;
         setCorrectionInProgress(false);
+        try {
+          audio.playbackRate = 1.0;
+        } catch (e) {}
       }, 500);
-      
       return { corrected: true, emergency: true, before, after: expected, drift };
     }
-
     // Force immediate correction for large gaps (>5 seconds)
     if (absDrift > LARGE_GAP_THRESHOLD) {
       correctionInProgressRef.current = true;
       setCorrectionInProgress(true);
       lastCorrectionRef.current = now;
-      
       setCurrentTimeSafely(audio, expected, setCurrentTime);
-      
       if (process.env.NODE_ENV === 'development') {
         // eslint-disable-next-line no-console
         console.log('[DriftCorrection] Force seek for large gap', drift.toFixed(3), 'seconds');
       }
-      
       setTimeout(() => {
         correctionInProgressRef.current = false;
         setCorrectionInProgress(false);
+        try {
+          audio.playbackRate = 1.0;
+        } catch (e) {}
       }, 500);
-      
       return { corrected: true, largeGap: true, before, after: expected, drift };
     }
-
     // Tier 1: Music-optimized micro-correction for very small drifts
     if (absDrift < MUSIC_SYNC_OPTIMIZATIONS.microDriftThreshold) {
       correctionInProgressRef.current = true;
       setCorrectionInProgress(true);
-      
       // Use music-optimized drift correction
       const correction = MusicSyncUtils.correctMusicDrift(audio, expected, before);
-      
       if (correction.corrected) {
         // Use music-optimized rate restoration
         const cleanupRestoration = MusicSyncUtils.restoreMusicRate(
@@ -4336,13 +3696,14 @@ useEffect(() => {
           1.0, 
           MUSIC_SYNC_OPTIMIZATIONS.microCorrectionWindow
         );
-        
         setTimeout(() => {
           if (cleanupRestoration) cleanupRestoration();
           correctionInProgressRef.current = false;
           setCorrectionInProgress(false);
+          try {
+            audio.playbackRate = 1.0;
+          } catch (e) {}
         }, MUSIC_SYNC_OPTIMIZATIONS.microCorrectionWindow + 50);
-        
         if (process.env.NODE_ENV === 'development') {
           // eslint-disable-next-line no-console
           console.log('[MusicDriftCorrection] Micro-correcting with playbackRate', correction.rate?.toFixed(5), 'for drift', drift.toFixed(3));
@@ -4350,37 +3711,30 @@ useEffect(() => {
         return { corrected: true, micro: true, before, after: expected, drift, rate: correction.rate };
       }
     }
-
     // Tier 2: Music-optimized rate correction for medium drifts
     if (absDrift < MUSIC_SYNC_OPTIMIZATIONS.mediumDriftThreshold) {
       correctionInProgressRef.current = true;
       setCorrectionInProgress(true);
       lastCorrectionRef.current = now;
-      
       // Calculate rate adjustment to correct drift over RATE_CORRECTION_DURATION
       const rateAdjustment = (drift / (RATE_CORRECTION_DURATION / 1000)) * RATE_CORRECTION_STRENGTH;
       const newRate = Math.max(0.5, Math.min(2.0, 1 + rateAdjustment)); // Clamp to reasonable range
-      
       rateCorrectionRef.current = {
         active: true,
         startTime: now,
         targetDrift: drift,
-        originalRate: audio.playbackRate,
+        originalRate: 1.0,
         correctionId: now
       };
-      
       // Use gradual rate transition for smoother correction with cleanup
       const cleanupTransition = EnhancedSyncUtils.gradualRateTransition(audio, newRate, RATE_CORRECTION_DURATION * 0.3);
       setRateCorrectionActive(true);
-      
       // Store cleanup function for later use
       rateCorrectionRef.current.cleanupTransition = cleanupTransition;
-      
       if (process.env.NODE_ENV === 'development') {
         // eslint-disable-next-line no-console
         console.log('[DriftCorrection] Rate-correcting with playbackRate', newRate.toFixed(4), 'for drift', drift.toFixed(3));
       }
-      
       // Restore normal rate after correction duration
       setTimeout(() => {
         if (rateCorrectionRef.current.correctionId === now) {
@@ -4389,53 +3743,46 @@ useEffect(() => {
             rateCorrectionRef.current.cleanupTransition();
             rateCorrectionRef.current.cleanupTransition = null;
           }
-          
-          audio.playbackRate = rateCorrectionRef.current.originalRate;
+          try {
+            audio.playbackRate = 1.0;
+          } catch (e) {}
           rateCorrectionRef.current.active = false;
           correctionInProgressRef.current = false;
           setRateCorrectionActive(false);
           setCorrectionInProgress(false);
           if (process.env.NODE_ENV === 'development') {
             // eslint-disable-next-line no-console
-            console.log('[DriftCorrection] Rate correction completed, restored to', rateCorrectionRef.current.originalRate);
+            console.log('[DriftCorrection] Rate correction completed, restored to 1.0');
           }
         }
       }, RATE_CORRECTION_DURATION);
-      
-              return { corrected: true, rate: true, before, after: expected, drift, playbackRate: newRate };
+      return { corrected: true, rate: true, before, after: expected, drift, playbackRate: newRate };
     }
-
     // Tier 3: Music-optimized rate correction for large drifts - avoid seeking
     if (absDrift < MUSIC_SYNC_OPTIMIZATIONS.largeDriftThreshold) {
       correctionInProgressRef.current = true;
       setCorrectionInProgress(true);
       lastCorrectionRef.current = now;
-      
       // Use a longer, more gradual rate correction for larger drifts
       const extendedDuration = RATE_CORRECTION_DURATION * 1.5; // 3 seconds
       const rateAdjustment = (drift / (extendedDuration / 1000)) * RATE_CORRECTION_STRENGTH * 0.7; // More gentle
       const newRate = Math.max(0.5, Math.min(2.0, 1 + rateAdjustment));
-      
       rateCorrectionRef.current = {
         active: true,
         startTime: now,
         targetDrift: drift,
-        originalRate: audio.playbackRate,
+        originalRate: 1.0,
         correctionId: now
       };
-      
       // Use gradual rate transition for extended corrections with cleanup
       const cleanupTransition = EnhancedSyncUtils.gradualRateTransition(audio, newRate, extendedDuration * 0.4);
       setRateCorrectionActive(true);
-      
       // Store cleanup function for later use
       rateCorrectionRef.current.cleanupTransition = cleanupTransition;
-      
       if (process.env.NODE_ENV === 'development') {
         // eslint-disable-next-line no-console
         console.log('[DriftCorrection] Extended rate-correcting with playbackRate', newRate.toFixed(4), 'for large drift', drift.toFixed(3));
       }
-      
       // Restore normal rate after extended correction duration
       setTimeout(() => {
         if (rateCorrectionRef.current.correctionId === now) {
@@ -4444,22 +3791,21 @@ useEffect(() => {
             rateCorrectionRef.current.cleanupTransition();
             rateCorrectionRef.current.cleanupTransition = null;
           }
-          
-          audio.playbackRate = rateCorrectionRef.current.originalRate;
+          try {
+            audio.playbackRate = 1.0;
+          } catch (e) {}
           rateCorrectionRef.current.active = false;
           correctionInProgressRef.current = false;
           setRateCorrectionActive(false);
           setCorrectionInProgress(false);
           if (process.env.NODE_ENV === 'development') {
             // eslint-disable-next-line no-console
-            console.log('[DriftCorrection] Extended rate correction completed');
+            console.log('[DriftCorrection] Extended rate correction completed, restored to 1.0');
           }
         }
       }, extendedDuration);
-      
       return { corrected: true, extendedRate: true, before, after: expected, drift, playbackRate: newRate };
     }
-
     // Tier 4: Immediate seeking for very large drifts (>1.0s) - only as absolute last resort
     if (absDrift < SEEK_FALLBACK_THRESHOLD) {
       // Only seek if we haven't sought recently (cooldown)
@@ -4470,24 +3816,21 @@ useEffect(() => {
         }
         return { corrected: false, reason: 'emergency_seek_cooldown' };
       }
-      
       correctionInProgressRef.current = true;
       lastCorrectionRef.current = now;
-      
       setCurrentTimeSafely(audio, expected, setCurrentTime);
-      
       if (process.env.NODE_ENV === 'development') {
         // eslint-disable-next-line no-console
         console.log('[DriftCorrection] Emergency seek for very large drift', drift.toFixed(3));
       }
-      
       setTimeout(() => {
         correctionInProgressRef.current = false;
+        try {
+          audio.playbackRate = 1.0;
+        } catch (e) {}
       }, 500);
-      
       return { corrected: true, emergency: true, before, after: expected, drift };
     }
-
     // Fallback: For extremely large drifts, just log and don't correct
     if (process.env.NODE_ENV === 'development') {
       // eslint-disable-next-line no-console
@@ -4714,9 +4057,9 @@ useEffect(() => {
                 </svg>
               ) : (
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
+                  <path d="M3 12a9 9 0 019-9 9.75 9.75 0 016.74 2.74L21 8"></path>
                   <path d="M21 3v5h-5"></path>
-                  <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
+                  <path d="M21 12a9 9 0 01-9 9 9.75 9.75 0 01-6.74-2.74L3 16"></path>
                   <path d="M3 21v-5h5"></path>
                 </svg>
               )}
@@ -4827,21 +4170,21 @@ useEffect(() => {
           >
             {/* Audio Metadata (Title, Album, Artist) */}
             <div
-              key={
-                audioMetadata?.common?.title
-                  ? audioMetadata.common.title
-                  : currentTrack?.title || 'no-title'
-              }
-              className="transition-all duration-500 ease-in-out"
+              key={displayedTitle}
+              className={`transition-all duration-700 ease-in-out ${
+                animating
+                  ? direction === 'up'
+                    ? 'opacity-0 blur-[6px] scale-95'
+                    : 'opacity-100 blur-0 scale-100'
+                  : 'opacity-100 blur-0 scale-100'
+              }`}
               style={{
-                opacity: metadataLoading ? 0.5 : 1,
-                transform: metadataLoading
-                  ? 'translateY(8px) scale(0.98)'
-                  : 'translateY(0) scale(1)',
                 minHeight: '32px',
                 display: 'flex',
                 flexDirection: 'column',
                 justifyContent: 'center',
+                transition: 'opacity 0.32s, filter 0.32s, transform 0.5s cubic-bezier(0.4,0,0.2,1)',
+                willChange: 'opacity, filter, transform',
               }}
             >
               {metadataLoading ? (
@@ -4975,7 +4318,7 @@ useEffect(() => {
       }
       input[type="range"].w-full:focus {
         outline: none;
-        box-shadow: none;
+        boxShadow: none;
       }
       input[type="range"].w-full::-moz-range-track {
         height: 8px;
@@ -5246,9 +4589,9 @@ useEffect(() => {
                 </svg>
               ) : (
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
+                  <path d="M3 12a9 9 0 019-9 9.75 9.75 0 016.74 2.74L21 8"></path>
                   <path d="M21 3v5h-5"></path>
-                  <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
+                  <path d="M21 12a9 9 0 01-9 9 9.75 9.75 0 01-6.74-2.74L3 16"></path>
                   <path d="M3 21v-5h5"></path>
                 </svg>
               )}
@@ -5367,21 +4710,21 @@ useEffect(() => {
           >
             {/* Audio Metadata (Title, Album, Artist) */}
             <div
-              key={
-                audioMetadata?.common?.title
-                  ? audioMetadata.common.title
-                  : currentTrack?.title || 'no-title'
-              }
-              className="transition-all duration-500 ease-in-out"
+              key={displayedTitle}
+              className={`transition-all duration-700 ease-in-out ${
+                animating
+                  ? direction === 'up'
+                    ? 'opacity-0 blur-[6px] scale-95'
+                    : 'opacity-100 blur-0 scale-100'
+                  : 'opacity-100 blur-0 scale-100'
+              }`}
               style={{
-                opacity: metadataLoading ? 0.5 : 1,
-                transform: metadataLoading
-                  ? 'translateY(8px) scale(0.98)'
-                  : 'translateY(0) scale(1)',
                 minHeight: '32px',
                 display: 'flex',
                 flexDirection: 'column',
                 justifyContent: 'center',
+                transition: 'opacity 0.32s, filter 0.32s, transform 0.5s cubic-bezier(0.4,0,0.2,1)',
+                willChange: 'opacity, filter, transform',
               }}
             >
               {metadataLoading ? (
@@ -5532,7 +4875,7 @@ useEffect(() => {
       }
       input[type="range"].w-full:focus {
         outline: none;
-        box-shadow: none;
+        boxShadow: none;
       }
       input[type="range"].w-full::-moz-range-track {
         height: 8px;
