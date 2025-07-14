@@ -424,8 +424,8 @@ export function setupSocket(io) {
       typeof callback === "function" && callback({ success: true });
     });
 
-    socket.on('chat_message', ({ sessionId, message, sender } = {}) => {
-      console.log('Backend: Received chat_message event:', { sessionId, message, sender, socketId: socket.id });
+    socket.on('chat_message', ({ sessionId, message, sender, displayName } = {}) => {
+      console.log('Backend: Received chat_message event:', { sessionId, message, sender, displayName, socketId: socket.id });
       if (!sessionId || !message || typeof message !== 'string') {
         console.log('Backend: Invalid chat message data:', { sessionId, message, sender });
         return;
@@ -436,9 +436,25 @@ export function setupSocket(io) {
         console.log('Backend: Session not found:', sessionId);
         return;
       }
-      console.log('Backend: Session found, broadcasting message to session:', sessionId);
-      log('Chat in session', sessionId, ':', message);
-      const formattedMessage = formatChatMessage(sender || socket.id, message);
+      // Try to get displayName from payload, else from session.clients map
+      let resolvedDisplayName = displayName;
+      if (!resolvedDisplayName) {
+        // Try to find by socketId or clientId
+        let clientInfo = null;
+        // Try by socketId
+        clientInfo = session.clients.get(socket.id);
+        // If not found, try by clientId
+        if (!clientInfo && sender) {
+          for (const info of session.clients.values()) {
+            if (info.clientId === sender) {
+              clientInfo = info;
+              break;
+            }
+          }
+        }
+        resolvedDisplayName = clientInfo && clientInfo.displayName ? clientInfo.displayName : undefined;
+      }
+      const formattedMessage = formatChatMessage(sender || socket.id, message, resolvedDisplayName);
       console.log('Backend: Formatted message:', formattedMessage);
       io.to(sessionId).emit('chat_message', formattedMessage);
     });

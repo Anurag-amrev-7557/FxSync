@@ -6,6 +6,9 @@ import ResyncAnalytics from './ResyncAnalytics';
 import useDriftCorrection from '../hooks/useDriftCorrection'
 import useAudioElement from '../hooks/useAudioElement'
 import useResyncAnalytics from '../hooks/useResyncAnalytics'
+import SYNC_CONFIG from '../utils/syncConfig';
+import useUltraPreciseOffset from '../hooks/useUltraPreciseOffset';
+import { createEMA } from '../utils/syncConfig';
 
 // Add global error handlers
 if (typeof window !== 'undefined' && !window._audioPlayerErrorHandlerAdded) {
@@ -23,23 +26,15 @@ function isFiniteNumber(val) {
   return typeof val === 'number' && isFinite(val);
 }
 
-// Threshold for suggesting smart resync (in seconds)
-const SMART_RESYNC_THRESHOLD = 0.25; // 250ms
-
-// Threshold for drift correction (in seconds)
-const DRIFT_THRESHOLD = 0.2; // 200ms
-
-// Cooldown between manual resyncs (in ms)
-const RESYNC_COOLDOWN_MS = 5000; // 5 seconds
-
-// Number of consecutive drift checks before correction is triggered
-const DRIFT_JITTER_BUFFER = 2;
-
-// Offset (in seconds) to compensate for play latency
-const PLAY_OFFSET = 0.04; // 40ms
+// Helper: Compute moving average
+function movingAverage(arr, windowSize) {
+  if (!arr.length) return 0;
+  const window = arr.slice(-windowSize);
+  return window.reduce((a, b) => a + b, 0) / window.length;
+}
 
 // --- Dynamic Drift Correction Parameter Calculation ---
-function getDriftCorrectionParams({ rtt, jitter }) {
+function getDriftCorrectionParams({ rtt, jitter, driftHistory = [] }) {
   // Device info
   const hw = navigator.hardwareConcurrency || 4;
   const mem = navigator.deviceMemory || 4;
@@ -53,46 +48,28 @@ function getDriftCorrectionParams({ rtt, jitter }) {
   else if (hw < 4 || mem < 4 || netRtt > 120 || netJitter > 20) quality = 'fair';
   else if (hw >= 8 && mem >= 8 && netRtt < 40 && netJitter < 8) quality = 'excellent';
 
-  // Parameter sets
-  const paramsByQuality = {
-    excellent: {
-      MICRO_DRIFT_THRESHOLD: 0.025,
-      MICRO_CORRECTION_WINDOW: 180,
-      MICRO_DRIFT_MIN: 0.006,
-      MICRO_DRIFT_MAX: 0.06,
-      MICRO_RATE_CAP: 0.018,
-      MICRO_RATE_CAP_MICRO: 0.0015,
-      CORRECTION_COOLDOWN: 900,
-    },
-    good: {
-      MICRO_DRIFT_THRESHOLD: 0.04,
-      MICRO_CORRECTION_WINDOW: 250,
-      MICRO_DRIFT_MIN: 0.01,
-      MICRO_DRIFT_MAX: 0.1,
-      MICRO_RATE_CAP: 0.03,
-      MICRO_RATE_CAP_MICRO: 0.003,
-      CORRECTION_COOLDOWN: 1500,
-    },
-    fair: {
-      MICRO_DRIFT_THRESHOLD: 0.06,
-      MICRO_CORRECTION_WINDOW: 320,
-      MICRO_DRIFT_MIN: 0.018,
-      MICRO_DRIFT_MAX: 0.16,
-      MICRO_RATE_CAP: 0.045,
-      MICRO_RATE_CAP_MICRO: 0.0045,
-      CORRECTION_COOLDOWN: 2200,
-    },
-    poor: {
-      MICRO_DRIFT_THRESHOLD: 0.09,
-      MICRO_CORRECTION_WINDOW: 420,
-      MICRO_DRIFT_MIN: 0.03,
-      MICRO_DRIFT_MAX: 0.22,
-      MICRO_RATE_CAP: 0.07,
-      MICRO_RATE_CAP_MICRO: 0.007,
-      CORRECTION_COOLDOWN: 3200,
-    },
-  };
-  return paramsByQuality[quality];
+  // --- Adaptive logic ---
+  if (SYNC_CONFIG.ADAPTIVE.ENABLED) {
+    // Use moving averages for rtt, jitter, and drift
+    const avgRtt = movingAverage(SYNC_CONFIG.ADAPTIVE.rttHistory || [], 6) || netRtt;
+    const avgJitter = movingAverage(SYNC_CONFIG.ADAPTIVE.jitterHistory || [], 6) || netJitter;
+    const avgDrift = movingAverage(driftHistory, 6) || 0;
+    // Adjust quality tier based on moving averages
+    if (avgRtt > 200 || avgJitter > 30) quality = 'poor';
+    else if (avgRtt > 120 || avgJitter > 20) quality = 'fair';
+    else if (hw >= 8 && mem >= 8 && avgRtt < 40 && avgJitter < 8) quality = 'excellent';
+    else quality = 'good';
+    // Optionally, adjust smoothing window size
+    if (avgJitter > 25 || avgDrift > 0.2) {
+      SYNC_CONFIG.OFFSET_SMOOTHING_WINDOW = 6;
+    } else if (avgJitter < 10 && avgDrift < 0.05) {
+      SYNC_CONFIG.OFFSET_SMOOTHING_WINDOW = 12;
+    } else {
+      SYNC_CONFIG.OFFSET_SMOOTHING_WINDOW = 10;
+    }
+  }
+  // Use centralized config
+  return SYNC_CONFIG.DRIFT_PARAMS_BY_QUALITY[quality];
 }
 
 /**
@@ -269,6 +246,11 @@ function getNow(getServerTime) {
   }
 }
 
+/**
+ * AudioPlayer: Ultra-precise, micro-millisecond-level synchronized audio player.
+ * Uses EMA smoothing for offset and drift, and micro-correction for imperceptible sync.
+ * All hooks and event listeners are cleaned up and follow React best practices.
+ */
 export default function AudioPlayer({
   disabled = false,
   socket,
@@ -313,7 +295,6 @@ export default function AudioPlayer({
   const [audioLatency, setAudioLatency] = useState(0.08); // measured latency in seconds
   const playRequestedAt = useRef(null);
   const lastCorrectionRef = useRef(0);
-  const CORRECTION_COOLDOWN = 1500; // ms
   const correctionInProgressRef = useRef(false);
   const [microCorrectionActive, setMicroCorrectionActive] = useState(false); // Visual feedback for micro-corrections
   const [displayedTitle, setDisplayedTitle] = useState(currentTrack?.title || '');
@@ -326,9 +307,37 @@ export default function AudioPlayer({
   // --- Dynamic Drift Correction Parameters ---
   const driftParams = getDriftCorrectionParams({ rtt, jitter });
 
-  // --- Offset selection with best practices ---
-  // Always prefer ultraPreciseOffset (hybrid), fallback to timeOffset only if not available
-  const [smoothedOffset, setSmoothedOffset] = useState(ultraPreciseOffset ?? timeOffset ?? 0);
+  // After calling useUltraPreciseOffset, destructure as:
+  const { ultraPreciseOffset: computedUltraPreciseOffset, syncQuality, allOffsets, selectedSource } = useUltraPreciseOffset(
+    [], // Pass an empty array if no peerSyncs are available
+    timeOffset,
+    rtt,
+    jitter
+  );
+
+  // --- EMA for offset smoothing ---
+  const offsetEMARef = useRef(createEMA(0.18, computedUltraPreciseOffset ?? timeOffset ?? 0));
+  const [smoothedOffset, setSmoothedOffset] = useState(computedUltraPreciseOffset ?? timeOffset ?? 0);
+
+  // --- Use EMA for offset smoothing ---
+  useEffect(() => {
+    let nextOffset = timeOffset || 0;
+    if (
+      typeof computedUltraPreciseOffset === 'number' &&
+      Math.abs(computedUltraPreciseOffset) < 1000 && // sanity check: < 1s
+      !isNaN(computedUltraPreciseOffset)
+    ) {
+      nextOffset = computedUltraPreciseOffset;
+    }
+    // Use EMA for smoothing
+    const smoothed = offsetEMARef.current.next(nextOffset);
+    setSmoothedOffset(smoothed);
+    if (
+      typeof computedUltraPreciseOffset === 'number' && (isNaN(computedUltraPreciseOffset) || Math.abs(computedUltraPreciseOffset) > 1000)
+    ) {
+      console.warn('[AudioPlayer] Ignoring suspicious computedUltraPreciseOffset:', computedUltraPreciseOffset);
+    }
+  }, [computedUltraPreciseOffset, timeOffset]);
 
   // useDriftCorrection hook at the top level
   const { maybeCorrectDrift } = useDriftCorrection({
@@ -378,39 +387,6 @@ export default function AudioPlayer({
 
   // Jitter buffer: only correct drift if sustained for N checks
   const driftCountRef = useRef(0);
-
-  useEffect(() => {
-    let nextOffset = timeOffset || 0;
-    if (
-      typeof ultraPreciseOffset === 'number' &&
-      Math.abs(ultraPreciseOffset) < 1000 && // sanity check: < 1s
-      !isNaN(ultraPreciseOffset)
-    ) {
-      nextOffset = ultraPreciseOffset;
-    }
-    // Smooth transition if offset changes by more than 50ms
-    if (Math.abs(smoothedOffset - nextOffset) > 50) {
-      const step = (nextOffset - smoothedOffset) / 5;
-      let i = 0;
-      const smooth = () => {
-        setSmoothedOffset(prev => {
-          const newVal = prev + step;
-          if (i++ < 4) {
-            setTimeout(smooth, 30);
-          } else {
-            return nextOffset;
-          }
-          return newVal;
-        });
-      };
-      smooth();
-    } else {
-      setSmoothedOffset(nextOffset);
-    }
-    if (typeof ultraPreciseOffset === 'number' && (isNaN(ultraPreciseOffset) || Math.abs(ultraPreciseOffset) > 1000)) {
-      console.warn('[AudioPlayer] Ignoring suspicious ultraPreciseOffset:', ultraPreciseOffset);
-    }
-  }, [ultraPreciseOffset, timeOffset]);
 
   useEffect(() => {
     if ((currentTrack?.title || '') !== displayedTitle) {
@@ -661,9 +637,9 @@ export default function AudioPlayer({
       });
 
       // Enhanced: show drift in UI if large
-      if (drift > DRIFT_THRESHOLD) {
+      if (drift > SYNC_CONFIG.DRIFT_THRESHOLD) {
         driftCountRef.current += 1;
-        if (driftCountRef.current >= DRIFT_JITTER_BUFFER) {
+        if (driftCountRef.current >= SYNC_CONFIG.DRIFT_JITTER_BUFFER) {
           showSyncStatus('Drifted', 1000);
           maybeCorrectDrift(audio, expected);
           setSyncStatus('Re-syncing...');
@@ -708,7 +684,7 @@ export default function AudioPlayer({
     if (!socket || isController) return;
 
     let lastCorrection = 0;
-    let correctionCooldown = 1200; // ms, minimum time between corrections
+    let correctionCooldown = SYNC_CONFIG.CORRECTION_COOLDOWN; // ms, minimum time between corrections
     let lastIntervalFired = Date.now();
 
     const interval = setInterval(() => {
@@ -716,7 +692,7 @@ export default function AudioPlayer({
       const elapsed = nowInterval - lastIntervalFired;
       lastIntervalFired = nowInterval;
       // Timer drift detection: if interval fires late, trigger resync
-      if (elapsed > 2500) { // 2x the normal 1200ms interval
+      if (elapsed > SYNC_CONFIG.TIMER_DRIFT_DETECTION) { // 2x the normal 1200ms interval
         setEdgeCaseBanner('Timer drift detected (tab throttling?). Auto-resyncing...');
         handleResync();
         setTimeout(() => setEdgeCaseBanner(null), 4000);
@@ -763,7 +739,7 @@ export default function AudioPlayer({
         const drift = Math.abs(audio.currentTime - expectedSynced);
 
         // Enhanced: log drift only if significant or in dev
-        if (drift > DRIFT_THRESHOLD || import.meta.env.MODE === 'development') {
+        if (drift > SYNC_CONFIG.DRIFT_THRESHOLD || import.meta.env.MODE === 'development') {
           console.log(
             '[DriftCheck] PERIODIC drift:',
             drift.toFixed(3),
@@ -779,10 +755,10 @@ export default function AudioPlayer({
         const nowMs = Date.now();
         const canCorrect = nowMs - lastCorrection > correctionCooldown;
 
-        if (drift > DRIFT_THRESHOLD) {
+        if (drift > SYNC_CONFIG.DRIFT_THRESHOLD) {
           driftCountRef.current += 1;
 
-          if (driftCountRef.current >= DRIFT_JITTER_BUFFER && canCorrect) {
+          if (driftCountRef.current >= SYNC_CONFIG.DRIFT_JITTER_BUFFER && canCorrect) {
             setSyncStatus('Drifted');
             maybeCorrectDrift(audio, expectedSynced);
             setSyncStatus('Re-syncing...');
@@ -812,7 +788,7 @@ export default function AudioPlayer({
           setSyncStatus('In Sync');
         }
       });
-    }, 1200);
+    }, SYNC_CONFIG.TIMER_INTERVAL);
 
     return () => clearInterval(interval);
   }, [socket, isController, getServerTime, audioLatency, clientId, rtt, smoothedOffset]);
@@ -930,7 +906,7 @@ export default function AudioPlayer({
     if (isController && socket && getServerTime) {
       const now = getNow(getServerTime);
       const audio = audioRef.current;
-      const playAt = (audio ? audio.currentTime : 0) + PLAY_OFFSET;
+      const playAt = (audio ? audio.currentTime : 0) + SYNC_CONFIG.PLAY_OFFSET;
       const payload = {
         sessionId: socket.sessionId,
         timestamp: playAt,
@@ -1065,8 +1041,8 @@ export default function AudioPlayer({
       setTimeout(() => setSyncStatus('In Sync'), 1500);
       return;
     }
-    if (now - lastResyncTime < RESYNC_COOLDOWN_MS) {
-      const remainingCooldown = Math.ceil((RESYNC_COOLDOWN_MS - (now - lastResyncTime)) / 1000);
+    if (now - lastResyncTime < SYNC_CONFIG.RESYNC_COOLDOWN_MS) {
+      const remainingCooldown = Math.ceil((SYNC_CONFIG.RESYNC_COOLDOWN_MS - (now - lastResyncTime)) / 1000);
       setSyncStatus(`Please wait ${remainingCooldown}s before resyncing again.`);
       setTimeout(() => setSyncStatus('In Sync'), 1500);
       return;
@@ -1109,7 +1085,7 @@ export default function AudioPlayer({
 
   // Smart resync suggestion based on drift patterns
   useEffect(() => {
-    if (resyncStats.lastDrift > SMART_RESYNC_THRESHOLD && !resyncInProgress) {
+    if (resyncStats.lastDrift > SYNC_CONFIG.SMART_RESYNC_THRESHOLD && !resyncInProgress) {
       setSmartResyncSuggestion(true);
       // Auto-hide suggestion after 10 seconds
       const timer = setTimeout(() => setSmartResyncSuggestion(false), 10000);
@@ -1409,6 +1385,16 @@ export default function AudioPlayer({
   const [showDriftDebug, setShowDriftDebug] = useState(false);
   const [showLatencyCal, setShowLatencyCal] = useState(false);
   const [edgeCaseBanner, setEdgeCaseBanner] = useState(null);
+  const [showCalibrateBanner, setShowCalibrateBanner] = useState(false);
+
+  // Show calibration banner if repeated drift or poor sync quality
+  useEffect(() => {
+    if ((resyncStats.lastDrift > 0.3 || syncQuality.label === 'Poor') && !showLatencyWizard) {
+      setShowCalibrateBanner(true);
+    } else {
+      setShowCalibrateBanner(false);
+    }
+  }, [resyncStats.lastDrift, syncQuality.label, showLatencyWizard]);
 
   // Keyboard shortcut: D to toggle debug overlay (dev mode only)
   useEffect(() => {
@@ -1532,9 +1518,40 @@ export default function AudioPlayer({
     fontWeight: 'bold',
     boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
     border: '2px solid #1d4ed8',
-    cursor: 'pointer',
-  }} onClick={() => { setEdgeCaseBanner(null); handleResync(); }}>
-    {edgeCaseBanner} <span style={{fontWeight:400, fontSize:13, marginLeft:8}}>(Click to re-sync now)</span>
+    display: 'flex',
+    alignItems: 'center',
+    gap: 16,
+  }}>
+    <span>{edgeCaseBanner}</span>
+    <button
+      style={{
+        marginLeft: 12,
+        background: '#1e40af',
+        color: '#fff',
+        border: 'none',
+        borderRadius: 6,
+        padding: '4px 12px',
+        fontWeight: 500,
+        cursor: 'pointer',
+      }}
+      onClick={() => { setEdgeCaseBanner(null); handleResync(); }}
+    >
+      Re-sync now
+    </button>
+    <button
+      style={{
+        marginLeft: 8,
+        background: 'transparent',
+        color: '#fff',
+        border: 'none',
+        fontSize: 18,
+        cursor: 'pointer',
+      }}
+      aria-label="Dismiss"
+      onClick={() => setEdgeCaseBanner(null)}
+    >
+      ×
+    </button>
   </div>
 )}
       {/* Track Title */}
@@ -1666,6 +1683,7 @@ export default function AudioPlayer({
               status={syncStatus} 
               showSmartSuggestion={smartResyncSuggestion}
             />
+            <div className={`text-xs mt-1 ${syncQuality.color}`}>{syncQuality.label} ({selectedSource})</div>
             <div className="text-neutral-400 text-xs mt-1">
               {isController ? 'You are the controller' : 'You are a listener'}
             </div>
@@ -1696,6 +1714,90 @@ export default function AudioPlayer({
     <div>Override: <input type="number" step="0.001" min="0" max="1" value={manualLatency ?? ''} onChange={e => setManualLatency(parseFloat(e.target.value) || 0)} style={{width: 80, marginLeft: 8}} /> s</div>
     <button style={{marginTop: 10, padding: '4px 10px', borderRadius: 6, background: '#444', color: '#fff', border: 'none', cursor: 'pointer'}} onClick={() => { setManualLatency(null); localStorage.removeItem('audioLatencyOverride'); }}>Reset</button>
     <div style={{color:'#aaa', fontSize:12, marginTop:8}}>Press <b>L</b> to toggle this panel.</div>
+  </div>
+)}
+      {import.meta.env.MODE === 'development' && showDriftDebug && (
+  <div style={{
+    position: 'fixed',
+    bottom: 24,
+    right: 24,
+    zIndex: 20020,
+    background: '#18181b',
+    color: '#fff',
+    padding: '14px 22px',
+    borderRadius: 10,
+    fontSize: 14,
+    maxWidth: 340,
+    boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
+    border: '1.5px solid #444',
+  }}>
+    <div style={{fontWeight: 'bold', marginBottom: 8}}>Sync Diagnostics</div>
+    <div>Drift: <b>{resyncStats.lastDrift?.toFixed(3) ?? '--'}</b> s</div>
+    <div>RTT: <b>{rtt?.toFixed(1) ?? '--'}</b> ms</div>
+    <div>Jitter: <b>{jitter?.toFixed(1) ?? '--'}</b> ms</div>
+    <div>Sync Quality: <b>{syncQuality.label}</b></div>
+    <div>Source: <b>{selectedSource}</b></div>
+    {/* --- New diagnostics --- */}
+    <div style={{marginTop: 8, color: '#aaf'}}>
+      Raw Offset: <b>{computedUltraPreciseOffset?.toFixed(4) ?? '--'}</b> s<br/>
+      Smoothed Offset: <b>{smoothedOffset?.toFixed(4) ?? '--'}</b> s
+    </div>
+    {/* Optionally, show last raw drift if available */}
+    {window._audioDriftHistory && window._audioDriftHistory.length > 0 && (
+      <div style={{marginTop: 8, color: '#faa'}}>
+        Last Raw Drift: <b>{window._audioDriftHistory[window._audioDriftHistory.length-1].drift?.toFixed(4) ?? '--'}</b> s
+      </div>
+    )}
+    <div style={{color:'#aaa', fontSize:12, marginTop:8}}>Press <b>D</b> to toggle this panel.</div>
+  </div>
+)}
+      {import.meta.env.MODE === 'development' && showCalibrateBanner && (
+  <div style={{
+    position: 'fixed',
+    top: 24,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    zIndex: 20010,
+    background: '#f59e42',
+    color: '#222',
+    padding: '10px 24px',
+    borderRadius: 8,
+    fontWeight: 600,
+    fontSize: 15,
+    boxShadow: '0 2px 8px rgba(0,0,0,0.18)',
+    border: '2px solid #f59e42',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 16,
+  }}>
+    <span>⚡️ Your device may need latency calibration for best sync.</span>
+    <button
+      style={{
+        background: '#ea580c',
+        color: '#fff',
+        border: 'none',
+        borderRadius: 6,
+        padding: '4px 14px',
+        fontWeight: 500,
+        cursor: 'pointer',
+      }}
+      onClick={() => { setShowCalibrateBanner(false); startLatencyWizard(); }}
+    >
+      Calibrate Now
+    </button>
+    <button
+      style={{
+        background: 'transparent',
+        color: '#222',
+        border: 'none',
+        fontSize: 18,
+        cursor: 'pointer',
+      }}
+      aria-label="Dismiss"
+      onClick={() => setShowCalibrateBanner(false)}
+    >
+      ×
+    </button>
   </div>
 )}
     </div>

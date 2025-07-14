@@ -29,6 +29,7 @@ import useMobileTab from '../hooks/useMobileTab'
 function SessionPage({
   currentSessionId,
   setCurrentSessionId,
+  displayName, // <-- add this line
   setDisplayName,
   onLeaveSession,
   socket,
@@ -626,6 +627,7 @@ function SessionPage({
                     socket={socket}
                     sessionId={currentSessionId}
                     clientId={clientId}
+                    displayName={displayName}
                     messages={messages}
                     onSend={(msg) => {
                       // setMessages((prev) => { // This will be handled by useChatMessages
@@ -763,6 +765,7 @@ function SessionPage({
                   socket={socket}
                   sessionId={currentSessionId}
                   clientId={clientId}
+                  displayName={displayName}
                   messages={messages}
                   onSend={(msg) => {
                     // setMessages((prev) => { // This will be handled by useChatMessages

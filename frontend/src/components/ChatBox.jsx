@@ -4,19 +4,29 @@ import { InlineLoadingSpinner } from './LoadingSpinner';
 
 const EMOJIS = ['🎵', '👏', '🔥', '😂', '😍', '👍', '❤️', '🎉'];
 
-const ChatBox = React.memo(function ChatBox({ socket, sessionId, clientId, messages = [], clients = [], mobile = false, isChatTabActive = false }) {
+const ChatBox = React.memo(function ChatBox({
+  socket,
+  sessionId,
+  clientId,
+  displayName, // <-- add this prop
+  messages = [],
+  clients = [],
+  mobile = false,
+  isChatTabActive = false,
+}) {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [shouldAnimate, setShouldAnimate] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [inputFocused, setInputFocused] = useState(false);
   const messagesEndRef = useRef(null);
-  
+
   // Smooth animation for new messages
   const messageAnimations = useStaggeredAnimation(messages, 30, 'animate-slide-in-right');
 
   // Trigger animation for mobile chat input
   useEffect(() => {
     if (mobile) {
-      // Small delay to ensure the component is mounted
       const timer = setTimeout(() => {
         setShouldAnimate(true);
       }, 100);
@@ -39,10 +49,11 @@ const ChatBox = React.memo(function ChatBox({ socket, sessionId, clientId, messa
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Helper to get display name from clientId
-  const getDisplayName = (id) => {
+  // Helper to get display name from clientId or message
+  const getDisplayName = (id, msg = {}) => {
     if (id === clientId) return 'You';
-    const found = clients.find(c => c.clientId === id);
+    if (msg.displayName) return msg.displayName;
+    const found = clients.find((c) => c.clientId === id);
     return found ? found.displayName || found.clientId || id : id;
   };
 
@@ -51,7 +62,7 @@ const ChatBox = React.memo(function ChatBox({ socket, sessionId, clientId, messa
       return;
     }
     setSending(true);
-    socket.emit('chat_message', { sessionId, message: msg, sender: clientId }, (response) => {});
+    socket.emit('chat_message', { sessionId, message: msg, sender: clientId, displayName }, (response) => {});
     setInput('');
     setTimeout(() => setSending(false), 300);
   };
@@ -59,6 +70,7 @@ const ChatBox = React.memo(function ChatBox({ socket, sessionId, clientId, messa
   const handleSubmit = (e) => {
     e.preventDefault();
     sendMessage(input);
+    setShowEmojiPicker(false);
   };
 
   // Add error handling and logging for debugging
@@ -66,7 +78,6 @@ const ChatBox = React.memo(function ChatBox({ socket, sessionId, clientId, messa
     if (!socket) {
       return;
     }
-    // Listen for chat message responses
     const handleChatResponse = (data) => {};
     const handleError = (error) => {};
     const handleConnect = () => {};
@@ -83,12 +94,26 @@ const ChatBox = React.memo(function ChatBox({ socket, sessionId, clientId, messa
     };
   }, [socket, sessionId, clientId]);
 
+  // --- ENHANCED: Emoji Picker ---
+  const handleEmojiClick = (emoji) => {
+    setInput((prev) => prev + emoji);
+    setShowEmojiPicker(false);
+  };
+
+  // --- ENHANCED: Highlight own messages, subtle hover, avatars, and message grouping ---
+  const getAvatar = (id) => {
+    // Use first letter of display name or emoji for fun
+    const name = getDisplayName(id);
+    if (name === 'You') return <span className="text-lg">🧑</span>;
+    return <span className="text-lg">{name[0].toUpperCase()}</span>;
+  };
+
   // --- MOBILE LAYOUT ---
   if (mobile) {
     return (
-      <div className="h-full flex flex-col relative">
+      <div className="h-full flex flex-col relative bg-neutral-950">
         {/* Header */}
-        <div className="p-4 border-b border-neutral-800">
+        <div className="p-4 border-b border-neutral-800 sticky top-0 z-20 bg-neutral-950/95 backdrop-blur">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 bg-neutral-800 rounded-lg flex items-center justify-center">
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-400">
@@ -96,14 +121,14 @@ const ChatBox = React.memo(function ChatBox({ socket, sessionId, clientId, messa
               </svg>
             </div>
             <div>
-              <h3 className="text-white font-medium text-sm">Chat</h3>
+              <h3 className="text-white font-semibold text-base">Chat</h3>
               <p className="text-neutral-400 text-xs">{clients.length} participant{clients.length !== 1 ? 's' : ''}</p>
             </div>
           </div>
         </div>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-3 pb-32"> {/* Add bottom padding for floating input */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-2 pb-36 bg-neutral-950">
           {messages.length === 0 ? (
             <div className="text-center py-8">
               <div className="w-16 h-16 bg-neutral-800 rounded-lg flex items-center justify-center mx-auto mb-4">
@@ -115,34 +140,65 @@ const ChatBox = React.memo(function ChatBox({ socket, sessionId, clientId, messa
               <p className="text-neutral-500 text-xs">Start the conversation!</p>
             </div>
           ) : (
-            messages.map((msg, i) => (
-              <div key={`${msg.sender}-${msg.timestamp}-${i}`} className={`flex transition-all duration-300 ${msg.sender === clientId ? 'justify-end' : 'justify-start'} ${messageAnimations[i]?.animationClass || ''}`}>
-                <div className={`max-w-xs lg:max-w-md ${msg.sender === clientId ? 'order-2' : 'order-1'}`}>
-                  {msg.reaction ? (
-                    <div className={`flex items-center gap-2 ${msg.sender === clientId ? 'justify-end' : 'justify-start'}`}>
-                      <span className="text-xs text-neutral-500">
-                        {getDisplayName(msg.sender)}
-                      </span>
-                      <div className="bg-neutral-800 rounded-lg px-3 py-2 text-lg">
-                        {msg.reaction}
+            messages.map((msg, i) => {
+              const isOwn = msg.sender === clientId;
+              return (
+                <div
+                  key={`${msg.sender}-${msg.timestamp}-${i}`}
+                  className={`flex items-end transition-all duration-300 group ${isOwn ? 'justify-end' : 'justify-start'} ${messageAnimations[i]?.animationClass || ''}`}
+                >
+                  {!isOwn && (
+                    <div className="mr-2 flex-shrink-0">
+                      <div className="w-8 h-8 bg-neutral-800 rounded-full flex items-center justify-center border border-neutral-700">
+                        {getAvatar(msg.sender)}
                       </div>
                     </div>
-                  ) : (
-                    <div className={`${msg.sender === clientId ? 'bg-primary text-white' : 'bg-neutral-800 text-white'} rounded-lg px-3 py-2`}>
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-xs font-medium opacity-80">
-                          {getDisplayName(msg.sender)}
+                  )}
+                  <div className={`max-w-[80vw] ${isOwn ? 'order-2' : 'order-1'}`}>
+                    {msg.reaction ? (
+                      <div className={`flex items-center gap-2 ${isOwn ? 'justify-end' : 'justify-start'}`}>
+                        <span className="text-xs text-neutral-500">
+                          {getDisplayName(msg.sender, msg)}
                         </span>
-                        <span className="text-xs opacity-60">
-                          {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'now'}
-                        </span>
+                        <div className="bg-neutral-800 rounded-lg px-3 py-2 text-lg">
+                          {msg.reaction}
+                        </div>
                       </div>
-                      <p className="text-sm">{msg.message}</p>
+                    ) : (
+                      <div
+                        className={`rounded-2xl px-4 py-2 shadow-sm transition-all duration-200 ${
+                          isOwn
+                            ? 'bg-gradient-to-br from-primary to-primary/80 text-white'
+                            : 'bg-neutral-800 text-white'
+                        } group-hover:scale-[1.02]`}
+                      >
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-xs font-medium opacity-80">
+                            {getDisplayName(msg.sender, msg)}
+                          </span>
+                          <span className="text-xs opacity-60">
+                            {msg.timestamp
+                              ? new Date(msg.timestamp).toLocaleTimeString([], {
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })
+                              : 'now'}
+                          </span>
+                        </div>
+                        <p className="text-sm break-words">{msg.message}</p>
+                      </div>
+                    )}
+                  </div>
+                  {isOwn && (
+                    <div className="ml-2 flex-shrink-0">
+                      <div className="w-8 h-8 bg-primary/80 rounded-full flex items-center justify-center border border-primary/60">
+                        {getAvatar(msg.sender)}
+                      </div>
                     </div>
                   )}
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
           <div ref={messagesEndRef} />
         </div>
@@ -150,21 +206,42 @@ const ChatBox = React.memo(function ChatBox({ socket, sessionId, clientId, messa
         {/* Floating Chat Input */}
         <div className="fixed left-0 right-0 bottom-20 z-30 flex justify-center pointer-events-none">
           <div className="w-[95vw] max-w-sm pointer-events-auto">
-            <div className={`bg-neutral-900/90 backdrop-blur-lg rounded-full shadow-2xl p-3 border border-neutral-800 ${shouldAnimate ? 'animate-slide-up-from-bottom' : 'opacity-0 translate-y-full'}`}>
-              <form onSubmit={handleSubmit} className="space-y-3">
-                {/* Message Input */}
-                <div className="flex gap-2">
+            <div
+              className={`bg-neutral-900/90 backdrop-blur-lg rounded-full shadow-2xl p-3 border border-neutral-800 transition-all duration-300 ${
+                shouldAnimate ? 'animate-slide-up-from-bottom' : 'opacity-0 translate-y-full'
+              }`}
+            >
+              <form onSubmit={handleSubmit} className="space-y-2">
+                <div className="flex gap-2 items-center">
+                  {/* Emoji Picker Button */}
+                  <button
+                    type="button"
+                    className={`w-9 h-9 flex items-center justify-center rounded-full transition hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-white ${
+                      showEmojiPicker ? 'bg-neutral-800' : ''
+                    }`}
+                    tabIndex={-1}
+                    aria-label="Add emoji"
+                    onClick={() => setShowEmojiPicker((v) => !v)}
+                  >
+                    <span role="img" aria-label="emoji" className="text-xl">
+                      😊
+                    </span>
+                  </button>
                   <input
-                    className="flex-1 bg-neutral-800 border border-neutral-700 rounded-full px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-1 focus:ring-white/50 focus:border-white/50 transition-all duration-200"
+                    className={`flex-1 bg-neutral-800 border border-neutral-700 rounded-full px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-white focus:border-white transition-all duration-200 ${
+                      inputFocused ? 'ring-2 ring-white border-white' : ''
+                    }`}
                     type="text"
                     value={input}
-                    onChange={e => setInput(e.target.value)}
-                    placeholder={!socket ? "Connecting..." : "Type a message..."}
+                    onChange={(e) => setInput(e.target.value)}
+                    placeholder={!socket ? 'Connecting...' : 'Type a message...'}
                     disabled={sending || !socket}
+                    onFocus={() => setInputFocused(true)}
+                    onBlur={() => setInputFocused(false)}
                   />
                   <button
                     type="submit"
-                    className="px-4 py-2 bg-white hover:bg-primary/90 text-black rounded-full text-sm font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    className="px-4 py-2 bg-primary hover:bg-primary/90 text-white rounded-full text-sm font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                     disabled={sending || !input.trim() || !socket}
                   >
                     {sending ? (
@@ -183,6 +260,23 @@ const ChatBox = React.memo(function ChatBox({ socket, sessionId, clientId, messa
                     )}
                   </button>
                 </div>
+                {/* Emoji Picker Dropdown */}
+                {showEmojiPicker && (
+                  <div className="absolute bottom-16 left-0 right-0 mx-auto w-[90vw] max-w-xs bg-neutral-900 border border-neutral-800 rounded-2xl shadow-xl p-3 flex flex-wrap gap-2 z-40 animate-fade-in pointer-events-auto">
+                    {EMOJIS.map((emoji) => (
+                      <button
+                        key={emoji}
+                        type="button"
+                        className="text-2xl p-2 rounded-full hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-white transition"
+                        onClick={() => handleEmojiClick(emoji)}
+                        tabIndex={0}
+                        aria-label={`Insert ${emoji}`}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </form>
             </div>
           </div>
@@ -193,9 +287,9 @@ const ChatBox = React.memo(function ChatBox({ socket, sessionId, clientId, messa
 
   // --- DESKTOP LAYOUT (default) ---
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col bg-neutral-950">
       {/* Header */}
-      <div className="p-4 border-b border-neutral-800">
+      <div className="p-4 border-b border-neutral-800 sticky top-0 z-10 bg-neutral-950/95 backdrop-blur">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 bg-neutral-800 rounded-lg flex items-center justify-center">
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-400">
@@ -203,14 +297,14 @@ const ChatBox = React.memo(function ChatBox({ socket, sessionId, clientId, messa
             </svg>
           </div>
           <div>
-            <h3 className="text-white font-medium text-sm">Chat</h3>
+            <h3 className="text-white font-semibold text-base">Chat</h3>
             <p className="text-neutral-400 text-xs">{clients.length} participant{clients.length !== 1 ? 's' : ''}</p>
           </div>
         </div>
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+      <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-neutral-950">
         {messages.length === 0 ? (
           <div className="text-center py-8">
             <div className="w-16 h-16 bg-neutral-800 rounded-lg flex items-center justify-center mx-auto mb-4">
@@ -222,54 +316,102 @@ const ChatBox = React.memo(function ChatBox({ socket, sessionId, clientId, messa
             <p className="text-neutral-500 text-xs">Start the conversation!</p>
           </div>
         ) : (
-          messages.map((msg, i) => (
-            <div key={`${msg.sender}-${msg.timestamp}-${i}`} className={`flex transition-all duration-300 ${msg.sender === clientId ? 'justify-end' : 'justify-start'} ${messageAnimations[i]?.animationClass || ''}`}>
-              <div className={`max-w-xs lg:max-w-md ${msg.sender === clientId ? 'order-2' : 'order-1'}`}>
-                {msg.reaction ? (
-                  <div className={`flex items-center gap-2 ${msg.sender === clientId ? 'justify-end' : 'justify-start'}`}>
-                    <span className="text-xs text-neutral-500">
-                      {getDisplayName(msg.sender)}
-                    </span>
-                    <div className="bg-neutral-800 rounded-lg px-3 py-2 text-lg">
-                      {msg.reaction}
+          messages.map((msg, i) => {
+            const isOwn = msg.sender === clientId;
+            return (
+              <div
+                key={`${msg.sender}-${msg.timestamp}-${i}`}
+                className={`flex items-end transition-all duration-300 group ${isOwn ? 'justify-end' : 'justify-start'} ${messageAnimations[i]?.animationClass || ''}`}
+              >
+                {!isOwn && (
+                  <div className="mr-2 flex-shrink-0">
+                    <div className="w-8 h-8 bg-neutral-800 rounded-full flex items-center justify-center border border-neutral-700">
+                      {getAvatar(msg.sender)}
                     </div>
                   </div>
-                ) : (
-                  <div className={`${msg.sender === clientId ? 'bg-primary text-white' : 'bg-neutral-800 text-white'} rounded-lg px-3 py-2`}>
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs font-medium opacity-80">
-                        {getDisplayName(msg.sender)}
+                )}
+                <div className={`max-w-xs lg:max-w-md ${isOwn ? 'order-2' : 'order-1'}`}>
+                  {msg.reaction ? (
+                    <div className={`flex items-center gap-2 ${isOwn ? 'justify-end' : 'justify-start'}`}>
+                      <span className="text-xs text-neutral-500">
+                        {getDisplayName(msg.sender, msg)}
                       </span>
-                      <span className="text-xs opacity-60">
-                        {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'now'}
-                      </span>
+                      <div className="bg-neutral-800 rounded-lg px-3 py-2 text-lg">
+                        {msg.reaction}
+                      </div>
                     </div>
-                    <p className="text-sm">{msg.message}</p>
+                  ) : (
+                    <div
+                      className={`rounded-2xl px-4 py-2 shadow-sm transition-all duration-200 ${
+                        isOwn
+                          ? 'bg-gradient-to-br from-primary to-primary/80 text-white'
+                          : 'bg-neutral-800 text-white'
+                      } group-hover:scale-[1.02]`}
+                    >
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-xs font-medium opacity-80">
+                          {getDisplayName(msg.sender, msg)}
+                        </span>
+                        <span className="text-xs opacity-60">
+                          {msg.timestamp
+                            ? new Date(msg.timestamp).toLocaleTimeString([], {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })
+                            : 'now'}
+                        </span>
+                      </div>
+                      <p className="text-sm break-words">{msg.message}</p>
+                    </div>
+                  )}
+                </div>
+                {isOwn && (
+                  <div className="ml-2 flex-shrink-0">
+                    <div className="w-8 h-8 bg-primary/80 rounded-full flex items-center justify-center border border-primary/60">
+                      {getAvatar(msg.sender)}
+                    </div>
                   </div>
                 )}
               </div>
-            </div>
-          ))
+            );
+          })
         )}
         <div ref={messagesEndRef} />
       </div>
 
       {/* Input Area */}
-      <div className="p-4 border-t border-neutral-800">
-        <form onSubmit={handleSubmit} className="space-y-3">
-          {/* Message Input */}
-          <div className="flex gap-2">
+      <div className="p-4 border-t border-neutral-800 bg-neutral-950 sticky bottom-0 z-10">
+        <form onSubmit={handleSubmit} className="space-y-2 relative">
+          <div className="flex gap-2 items-center">
+            {/* Emoji Picker Button */}
+            <button
+              type="button"
+              className={`w-9 h-9 flex items-center justify-center rounded-full transition hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-white ${
+                showEmojiPicker ? 'bg-neutral-800' : ''
+              }`}
+              tabIndex={-1}
+              aria-label="Add emoji"
+              onClick={() => setShowEmojiPicker((v) => !v)}
+            >
+              <span role="img" aria-label="emoji" className="text-xl">
+                😊
+              </span>
+            </button>
             <input
-              className="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-white focus:border-white transition-all duration-200"
+              className={`flex-1 bg-neutral-800 border border-neutral-700 rounded-full px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-white focus:border-white transition-all duration-200 ${
+                inputFocused ? 'ring-2 ring-white border-white' : ''
+              }`}
               type="text"
               value={input}
-              onChange={e => setInput(e.target.value)}
-              placeholder={!socket ? "Connecting..." : "Type a message..."}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder={!socket ? 'Connecting...' : 'Type a message...'}
               disabled={sending || !socket}
+              onFocus={() => setInputFocused(true)}
+              onBlur={() => setInputFocused(false)}
             />
             <button
               type="submit"
-              className="px-4 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg text-sm font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              className="px-4 py-2 bg-primary hover:bg-primary/90 text-white rounded-full text-sm font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               disabled={sending || !input.trim() || !socket}
             >
               {sending ? (
@@ -288,6 +430,23 @@ const ChatBox = React.memo(function ChatBox({ socket, sessionId, clientId, messa
               )}
             </button>
           </div>
+          {/* Emoji Picker Dropdown */}
+          {showEmojiPicker && (
+            <div className="absolute bottom-14 left-0 w-full bg-neutral-900 border border-neutral-800 rounded-2xl shadow-xl p-3 flex flex-wrap gap-2 z-40 animate-fade-in pointer-events-auto">
+              {EMOJIS.map((emoji) => (
+                <button
+                  key={emoji}
+                  type="button"
+                  className="text-2xl p-2 rounded-full hover:bg-neutral-800 focus:outline-none focus:ring-2 focus:ring-white transition"
+                  onClick={() => handleEmojiClick(emoji)}
+                  tabIndex={0}
+                  aria-label={`Insert ${emoji}`}
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+          )}
         </form>
       </div>
     </div>

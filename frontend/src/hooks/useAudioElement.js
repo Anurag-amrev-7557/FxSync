@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { fadeAudio } from './useDriftCorrection';
+import SYNC_CONFIG from '../utils/syncConfig';
 
 export default function useAudioElement({ currentTrack, isController, getServerTime }) {
   const [audioUrl, setAudioUrl] = useState(null);

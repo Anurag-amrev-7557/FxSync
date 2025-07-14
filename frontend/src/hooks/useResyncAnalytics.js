@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import SYNC_CONFIG from '../utils/syncConfig';
 
 const RESYNC_HISTORY_SIZE = 5;
 

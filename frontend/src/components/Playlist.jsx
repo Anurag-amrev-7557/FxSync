@@ -184,29 +184,6 @@ const Playlist = React.memo(function Playlist({ queue = [], isController, socket
 
   return (
     <div className="h-full flex flex-col">
-      {/* Header */}
-      <div className="p-4 border-b border-neutral-800">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-neutral-800 rounded-lg flex items-center justify-center">
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-400">
-                <path d="M9 18V5l12-2v13"></path>
-                <circle cx="6" cy="18" r="3"></circle>
-                <circle cx="18" cy="16" r="3"></circle>
-              </svg>
-            </div>
-            <div>
-              <h3 className="text-white font-medium text-sm">Playlist</h3>
-              <p className="text-neutral-400 text-xs">{queue.length} track{queue.length !== 1 ? 's' : ''}</p>
-            </div>
-          </div>
-          {isController && (
-            <div className="text-xs text-neutral-400 bg-neutral-800 px-2 py-1 rounded">
-              Controller
-            </div>
-          )}
-        </div>
-      </div>
 
       {/* Add Track Form & Upload */}
       {isController && (
@@ -289,7 +266,7 @@ const Playlist = React.memo(function Playlist({ queue = [], isController, socket
       )}
 
       {/* All Tracks Section */}
-      <div className="p-4 border-b border-neutral-800 bg-neutral-900/60">
+      <div className="p-4 border-b border-neutral-800 bg-transparent">
         <h3 className="text-white font-medium text-sm mb-2">Browse All Tracks</h3>
         {allTracksLoading ? (
           <div className="text-neutral-400 text-xs">Loading tracks...</div>

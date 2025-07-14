@@ -12,14 +12,21 @@
     "env:example": "echo 'VITE_BACKEND_URL=http://localhost:4000' > .env && echo 'Created example .env file'"
   },
   "dependencies": {
+    "@react-three/drei": "^10.5.0",
+    "@react-three/fiber": "^9.2.0",
     "@tailwindcss/postcss": "^4.1.11",
+    "@tanstack/react-query": "^5.83.0",
     "browser-id3-writer": "^6.2.0",
+    "canvas-confetti": "^1.9.3",
+    "framer-motion": "^12.23.5",
     "jsmediatags": "^3.9.7",
     "kalmanjs": "^1.1.0",
+    "qrcode.react": "^4.2.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-router-dom": "^7.6.3",
-    "socket.io-client": "^4.8.1"
+    "socket.io-client": "^4.8.1",
+    "three": "^0.178.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.29.0",

@@ -1,7 +1,8 @@
-export function formatChatMessage(sender, message) {
+export function formatChatMessage(sender, message, displayName) {
   return {
     sender,
     message,
+    displayName, // include displayName
     timestamp: Date.now()
   };
 }
