@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import CreateRoom from './CreateRoom';
 import { Link } from 'react-router-dom';
+import { useToast } from './ToastProvider';
 
 // Add QR code component
 const QRCode = ({ value, size = 128 }) => {
@@ -62,6 +63,8 @@ export default function SessionForm({ onJoin, currentSessionId }) {
   const measureRef = useRef(null);
   const joinFormRef = useRef(null);
   const createFormRef = useRef(null);
+
+  const { showToast } = useToast();
 
   // Load recent rooms from localStorage
   useEffect(() => {
@@ -278,6 +281,7 @@ export default function SessionForm({ onJoin, currentSessionId }) {
       setSessionId(data.sessionId || '');
     } catch (e) {
       setError('Failed to generate session ID');
+      showToast('Failed to generate session ID', { type: 'error' });
     } finally {
       setIsGenerating(false);
     }
@@ -372,6 +376,7 @@ export default function SessionForm({ onJoin, currentSessionId }) {
     e.preventDefault();
     if (!sessionId.trim()) {
       setError('Please enter a room code');
+      showToast('Please enter a room code', { type: 'error' });
       return;
     }
     setError('');
@@ -709,14 +714,15 @@ export default function SessionForm({ onJoin, currentSessionId }) {
                       <p className="text-sm sm:text-base text-neutral-400 transition-all duration-500 delay-100">Enter a room code to start listening together</p>
                     </div>
 
-                    <form onSubmit={handleJoin} className="space-y-4 sm:space-y-6">
+                    <form onSubmit={handleJoin} className="space-y-4 sm:space-y-6" aria-label="Join Room Form">
                       {/* Room code input */}
                       <div className="space-y-2 sm:space-y-3">
-                        <label className="block text-sm font-medium text-neutral-300 transition-all duration-300 hover:text-white">Room Code</label>
+                        <label className="block text-sm font-medium text-neutral-300 transition-all duration-300 hover:text-white" htmlFor="room-code-input">Room Code</label>
                         <div className="relative group">
                           <div className="relative">
                             <input
                               ref={inputRef}
+                              id="room-code-input"
                               type="text"
                               value={sessionId}
                               onChange={handleInputChange}
@@ -733,6 +739,9 @@ export default function SessionForm({ onJoin, currentSessionId }) {
                               placeholder="Enter room code"
                               maxLength={20}
                               autoFocus
+                              aria-label="Room code"
+                              aria-required="true"
+                              aria-invalid={!!error}
                             />
                             {/* Hidden element to measure text width */}
                             <div 
@@ -755,12 +764,13 @@ export default function SessionForm({ onJoin, currentSessionId }) {
                                 style={{
                                   left: `${cursorLeft}px`,
                                 }}
+                                aria-hidden="true"
                               />
                             )}
                           </div>
                           <div className={`absolute inset-0 rounded-xl bg-gradient-to-r from-transparent via-white/5 to-transparent opacity-0 transition-opacity duration-500 pointer-events-none ${isFocused ? 'opacity-100' : 'group-hover:opacity-50'}`}></div>
                           {error && (
-                            <p className="text-red-400 text-sm mt-2 text-center animate-shake">{error}</p>
+                            <p className="text-red-400 text-sm mt-2 text-center animate-shake" role="alert" aria-live="assertive">{error}</p>
                           )}
                         </div>
                         
@@ -770,6 +780,7 @@ export default function SessionForm({ onJoin, currentSessionId }) {
                           onClick={handleGenerate}
                           disabled={isGenerating}
                           className="w-full px-3 py-2 bg-neutral-800/50 hover:bg-neutral-700/70 text-white text-sm rounded-lg border border-neutral-600/50 hover:border-neutral-500/70 transition-all duration-300 hover:scale-[1.02] hover:shadow-lg group flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
+                          aria-label="Generate random room code"
                         >
                           {isGenerating ? (
                             <>
@@ -800,6 +811,7 @@ export default function SessionForm({ onJoin, currentSessionId }) {
                                 key={index}
                                 onClick={() => joinRecentRoom(roomId)}
                                 className="px-3 py-1.5 bg-neutral-800/50 hover:bg-neutral-700/70 text-white text-xs font-mono rounded-lg border border-neutral-600/50 hover:border-neutral-500/70 transition-all duration-300 hover:scale-105 hover:shadow-lg group"
+                                aria-label={`Join recent room ${roomId}`}
                               >
                                 <span className="transition-all duration-300 group-hover:translate-x-0.5">{roomId}</span>
                               </button>
@@ -813,7 +825,7 @@ export default function SessionForm({ onJoin, currentSessionId }) {
                         <div className="text-xs sm:text-sm text-neutral-400 transition-all duration-300 group-hover:text-neutral-300 font-medium">You'll join as</div>
                         <div className="flex items-center gap-3">
                           <div className="relative">
-                            <span className={`text-white font-semibold text-sm sm:text-base transition-all duration-300 group-hover:scale-105 ${nameAnimation ? 'animate-pulse' : ''} ${isRegenerating ? 'text-neutral-400' : 'bg-gradient-to-r from-white to-neutral-200 bg-clip-text text-transparent'}`}>
+                            <span className={`text-white font-semibold text-sm sm:text-base transition-all duration-300 group-hover:scale-105 ${nameAnimation ? 'animate-pulse' : ''} ${isRegenerating ? 'text-neutral-400' : 'bg-gradient-to-r from-white to-neutral-200 bg-clip-text text-transparent'}`} id="display-name-label">
                               {displayName}
                             </span>
                             {/* Animated underline */}
@@ -824,6 +836,8 @@ export default function SessionForm({ onJoin, currentSessionId }) {
                             onClick={regenerateName}
                             disabled={isRegenerating}
                             className={`p-2 text-neutral-500 hover:text-white hover:bg-neutral-700/50 rounded-lg transition-all duration-300 hover:scale-110 hover:shadow-lg relative overflow-hidden group/btn ${isRegenerating ? 'animate-spin' : 'hover:rotate-180'}`}
+                            aria-label="Regenerate display name"
+                            aria-describedby="display-name-label"
                           >
                             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="transition-transform duration-300 sm:w-4 sm:h-4">
                               <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
@@ -842,6 +856,7 @@ export default function SessionForm({ onJoin, currentSessionId }) {
                         type="submit"
                         disabled={loading || !sessionId.trim()}
                         className="w-full px-4 py-3 bg-white text-black rounded-lg font-bold text-sm sm:text-base transition-all duration-500 flex items-center justify-center gap-3 hover:bg-neutral-100 hover:scale-[1.02] hover:shadow-xl disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-white disabled:hover:scale-100 disabled:hover:shadow-none relative overflow-hidden group"
+                        aria-label="Join room"
                       >
                         <span className="relative z-10 flex items-center gap-3 transition-all duration-300 group-hover:translate-x-1">
                           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="transition-transform duration-300 group-hover:translate-x-1 sm:w-5 sm:h-5">
@@ -876,6 +891,7 @@ export default function SessionForm({ onJoin, currentSessionId }) {
                         onClick={handleCreateRoom}
                         disabled={isCreatingRoom}
                         className="w-full px-4 py-3 bg-white hover:bg-neutral-100 text-black rounded-lg font-bold text-sm sm:text-base transition-all duration-500 flex items-center justify-center gap-3 border border-white/20 hover:border-white/40 hover:scale-[1.02] hover:shadow-xl group relative overflow-hidden disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-white disabled:hover:scale-100 disabled:hover:shadow-none"
+                        aria-label="Create new room"
                       >
                         <span className="relative z-10 flex items-center gap-3 transition-all duration-300 group-hover:translate-x-1">
                           {isCreatingRoom ? (
@@ -961,7 +977,7 @@ export default function SessionForm({ onJoin, currentSessionId }) {
                       <div className="text-xs sm:text-sm text-neutral-400 transition-all duration-300 group-hover:text-neutral-300 font-medium">You'll join as</div>
                       <div className="flex items-center gap-3">
                         <div className="relative">
-                          <span className={`text-white font-semibold text-sm sm:text-base transition-all duration-300 group-hover:scale-105 ${nameAnimation ? 'animate-pulse' : ''} ${isRegenerating ? 'text-neutral-400' : 'bg-gradient-to-r from-white to-neutral-200 bg-clip-text text-transparent'}`}>
+                          <span className={`text-white font-semibold text-sm sm:text-base transition-all duration-300 group-hover:scale-105 ${nameAnimation ? 'animate-pulse' : ''} ${isRegenerating ? 'text-neutral-400' : 'bg-gradient-to-r from-white to-neutral-200 bg-clip-text text-transparent'}`} id="display-name-label">
                             {displayName}
                           </span>
                           {/* Animated underline */}
@@ -972,6 +988,8 @@ export default function SessionForm({ onJoin, currentSessionId }) {
                           onClick={regenerateName}
                           disabled={isRegenerating}
                           className={`p-2 text-neutral-500 hover:text-white hover:bg-neutral-700/50 rounded-lg transition-all duration-300 hover:scale-110 hover:shadow-lg relative overflow-hidden group/btn ${isRegenerating ? 'animate-spin' : 'hover:rotate-180'}`}
+                          aria-label="Regenerate display name"
+                          aria-describedby="display-name-label"
                         >
                           <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="transition-transform duration-300 sm:w-4 sm:h-4">
                             <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
@@ -990,6 +1008,7 @@ export default function SessionForm({ onJoin, currentSessionId }) {
                       <button
                         onClick={handleCreateRoomConfirm}
                         className="w-full px-4 py-3 bg-white text-black rounded-lg font-bold text-sm sm:text-base transition-all duration-500 flex items-center justify-center gap-3 hover:bg-neutral-100 hover:scale-[1.02] hover:shadow-xl relative overflow-hidden group"
+                        aria-label="Enter room"
                       >
                         <span className="relative z-10 flex items-center gap-3 transition-all duration-300 group-hover:translate-x-1">
                           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="transition-transform duration-300 group-hover:translate-x-1 sm:w-5 sm:h-5">
@@ -1005,6 +1024,7 @@ export default function SessionForm({ onJoin, currentSessionId }) {
                       <button
                         onClick={handleCreateRoomCancel}
                         className="w-full px-4 py-3 bg-neutral-800 hover:bg-neutral-700 text-white rounded-lg font-bold text-sm sm:text-base transition-all duration-500 flex items-center justify-center gap-3 border border-neutral-700 hover:border-neutral-600 hover:scale-[1.02] hover:shadow-xl group relative overflow-hidden"
+                        aria-label="Back to join"
                       >
                         <span className="relative z-10 flex items-center gap-3 transition-all duration-300 group-hover:translate-x-1">
                           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="transition-transform duration-300 group-hover:scale-110 sm:w-5 sm:h-5">

@@ -102,8 +102,9 @@ function getDriftCorrectionParams({ rtt, jitter }) {
  * - Handles edge cases and logs detailed context for debugging.
  * - Prevents duplicate event listeners and cleans up properly.
  * - Optionally, can force a reload if duration is NaN and value is 0 (common browser bug).
+ * - Supports fade in/out for all seeks if options.fade is true.
  */
-function setCurrentTimeSafely(audio, value, setCurrentTime) {
+function setCurrentTimeSafely(audio, value, setCurrentTime, options = {}) {
   const logContext = {
     value,
     readyState: audio ? audio.readyState : null,
@@ -133,8 +134,22 @@ function setCurrentTimeSafely(audio, value, setCurrentTime) {
     try {
       // Only set if different to avoid unnecessary seeks
       if (Math.abs(audio.currentTime - value) > 0.01) {
-        audio.currentTime = value;
-        setCurrentTime(value);
+        if (options.fade) {
+          if (typeof window.fadeAudio === 'function') {
+            window.fadeAudio(audio, 0, 100);
+            setTimeout(() => {
+              audio.currentTime = value;
+              setCurrentTime(value);
+              window.fadeAudio(audio, 1, 100);
+            }, 110);
+          } else {
+            audio.currentTime = value;
+            setCurrentTime(value);
+          }
+        } else {
+          audio.currentTime = value;
+          setCurrentTime(value);
+        }
         // Optionally, fire a custom event for debugging
         // audio.dispatchEvent(new CustomEvent('currentTimeSetSafely', { detail: { value, eventType } }));
         // Enhanced: log only in dev
@@ -269,6 +284,15 @@ function getNow(getServerTime) {
   }
 }
 
+// Utility: debounce function
+function debounce(fn, delay) {
+  let timer = null;
+  return function (...args) {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => fn.apply(this, args), delay);
+  };
+}
+
 export default function AudioPlayer({
   disabled = false,
   socket,
@@ -284,6 +308,7 @@ export default function AudioPlayer({
   timeOffset, // fallback only if ultraPreciseOffset is unavailable
   sessionSyncState = null,
   forceNtpBatchSync,
+  clockSkew = 0, // <-- new prop
 }) {
   // Fix: manualLatency must be declared before any useEffect or code that references it
   const [manualLatency, setManualLatency] = useState(() => {
@@ -345,6 +370,7 @@ export default function AudioPlayer({
     ...driftParams,
     correctionInProgressRef,
     lastCorrectionRef,
+    clockSkew, // <-- pass to drift correction
     onDriftDetected: (reason) => {
       if (reason === 'raf_drift') {
         setEdgeCaseBanner('Animation frame drift detected (tab throttling?). Auto-resyncing...');
@@ -465,13 +491,16 @@ export default function AudioPlayer({
     }
   }, [currentTrack]);
 
-  // Auto-play audio for listeners when audioUrl changes and should be playing
+  // Auto-play/pause audio for listeners when audioUrl or isPlaying changes
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
-    if (!isController && isPlaying && audioUrl) {
-      // Try to play the audio (catch errors silently)
-      audio.play().catch(() => {});
+    if (!isController && audioUrl) {
+      if (isPlaying && audio.paused) {
+        audio.play().catch(() => {});
+      } else if (!isPlaying && !audio.paused) {
+        audio.pause();
+      }
     }
   }, [audioUrl, isPlaying, isController]);
 
@@ -1181,13 +1210,13 @@ export default function AudioPlayer({
     return () => cancelAnimationFrame(raf);
   }, [audioUrl]);
 
-  // Wrap handleSeek to emit seek event if controller
-  const handleSeekWithEmit = (time) => {
+  // Wrap handleSeek to emit seek event if controller, debounced for slider
+  const handleSeekWithEmit = React.useMemo(() => debounce((time) => {
     handleSeek(time); // always update local audio
     if (isController) {
       emitSeek(time);
     }
-  };
+  }, 150), [handleSeek, isController, emitSeek]);
 
   // --- Latency Calibration Wizard Logic ---
   function startLatencyWizard() {
@@ -1259,17 +1288,17 @@ export default function AudioPlayer({
   if (mobile) {
     if (loading) {
       return (
-        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 w-[95vw] max-w-sm z-40 pointer-events-auto">
+        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 w-[95vw] max-w-sm z-40 pointer-events-auto" role="status" aria-live="polite">
           <LoadingSpinner size="md" text="Loading..." />
         </div>
       );
     }
     if (audioError) {
       return (
-        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 w-[95vw] max-w-sm z-40 pointer-events-auto">
+        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 w-[95vw] max-w-sm z-40 pointer-events-auto" role="alert" aria-live="assertive">
           <div className="p-4 bg-red-900/80 rounded-2xl shadow-xl border border-red-700 text-center animate-fade-in">
             <div className="flex flex-col items-center gap-2">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-7 w-7 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-7 w-7 text-red-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                 <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v4.5a.75.75 0 001.5 0v-4.5zm-.75 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
               </svg>
               <div className="text-white font-medium">Audio Error</div>
@@ -1280,8 +1309,8 @@ export default function AudioPlayer({
       );
     }
     return (
-      <div className="fixed bottom-20 left-1/2 w-[95vw] max-w-sm z-40 pointer-events-auto -translate-x-1/2">
-        <div className={`${shouldAnimate ? 'animate-slide-up-from-bottom' : 'opacity-0 translate-y-full'}`}>
+      <div className="fixed bottom-20 left-1/2 w-[95vw] max-w-sm z-40 pointer-events-auto -translate-x-1/2" role="region" aria-label="Audio Player">
+        <div className={`${shouldAnimate ? 'animate-slide-up-from-bottom' : 'opacity-0 translate-y-full'}`}> 
           <div className="bg-neutral-900/90 backdrop-blur-lg rounded-2xl shadow-2xl p-3 flex flex-col gap-2 border border-neutral-800">
           {/* Audio element (hidden) */}
           {audioUrl && (
@@ -1297,17 +1326,18 @@ export default function AudioPlayer({
                   setDisplayedCurrentTime(0);
                 }
               }}
+              aria-label="Audio playback element"
             />
           )}
           {/* Top: Track info and sync status */}
           <div className="flex items-center justify-between mb-1">
-            <div className="text-xs text-white font-semibold truncate max-w-[60%]">
+            <div className="text-xs text-white font-semibold truncate max-w-[60%]" id="now-playing-label">
               Now Playing
             </div>
             <div className="flex items-center gap-1">
               <SyncStatus status={syncStatus} />
               {microCorrectionActive && (
-                <span title="Fine-tuning playback for micro-drift" className="ml-1 animate-pulse text-blue-400" style={{fontSize: 16, verticalAlign: 'middle'}}>
+                <span title="Fine-tuning playback for micro-drift" className="ml-1 animate-pulse text-blue-400" style={{fontSize: 16, verticalAlign: 'middle'}} aria-live="polite">
                   <svg width="16" height="16" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="10" cy="10" r="7" stroke="currentColor" strokeWidth="2" fill="none"/><path d="M10 5v5l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
                 </span>
               )}
@@ -1316,16 +1346,17 @@ export default function AudioPlayer({
                 onClick={startLatencyWizard}
                 title="Calibrate device audio latency"
                 style={{fontSize: 11, fontWeight: 500}}
+                aria-label="Calibrate device audio latency"
               >
                 Calibrate Latency
               </button>
               {isController && (
-                <span className="ml-1 px-2 py-0.5 bg-primary/20 text-primary text-[10px] rounded font-bold">Controller</span>
+                <span className="ml-1 px-2 py-0.5 bg-primary/20 text-primary text-[10px] rounded font-bold" aria-label="You are the controller">Controller</span>
               )}
             </div>
           </div>
           {/* Track Title */}
-          <div className="mb-2 text-center min-h-[1.5em] relative flex items-center justify-center" style={{height: '1.5em'}}>
+          <div className="mb-2 text-center min-h-[1.5em] relative flex items-center justify-center" style={{height: '1.5em'}} aria-labelledby="now-playing-label">
             <span
               className={`inline-block mt-6 text-md font-semibold text-white transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]
                 ${animating && direction === 'up' ? 'opacity-0 translate-x-6 scale-95' : ''}
@@ -1336,13 +1367,14 @@ export default function AudioPlayer({
                 willChange: 'opacity, transform',
                 transitionProperty: 'opacity, transform',
               }}
+              aria-live="polite"
             >
               {displayedTitle || 'Unknown Track'}
             </span>
           </div>
           {/* Progress bar */}
           <div className="flex items-center gap-2 w-full">
-            <span className="text-[11px] text-neutral-400 w-8 text-left font-mono">{formatTime(displayedCurrentTime)}</span>
+            <span className="text-[11px] text-neutral-400 w-8 text-left font-mono" aria-label="Current time">{formatTime(displayedCurrentTime)}</span>
             <input
               type="range"
               min={0}
@@ -1353,8 +1385,13 @@ export default function AudioPlayer({
               className="flex-1 h-3 bg-neutral-800 rounded-full appearance-none cursor-pointer accent-primary"
               style={{ WebkitAppearance: 'none', appearance: 'none' }}
               disabled={disabled || !isController || !audioUrl}
+              aria-label="Seek audio position"
+              aria-valuenow={displayedCurrentTime}
+              aria-valuemax={duration}
+              aria-valuemin={0}
+              tabIndex={0}
             />
-            <span className="text-[11px] text-neutral-400 w-8 text-right font-mono">{formatTime(duration)}</span>
+            <span className="text-[11px] text-neutral-400 w-8 text-right font-mono" aria-label="Total duration">{formatTime(duration)}</span>
           </div>
           {/* Controls row */}
           <div className="flex items-center justify-between mt-1">
@@ -1363,6 +1400,8 @@ export default function AudioPlayer({
               onClick={isPlaying ? handlePause : handlePlay}
               disabled={disabled || !isController || !audioUrl}
               aria-label={isPlaying ? 'Pause' : 'Play'}
+              tabIndex={0}
+              onKeyDown={e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); (isPlaying ? handlePause : handlePlay)(); } }}
             >
               {isPlaying ? (
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
@@ -1380,7 +1419,9 @@ export default function AudioPlayer({
               }`}
               onClick={handleResync}
               disabled={disabled || !audioUrl || resyncInProgress}
-              aria-label="Re-sync"
+              aria-label="Re-sync audio"
+              tabIndex={0}
+              onKeyDown={e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); handleResync(); } }}
             >
               {resyncInProgress ? (
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
@@ -1474,15 +1515,15 @@ export default function AudioPlayer({
 
   // --- DESKTOP/DEFAULT LAYOUT (unchanged) ---
   if (loading) {
-    return <LoadingSpinner size="lg" text="Loading audio..." />;
+    return <LoadingSpinner size="lg" text="Loading audio..." role="status" aria-live="polite" />;
   }
 
   if (audioError) {
     return (
-      <div className="p-6 bg-neutral-900/50 rounded-lg border border-neutral-800 animate-fade-in">
+      <div className="p-6 bg-neutral-900/50 rounded-lg border border-neutral-800 animate-fade-in" role="alert" aria-live="assertive">
         <div className="flex items-center gap-3 mb-4">
           <div className="w-10 h-10 bg-red-500/20 rounded-lg flex items-center justify-center">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-red-500" viewBox="0 0 20 20" fill="currentColor">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-red-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
               <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v4.5a.75.75 0 001.5 0v-4.5zm-.75 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
             </svg>
           </div>
@@ -1497,7 +1538,7 @@ export default function AudioPlayer({
   }
 
   return (
-    <div className={`audio-player transition-all duration-500 ${audioLoaded.animationClass}`}>
+    <div className={`audio-player transition-all duration-500 ${audioLoaded.animationClass}`} role="region" aria-label="Audio Player">
       {errorBanner && (
   <div style={{
     position: 'fixed',
@@ -1513,7 +1554,7 @@ export default function AudioPlayer({
     fontWeight: 'bold',
     boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
     border: '2px solid #991b1b',
-  }}>
+  }} role="alert" aria-live="assertive">
     {errorBanner}
   </div>
 )}
@@ -1533,12 +1574,12 @@ export default function AudioPlayer({
     boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
     border: '2px solid #1d4ed8',
     cursor: 'pointer',
-  }} onClick={() => { setEdgeCaseBanner(null); handleResync(); }}>
+  }} onClick={() => { setEdgeCaseBanner(null); handleResync(); }} role="status" aria-live="polite">
     {edgeCaseBanner} <span style={{fontWeight:400, fontSize:13, marginLeft:8}}>(Click to re-sync now)</span>
   </div>
 )}
       {/* Track Title */}
-      <div className="mb-2 text-center min-h-[1.5em] relative flex items-center justify-center" style={{height: '1.5em'}}>
+      <div className="mb-2 text-center min-h-[1.5em] relative flex items-center justify-center" style={{height: '1.5em'}} aria-label="Track title">
         <span
           className={`inline-block text-lg font-semibold text-white transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]
             ${animating && direction === 'up' ? 'opacity-0 translate-x-6 scale-95' : ''}
@@ -1549,6 +1590,7 @@ export default function AudioPlayer({
             willChange: 'opacity, transform',
             transitionProperty: 'opacity, transform',
           }}
+          aria-live="polite"
         >
           {displayedTitle || 'Unknown Track'}
         </span>
@@ -1567,6 +1609,7 @@ export default function AudioPlayer({
               setDisplayedCurrentTime(0);
             }
           }}
+          aria-label="Audio playback element"
         />
       ) : null}
 
@@ -1585,7 +1628,7 @@ export default function AudioPlayer({
             <p className="text-neutral-400 text-sm">Synchronized audio stream</p>
           </div>
           <div className="text-right">
-            <div className="text-white font-mono text-sm">
+            <div className="text-white font-mono text-sm" aria-label="Current time and duration">
               {formatTime(displayedCurrentTime)} / {formatTime(duration)}
             </div>
             <div className="text-neutral-400 text-xs">Duration</div>
@@ -1607,6 +1650,11 @@ export default function AudioPlayer({
               appearance: 'none',
             }}
             disabled={disabled || !isController || !audioUrl}
+            aria-label="Seek audio position"
+            aria-valuenow={displayedCurrentTime}
+            aria-valuemax={duration}
+            aria-valuemin={0}
+            tabIndex={0}
           />
         </div>
 
@@ -1621,6 +1669,9 @@ export default function AudioPlayer({
               } disabled:opacity-50 disabled:cursor-not-allowed`}
               onClick={isPlaying ? handlePause : handlePlay}
               disabled={disabled || !isController || !audioUrl}
+              aria-label={isPlaying ? 'Pause' : 'Play'}
+              tabIndex={0}
+              onKeyDown={e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); (isPlaying ? handlePause : handlePlay)(); } }}
             >
               {isPlaying ? (
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1644,6 +1695,9 @@ export default function AudioPlayer({
               }`}
               onClick={handleResync}
               disabled={disabled || !audioUrl || resyncInProgress}
+              aria-label="Re-sync audio"
+              tabIndex={0}
+              onKeyDown={e => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); handleResync(); } }}
             >
               {resyncInProgress ? (
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
@@ -1690,11 +1744,11 @@ export default function AudioPlayer({
     fontSize: 15,
     maxWidth: 340,
     boxShadow: '0 2px 8px rgba(0,0,0,0.25)'
-  }}>
+  }} role="region" aria-label="Audio Latency Calibration Panel">
     <div style={{fontWeight: 'bold', marginBottom: 8}}>Audio Latency Calibration</div>
     <div>Measured: <b>{audioLatency.toFixed(3)}s</b></div>
-    <div>Override: <input type="number" step="0.001" min="0" max="1" value={manualLatency ?? ''} onChange={e => setManualLatency(parseFloat(e.target.value) || 0)} style={{width: 80, marginLeft: 8}} /> s</div>
-    <button style={{marginTop: 10, padding: '4px 10px', borderRadius: 6, background: '#444', color: '#fff', border: 'none', cursor: 'pointer'}} onClick={() => { setManualLatency(null); localStorage.removeItem('audioLatencyOverride'); }}>Reset</button>
+    <div>Override: <input type="number" step="0.001" min="0" max="1" value={manualLatency ?? ''} onChange={e => setManualLatency(parseFloat(e.target.value) || 0)} style={{width: 80, marginLeft: 8}} aria-label="Manual latency override" /> s</div>
+    <button style={{marginTop: 10, padding: '4px 10px', borderRadius: 6, background: '#444', color: '#fff', border: 'none', cursor: 'pointer'}} onClick={() => { setManualLatency(null); localStorage.removeItem('audioLatencyOverride'); }} aria-label="Reset latency override">Reset</button>
     <div style={{color:'#aaa', fontSize:12, marginTop:8}}>Press <b>L</b> to toggle this panel.</div>
   </div>
 )}

@@ -5,6 +5,7 @@ import CreateRoomPage from './components/CreateRoomPage'
 import useSocket from './hooks/useSocket'
 import './App.css'
 import ErrorBoundary from './components/ErrorBoundary'
+import { ToastProvider } from './components/ToastProvider'
 
 // Enhanced App component with better state management and routing
 function App() {
@@ -71,62 +72,64 @@ function App() {
 
   return (
     <ErrorBoundary>
-      <Router>
-        <div className="app-container">
-          <Routes>
-            <Route
-              path="/"
-              element={
-                <SessionPage
-                  currentSessionId={currentSessionId}
-                  setCurrentSessionId={handleSessionJoin}
-                  displayName={displayName}
-                  setDisplayName={setDisplayName}
-                  onLeaveSession={handleSessionLeave}
-                  {...socketStuff}
-                  sessionSyncState={sessionSyncState}
-                  setSessionSyncState={setSessionSyncState}
-                  rtt={rtt}
-                  timeOffset={timeOffset}
-                  jitter={jitter}
-                  drift={drift}
-                  forceNtpBatchSync={forceNtpBatchSync}
-                />
-              }
-            />
-            <Route
-              path="/create-room"
-              element={
-                <CreateRoomPage
-                  setCurrentSessionId={handleSessionJoin}
-                  setDisplayName={setDisplayName}
-                  currentDisplayName={displayName}
-                />
-              }
-            />
-            <Route
-              path="/:sessionId"
-              element={
-                <SessionPage
-                  currentSessionId={currentSessionId}
-                  setCurrentSessionId={handleSessionJoin}
-                  displayName={displayName}
-                  setDisplayName={setDisplayName}
-                  onLeaveSession={handleSessionLeave}
-                  {...socketStuff}
-                  sessionSyncState={sessionSyncState}
-                  setSessionSyncState={setSessionSyncState}
-                  rtt={rtt}
-                  timeOffset={timeOffset}
-                  jitter={jitter}
-                  drift={drift}
-                  forceNtpBatchSync={forceNtpBatchSync}
-                />
-              }
-            />
-          </Routes>
-        </div>
-      </Router>
+      <ToastProvider>
+        <Router>
+          <div className="app-container">
+            <Routes>
+              <Route
+                path="/"
+                element={
+                  <SessionPage
+                    currentSessionId={currentSessionId}
+                    setCurrentSessionId={handleSessionJoin}
+                    displayName={displayName}
+                    setDisplayName={setDisplayName}
+                    onLeaveSession={handleSessionLeave}
+                    {...socketStuff}
+                    sessionSyncState={sessionSyncState}
+                    setSessionSyncState={setSessionSyncState}
+                    rtt={rtt}
+                    timeOffset={timeOffset}
+                    jitter={jitter}
+                    drift={drift}
+                    forceNtpBatchSync={forceNtpBatchSync}
+                  />
+                }
+              />
+              <Route
+                path="/create-room"
+                element={
+                  <CreateRoomPage
+                    setCurrentSessionId={handleSessionJoin}
+                    setDisplayName={setDisplayName}
+                    currentDisplayName={displayName}
+                  />
+                }
+              />
+              <Route
+                path="/:sessionId"
+                element={
+                  <SessionPage
+                    currentSessionId={currentSessionId}
+                    setCurrentSessionId={handleSessionJoin}
+                    displayName={displayName}
+                    setDisplayName={setDisplayName}
+                    onLeaveSession={handleSessionLeave}
+                    {...socketStuff}
+                    sessionSyncState={sessionSyncState}
+                    setSessionSyncState={setSessionSyncState}
+                    rtt={rtt}
+                    timeOffset={timeOffset}
+                    jitter={jitter}
+                    drift={drift}
+                    forceNtpBatchSync={forceNtpBatchSync}
+                  />
+                }
+              />
+            </Routes>
+          </div>
+        </Router>
+      </ToastProvider>
     </ErrorBoundary>
   )
 }

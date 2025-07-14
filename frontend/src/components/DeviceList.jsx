@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useStaggeredAnimation } from '../hooks/useSmoothAppearance';
+import { useToast } from './ToastProvider';
 
 const DeviceList = React.memo(function DeviceList({ clients = [], controllerClientId, clientId, socket, mobile = false, isAudioTabActive = false }) {
   const isController = controllerClientId && clientId && controllerClientId === clientId;
   const [shouldAnimate, setShouldAnimate] = useState(false);
+  const { showToast } = useToast();
   
   // Smooth staggered animation for client list
   const clientAnimations = useStaggeredAnimation(clients, 50, 'animate-slide-in-left');
@@ -42,6 +44,7 @@ const DeviceList = React.memo(function DeviceList({ clients = [], controllerClie
         console.log('Controller offer sent successfully');
       } else {
         console.warn('Failed to send controller offer:', res);
+        showToast('Failed to send controller offer', { type: 'error' });
       }
     });
   };
@@ -79,13 +82,15 @@ const DeviceList = React.memo(function DeviceList({ clients = [], controllerClie
               <p className="text-neutral-500 text-xs mt-1">Share the room code to invite others</p>
             </div>
           ) : (
-            <ul className="divide-y divide-neutral-800">
+            <ul className="divide-y divide-neutral-800" role="list" aria-label="Connected devices">
               {clients.map((c, index) => (
                 <li
                   key={c.id}
                   className={`flex items-center px-3 py-3 transition-all duration-300 group gap-3 ${
                     c.clientId === controllerClientId ? 'bg-primary/10 border-l-4 border-l-primary' : 'hover:bg-neutral-800/60'
                   } ${clientAnimations[index]?.animationClass || ''}`}
+                  role="listitem"
+                  aria-label={c.displayName || c.clientId || c.id}
                 >
                   <div className={`w-9 h-9 rounded-full flex items-center justify-center ${
                     c.clientId === controllerClientId ? 'bg-primary/20' : 'bg-neutral-800'
@@ -122,6 +127,8 @@ const DeviceList = React.memo(function DeviceList({ clients = [], controllerClie
                       onClick={() => handleOfferController(c.clientId)}
                       className="ml-2 px-3 py-1.5 bg-gradient-to-r from-neutral-900/90 via-neutral-800/80 to-neutral-900/90 hover:from-neutral-800/95 hover:via-neutral-700/90 hover:to-neutral-800/95 text-neutral-300 hover:text-white text-xs font-semibold rounded-lg transition-all duration-500 hover:scale-105 flex items-center gap-2 shadow-lg border border-neutral-700/40 hover:border-neutral-600/60 backdrop-blur-md"
                       title={`Offer controller role to ${c.displayName || c.clientId}`}
+                      aria-label={`Offer controller role to ${c.displayName || c.clientId}`}
+                      role="button"
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-400 group-hover:text-white transition-all duration-500">
                         <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
@@ -175,13 +182,15 @@ const DeviceList = React.memo(function DeviceList({ clients = [], controllerClie
             <p className="text-neutral-500 text-xs mt-1">Share the room code to invite others</p>
           </div>
         ) : (
-          <ul className="divide-y divide-neutral-800">
+          <ul className="divide-y divide-neutral-800" role="list" aria-label="Connected devices">
             {clients.map((c, index) => (
               <li
                 key={c.id}
                 className={`flex items-center p-4 transition-all duration-300 group ${
                   c.clientId === controllerClientId ? 'bg-primary/10 border-l-4 border-l-primary' : 'hover:bg-neutral-800/50'
                 } ${clientAnimations[index]?.animationClass || ''}`}
+                role="listitem"
+                aria-label={c.displayName || c.clientId || c.id}
               >
                 <div className="flex items-center gap-3 flex-1">
                   <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
@@ -225,6 +234,8 @@ const DeviceList = React.memo(function DeviceList({ clients = [], controllerClie
                       onClick={() => handleOfferController(c.clientId)}
                       className="relative px-4 py-2.5 bg-gradient-to-r from-neutral-900/90 via-neutral-800/80 to-neutral-900/90 hover:from-neutral-800/95 hover:via-neutral-700/90 hover:to-neutral-800/95 text-neutral-300 hover:text-white text-xs font-semibold rounded-xl transition-all duration-500 hover:scale-105 flex items-center gap-2.5 shadow-2xl hover:shadow-neutral-900/50 border border-neutral-700/40 hover:border-neutral-600/60 backdrop-blur-md group/btn overflow-hidden"
                       title={`Offer controller role to ${c.displayName || c.clientId}`}
+                      aria-label={`Offer controller role to ${c.displayName || c.clientId}`}
+                      role="button"
                     >
                       {/* Animated background gradient */}
                       <div className="absolute inset-0 bg-gradient-to-r from-neutral-600/10 via-neutral-500/5 to-neutral-600/10 opacity-0 group-hover/btn:opacity-100 transition-opacity duration-700 animate-pulse"></div>

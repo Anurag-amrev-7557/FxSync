@@ -3,6 +3,7 @@ import { useStaggeredAnimation } from '../hooks/useSmoothAppearance';
 import { InlineLoadingSpinner } from './LoadingSpinner';
 import { getClientId } from '../utils/clientId';
 import jsmediatags from 'jsmediatags/dist/jsmediatags.min.js';
+import { useToast } from './ToastProvider';
 
 const Playlist = React.memo(function Playlist({ queue = [], isController, socket, sessionId, onSelectTrack, selectedTrackIdx }) {
   const [input, setInput] = useState('');
@@ -14,6 +15,7 @@ const Playlist = React.memo(function Playlist({ queue = [], isController, socket
   const [allTracks, setAllTracks] = useState([]);
   const [allTracksLoading, setAllTracksLoading] = useState(true);
   const [allTracksError, setAllTracksError] = useState(null);
+  const { showToast } = useToast();
   
   // Smooth staggered animation for queue items
   const queueAnimations = useStaggeredAnimation(queue, 60, 'animate-slide-in-left');
@@ -101,7 +103,7 @@ const Playlist = React.memo(function Playlist({ queue = [], isController, socket
                 setUploading(false);
                 setUploadProgress(0);
                 setSelectedFile(null);
-                alert('Upload failed');
+                showToast('Upload failed', { type: 'error' });
                 reject();
               }
             };
@@ -109,7 +111,7 @@ const Playlist = React.memo(function Playlist({ queue = [], isController, socket
               setUploading(false);
               setUploadProgress(0);
               setSelectedFile(null);
-              alert('Upload failed');
+              showToast('Upload failed', { type: 'error' });
               reject();
             };
             xhr.send(formData);
@@ -118,7 +120,7 @@ const Playlist = React.memo(function Playlist({ queue = [], isController, socket
           setUploading(false);
           setUploadProgress(0);
           setSelectedFile(null);
-          alert('Upload failed');
+          showToast('Upload failed', { type: 'error' });
         }
         // Reset file input
         e.target.value = '';
@@ -151,7 +153,7 @@ const Playlist = React.memo(function Playlist({ queue = [], isController, socket
                 setUploading(false);
                 setUploadProgress(0);
                 setSelectedFile(null);
-                alert('Upload failed');
+                showToast('Upload failed', { type: 'error' });
                 reject();
               }
             };
@@ -159,7 +161,7 @@ const Playlist = React.memo(function Playlist({ queue = [], isController, socket
               setUploading(false);
               setUploadProgress(0);
               setSelectedFile(null);
-              alert('Upload failed');
+              showToast('Upload failed', { type: 'error' });
               reject();
             };
             xhr.send(formData);
@@ -168,7 +170,7 @@ const Playlist = React.memo(function Playlist({ queue = [], isController, socket
           setUploading(false);
           setUploadProgress(0);
           setSelectedFile(null);
-          alert('Upload failed');
+          showToast('Upload failed', { type: 'error' });
         }
         // Reset file input
         e.target.value = '';
@@ -254,12 +256,16 @@ const Playlist = React.memo(function Playlist({ queue = [], isController, socket
                     disabled={uploading}
                     ref={fileInputRef}
                     className="hidden"
+                    aria-label="Upload audio file"
+                    role="button"
                   />
                   <button
                     type="button"
                     onClick={handleUploadClick}
                     disabled={uploading}
                     className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 bg-neutral-800 hover:bg-primary/80 text-white rounded-lg text-sm font-medium border border-neutral-700 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                    aria-label="Upload track"
+                    role="button"
                     title="Upload MP3"
                   >
                     <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary">

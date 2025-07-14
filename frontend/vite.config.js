@@ -1,5 +1,6 @@
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
+import { visualizer } from 'rollup-plugin-visualizer';
 
 // Load environment variables based on the current mode
 export default defineConfig(({ mode }) => {
@@ -9,7 +10,7 @@ export default defineConfig(({ mode }) => {
   const backendUrl = env.VITE_BACKEND_URL || 'http://localhost:4000';
 
   return {
-    plugins: [react()],
+    plugins: [react(), visualizer({ open: true })],
     server: {
       proxy: {
         '/audio-url': backendUrl,

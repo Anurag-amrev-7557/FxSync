@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useStaggeredAnimation } from '../hooks/useSmoothAppearance';
 import { InlineLoadingSpinner } from './LoadingSpinner';
+import { useToast } from './ToastProvider';
 
 const EMOJIS = ['🎵', '👏', '🔥', '😂', '😍', '👍', '❤️', '🎉'];
 
@@ -12,6 +13,7 @@ const ChatBox = React.memo(function ChatBox({ socket, sessionId, clientId, messa
   
   // Smooth animation for new messages
   const messageAnimations = useStaggeredAnimation(messages, 30, 'animate-slide-in-right');
+  const { showToast } = useToast();
 
   // Trigger animation for mobile chat input
   useEffect(() => {
@@ -68,7 +70,9 @@ const ChatBox = React.memo(function ChatBox({ socket, sessionId, clientId, messa
     }
     // Listen for chat message responses
     const handleChatResponse = (data) => {};
-    const handleError = (error) => {};
+    const handleError = (error) => {
+      showToast('Chat error occurred', { type: 'error' });
+    };
     const handleConnect = () => {};
     const handleDisconnect = () => {};
     socket.on('chat_response', handleChatResponse);
@@ -161,11 +165,15 @@ const ChatBox = React.memo(function ChatBox({ socket, sessionId, clientId, messa
                     onChange={e => setInput(e.target.value)}
                     placeholder={!socket ? "Connecting..." : "Type a message..."}
                     disabled={sending || !socket}
+                    aria-label="Chat message input"
+                    role="textbox"
                   />
                   <button
                     type="submit"
                     className="px-4 py-2 bg-white hover:bg-primary/90 text-black rounded-full text-sm font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                     disabled={sending || !input.trim() || !socket}
+                    aria-label="Send chat message"
+                    role="button"
                   >
                     {sending ? (
                       <>
@@ -266,11 +274,15 @@ const ChatBox = React.memo(function ChatBox({ socket, sessionId, clientId, messa
               onChange={e => setInput(e.target.value)}
               placeholder={!socket ? "Connecting..." : "Type a message..."}
               disabled={sending || !socket}
+              aria-label="Chat message input"
+              role="textbox"
             />
             <button
               type="submit"
               className="px-4 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg text-sm font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               disabled={sending || !input.trim() || !socket}
+              aria-label="Send chat message"
+              role="button"
             >
               {sending ? (
                 <>
