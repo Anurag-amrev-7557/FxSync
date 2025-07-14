@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 /**
  * Enhanced custom hook for smooth element appearance with advanced features
@@ -8,14 +8,11 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
  * @param {string} options.animationClass - Tailwind animation class to use
  * @param {string} options.enterClass - Custom enter animation class
  * @param {string} options.exitClass - Custom exit animation class
- * @param {number} options.enterDuration - Enter animation duration (ms)
- * @param {number} options.exitDuration - Exit animation duration (ms)
- * @param {boolean} options.spring - Use springy cubic-bezier for timing
  * @param {boolean} options.persistent - Whether to keep animation state after completion
  * @param {Function} options.onEnter - Callback when element enters
  * @param {Function} options.onExit - Callback when element exits
  * @param {boolean} options.resetOnShow - Whether to reset animation when showing again
- * @returns {object} - { isVisible, animationClass: string, hasAnimated, isEntering, isExiting, animationKey, transformStyles }
+ * @returns {object} - { isVisible, animationClass: string, hasAnimated, isExiting }
  */
 export default function useSmoothAppearance(shouldShow, options = {}) {
   const {
@@ -23,125 +20,100 @@ export default function useSmoothAppearance(shouldShow, options = {}) {
     animationClass = 'animate-fade-in',
     enterClass = 'animate-slide-up',
     exitClass = 'animate-slide-down',
-    enterDuration = 200,
-    exitDuration = 200,
-    spring = false,
     persistent = false,
     onEnter,
     onExit,
     resetOnShow = false
   } = options;
 
-  // Reduced motion detection
-  const prefersReducedMotion = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
   const [isVisible, setIsVisible] = useState(false);
   const [hasAnimated, setHasAnimated] = useState(false);
   const [isExiting, setIsExiting] = useState(false);
-  const [isEntering, setIsEntering] = useState(false);
   const [animationKey, setAnimationKey] = useState(0);
 
-  const timerRef = useRef();
-  const animationTimerRef = useRef();
-  const exitTimerRef = useRef();
-
   useEffect(() => {
-    // Cleanup any previous timers
-    if (timerRef.current) clearTimeout(timerRef.current);
-    if (animationTimerRef.current) clearTimeout(animationTimerRef.current);
-    if (exitTimerRef.current) clearTimeout(exitTimerRef.current);
-
     if (shouldShow && !isVisible) {
+      // Reset animation state if needed
       if (resetOnShow) {
         setHasAnimated(false);
         setAnimationKey(prev => prev + 1);
       }
-      timerRef.current = setTimeout(() => {
+
+      const timer = setTimeout(() => {
         setIsVisible(true);
         setIsExiting(false);
-        setIsEntering(true);
-        animationTimerRef.current = setTimeout(() => {
+        
+        // Trigger enter animation
+        const animationTimer = setTimeout(() => {
           setHasAnimated(true);
-          setIsEntering(false);
           if (onEnter) onEnter();
-        }, prefersReducedMotion ? 0 : enterDuration);
+        }, 50); // Small delay to ensure DOM update
+
+        return () => clearTimeout(animationTimer);
       }, delay);
-      return () => {
-        if (timerRef.current) clearTimeout(timerRef.current);
-        if (animationTimerRef.current) clearTimeout(animationTimerRef.current);
-      };
+
+      return () => clearTimeout(timer);
     } else if (!shouldShow && isVisible) {
+      // Handle exit animation
       setIsExiting(true);
-      setIsEntering(false);
-      exitTimerRef.current = setTimeout(() => {
+      
+      const exitTimer = setTimeout(() => {
         setIsVisible(false);
         if (!persistent) {
           setHasAnimated(false);
         }
-        setIsExiting(false);
         if (onExit) onExit();
-      }, prefersReducedMotion ? 0 : exitDuration);
-      return () => {
-        if (exitTimerRef.current) clearTimeout(exitTimerRef.current);
-      };
-    }
-    // Cleanup on unmount
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-      if (animationTimerRef.current) clearTimeout(animationTimerRef.current);
-      if (exitTimerRef.current) clearTimeout(exitTimerRef.current);
-    };
-  }, [shouldShow, isVisible, delay, persistent, resetOnShow, onEnter, onExit, enterDuration, exitDuration, prefersReducedMotion]);
+      }, 300); // Exit animation duration
 
-  // Memoized animation class logic
-  const memoizedAnimationClass = useMemo(() => {
-    if (prefersReducedMotion) return '';
-    const willChange = 'will-change-transform will-change-opacity';
-    const springy = spring ? 'transition-all' : '';
-    const timing = spring ? 'ease-[cubic-bezier(0.22,1,0.36,1)]' : 'ease-in-out';
-    const enter = `transition-all ${timing} duration-[${enterDuration}ms] ${willChange}`;
-    const exit = `transition-all ${timing} duration-[${exitDuration}ms] ${willChange}`;
-    if (!isVisible) return `${exit} opacity-0 scale-95 pointer-events-none`;
-    if (isExiting) return `${exit} opacity-0 scale-95 pointer-events-none`;
-    if (isEntering) return `${enter} opacity-100 scale-100`;
-    if (!hasAnimated) return `${enter} opacity-100 scale-100`;
-    return persistent ? '' : `opacity-100 scale-100 ${willChange}`;
-  }, [prefersReducedMotion, spring, enterDuration, exitDuration, isVisible, isExiting, isEntering, hasAnimated, persistent]);
-
-  // Memoized transform styles
-  const memoizedTransformStyles = useMemo(() => {
-    if (prefersReducedMotion) {
-      return { opacity: isVisible ? 1 : 0, transform: 'none' };
+      return () => clearTimeout(exitTimer);
     }
+  }, [shouldShow, isVisible, delay, persistent, resetOnShow, onEnter, onExit]);
+
+  // Enhanced animation class logic
+  const getAnimationClass = () => {
+    if (!isVisible) return 'opacity-0 scale-95';
+    
+    if (isExiting) {
+      return `${exitClass} opacity-0 scale-95`;
+    }
+    
+    if (!hasAnimated) {
+      return `${animationClass} ${enterClass}`;
+    }
+    
+    return persistent ? '' : 'opacity-100 scale-100';
+  };
+
+  // Get transform styles for additional control
+  const getTransformStyles = () => {
     if (!isVisible) {
       return {
         transform: 'translateY(20px) scale(0.95)',
-        opacity: 0,
-        willChange: 'transform, opacity'
+        opacity: 0
       };
     }
+    
     if (isExiting) {
       return {
         transform: 'translateY(-20px) scale(0.95)',
-        opacity: 0,
-        willChange: 'transform, opacity'
+        opacity: 0
       };
     }
+    
     return {
       transform: 'translateY(0) scale(1)',
-      opacity: 1,
-      willChange: 'transform, opacity'
+      opacity: 1
     };
-  }, [prefersReducedMotion, isVisible, isExiting]);
+  };
 
   return {
     isVisible,
-    animationClass: memoizedAnimationClass,
+    animationClass: getAnimationClass(),
     hasAnimated,
-    isEntering,
     isExiting,
     animationKey,
-    transformStyles: memoizedTransformStyles,
+    transformStyles: getTransformStyles(),
+    // Utility methods
     reset: () => {
       setHasAnimated(false);
       setAnimationKey(prev => prev + 1);
@@ -150,13 +122,11 @@ export default function useSmoothAppearance(shouldShow, options = {}) {
       setIsVisible(true);
       setHasAnimated(true);
       setIsExiting(false);
-      setIsEntering(false);
     },
     forceHide: () => {
       setIsVisible(false);
       setHasAnimated(false);
       setIsExiting(false);
-      setIsEntering(false);
     }
   };
 }
@@ -187,30 +157,33 @@ export function useStaggeredAnimation(items, options = {}) {
   const [isComplete, setIsComplete] = useState(false);
   const [isLooping, setIsLooping] = useState(false);
 
-  const timersRef = useRef([]);
-
   const resetAnimations = useCallback(() => {
     setAnimatedItems(new Set());
     setIsComplete(false);
-    timersRef.current.forEach(timer => clearTimeout(timer));
-    timersRef.current = [];
   }, []);
 
   const startAnimation = useCallback(() => {
     if (!items || items.length === 0) return;
+
     resetAnimations();
+    const timers = [];
     const itemIndices = reverse ? 
       Array.from({ length: items.length }, (_, i) => items.length - 1 - i) : 
       Array.from({ length: items.length }, (_, i) => i);
+
     itemIndices.forEach((index, i) => {
       const timer = setTimeout(() => {
         setAnimatedItems(prev => {
           const newSet = new Set([...prev, index]);
+          
+          // Check if all items are animated
           if (newSet.size === items.length) {
             setIsComplete(true);
             if (onAnimationComplete) {
               onAnimationComplete();
             }
+            
+            // Handle looping
             if (loop && !isLooping) {
               setIsLooping(true);
               setTimeout(() => {
@@ -219,22 +192,23 @@ export function useStaggeredAnimation(items, options = {}) {
               }, loopDelay);
             }
           }
+          
           return newSet;
         });
       }, i * staggerDelay);
-      timersRef.current.push(timer);
+      timers.push(timer);
     });
-    return timersRef.current;
-  }, [items, staggerDelay, reverse, loop, loopDelay, onAnimationComplete, isLooping, resetAnimations, setIsComplete, setAnimatedItems, setIsLooping]);
+
+    return timers;
+  }, [items, staggerDelay, reverse, loop, loopDelay, onAnimationComplete, isLooping, resetAnimations]);
 
   useEffect(() => {
     const timers = startAnimation();
+    
     return () => {
       if (timers) {
         timers.forEach(timer => clearTimeout(timer));
       }
-      timersRef.current.forEach(timer => clearTimeout(timer));
-      timersRef.current = [];
     };
   }, [startAnimation]);
 

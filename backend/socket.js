@@ -807,32 +807,48 @@ export function setupSocket(io) {
     });
 
     socket.on('disconnect', () => {
-      // Find all sessions this socket was part of
-      const sessions = getAllSessions();
-      for (const session of sessions) {
-        if (!session.clients.has(socket.id)) continue;
-        const clientId = getClientIdBySocket(session.sessionId, socket.id);
-        removeClient(session.sessionId, socket.id);
-
-        // If the controller disconnected, run election
-        if (session.controllerClientId === clientId) {
-          // Get all remaining clientIds
-          const clients = getClients(session.sessionId);
-          if (clients.length > 0) {
-            // Elect the lowest clientId as new controller
-            const newControllerClientId = clients.map(c => c.clientId).sort()[0];
-            setController(session.sessionId, newControllerClientId);
-            io.to(session.sessionId).emit('controller_client_change', newControllerClientId);
-            io.to(session.sessionId).emit('controller_change', getSocketIdByClientId(session.sessionId, newControllerClientId));
-            // Optionally, emit sync_state to update everyone
-            io.to(session.sessionId).emit('sync_state', buildSessionSyncState(session));
-          } else {
-            // No clients left, clear controller
-            session.controllerClientId = null;
-            session.controllerId = null;
-          }
+      for (const [sessionId, session] of Object.entries(getAllSessions())) {
+        const clientId = getClientIdBySocket(sessionId, socket.id);
+        removeClient(sessionId, socket.id);
+        // Clean up any pending controller requests from this client
+        if (clientId) {
+          removeControllerRequest(sessionId, clientId);
         }
-        io.to(session.sessionId).emit('clients_update', getClients(session.sessionId));
+        if (session.controllerId === socket.id) {
+          const newSocketId = getSocketIdByClientId(sessionId, session.controllerClientId);
+          session.controllerId = newSocketId;
+          io.to(sessionId).emit('controller_change', newSocketId);
+        }
+        // Only delete files if the session is now empty
+        if (getClients(sessionId).length === 0) {
+          // Delete all files for this session (user uploads only)
+          const sessionFiles = getSessionFiles(sessionId);
+          const uploadsDir = path.join(process.cwd(), 'uploads');
+          const samplesDir = path.join(uploadsDir, 'samples');
+          const sampleFiles = fs.existsSync(samplesDir) ? new Set(fs.readdirSync(samplesDir)) : new Set();
+          Object.values(sessionFiles).forEach(fileList => {
+            fileList.forEach(filename => {
+              // Only delete files that are NOT in the samples directory and not a sample file
+              if (!filename.startsWith('samples/') && !sampleFiles.has(filename)) {
+                const filePath = path.join(uploadsDir, filename);
+                fs.unlink(filePath, (err) => {
+                  if (err) {
+                    console.error(`[CLEANUP] Failed to delete file ${filePath}:`, err);
+                  } else {
+                    log(`[CLEANUP] Deleted user-uploaded file: ${filePath}`);
+                  }
+                });
+              } else {
+                log(`[CLEANUP] Skipped sample file: ${filename}`);
+              }
+            });
+          });
+          removeSessionFiles(sessionId);
+          deleteSession(sessionId);
+          log(`[CLEANUP] Session deleted (empty): ${sessionId}`);
+        }
+        io.to(sessionId).emit('clients_update', getClients(sessionId));
+        io.to(sessionId).emit('controller_requests_update', getPendingControllerRequests(sessionId));
       }
       log('Socket disconnected:', socket.id);
     });

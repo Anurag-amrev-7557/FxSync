@@ -1,12 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 
 export default function useQueue(socket, initialQueue = [], pendingTrackIdxRef = null) {
   const [queue, setQueue] = useState(initialQueue);
   const [selectedTrackIdx, setSelectedTrackIdx] = useState(0);
   const [currentTrackOverride, setCurrentTrackOverride] = useState(null);
-  // Ref to always have latest queue in event handlers
-  const queueRef = useRef(queue);
-  useEffect(() => { queueRef.current = queue; }, [queue]);
 
   // Handle queue updates
   useEffect(() => {
@@ -44,14 +41,13 @@ export default function useQueue(socket, initialQueue = [], pendingTrackIdxRef =
         track = null;
       }
       if (typeof idx !== 'number' || idx < 0) return;
-      const currentQueue = queueRef.current;
-      if (!Array.isArray(currentQueue) || currentQueue.length === 0) {
+      if (!Array.isArray(queue) || queue.length === 0) {
         if (pendingTrackIdxRef) {
           pendingTrackIdxRef.current = idx;
           pendingTrackIdxRef.currentTrack = track;
         }
       } else {
-        const clampedIdx = Math.max(0, Math.min(idx, currentQueue.length - 1));
+        const clampedIdx = Math.max(0, Math.min(idx, queue.length - 1));
         setCurrentTrackOverride(track || null);
         setSelectedTrackIdx(clampedIdx);
       }
@@ -60,7 +56,7 @@ export default function useQueue(socket, initialQueue = [], pendingTrackIdxRef =
     return () => {
       socket.off('track_change', handleTrackChange);
     };
-  }, [socket, pendingTrackIdxRef]);
+  }, [socket, queue, pendingTrackIdxRef]);
 
   // Reset selected track if queue changes
   useEffect(() => {

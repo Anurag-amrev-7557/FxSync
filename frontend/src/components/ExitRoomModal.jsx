@@ -2,12 +2,10 @@ import React, { useEffect, useRef } from 'react'
 
 function ExitRoomModal({ isOpen, onClose, onConfirm, roomName }) {
   const modalRef = useRef(null);
-  const lastActiveElement = useRef(null);
 
   // Focus trap and ESC support
   useEffect(() => {
     if (!isOpen) return;
-    lastActiveElement.current = document.activeElement;
     const focusableSelectors = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
     const modal = modalRef.current;
     if (!modal) return;
@@ -39,17 +37,6 @@ function ExitRoomModal({ isOpen, onClose, onConfirm, roomName }) {
     modal.addEventListener('keydown', handleKeyDown);
     return () => modal.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
-
-  // Return focus to last active element after modal closes
-  useEffect(() => {
-    if (!isOpen && lastActiveElement.current) {
-      setTimeout(() => {
-        try {
-          lastActiveElement.current.focus();
-        } catch (e) {}
-      }, 0);
-    }
-  }, [isOpen]);
 
   if (!isOpen) return null
 
@@ -106,7 +93,6 @@ function ExitRoomModal({ isOpen, onClose, onConfirm, roomName }) {
           <button
             onClick={onClose}
             className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-neutral-800 hover:bg-neutral-700 text-white rounded-xl transition-all duration-200 hover:shadow-lg hover:scale-[1.02] font-medium"
-            aria-label="Cancel and stay in room"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -117,7 +103,6 @@ function ExitRoomModal({ isOpen, onClose, onConfirm, roomName }) {
           <button
             onClick={onConfirm}
             className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white rounded-xl transition-all duration-200 hover:shadow-lg hover:scale-[1.02] font-medium shadow-md"
-            aria-label="Confirm exit room and leave session"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>

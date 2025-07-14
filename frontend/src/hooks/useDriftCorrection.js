@@ -21,7 +21,7 @@ export function fadeAudio(audio, targetVolume, duration = 200) {
 }
 
 // Helper: Smoothly ramp playbackRate to 1 (with lock)
-export function rampPlaybackRate(audio, duration = 300, lockRef) {
+function rampPlaybackRate(audio, duration = 300, lockRef) {
   if (!audio) return;
   if (lockRef && lockRef.current) return; // Prevent overlap
   if (lockRef) lockRef.current = true;
@@ -76,8 +76,6 @@ export default function useDriftCorrection({
   sessionId,
   onDriftDetected, // optional callback for timer drift/throttling
   onMicroCorrection, // optional callback for micro-correction visual feedback
-  enableDriftAnalytics = false, // feature flag for localStorage writes
-  clockSkew = 0, // <-- new param
 }) {
   // Add a lock for ramp/fade overlap
   const rampLockRef = useRef(false);
@@ -89,21 +87,9 @@ export default function useDriftCorrection({
     let running = true;
     let lastFrameTime = performance.now();
     let microActive = false;
-    let rafId = null;
-    // --- Fast Sync State ---
-    let fastSyncActive = false;
-    let fastSyncDriftCount = 0;
-    // Pause RAF if audio is paused or tab is hidden
-    function isPausedOrHidden() {
-      return audio.paused || (typeof document !== 'undefined' && document.hidden);
-    }
     function correctMicroDriftRAF() {
       if (!running) return;
       if (!audio || isController) return;
-      if (isPausedOrHidden()) {
-        rafId = requestAnimationFrame(correctMicroDriftRAF);
-        return;
-      }
       const nowFrame = performance.now();
       const frameElapsed = nowFrame - lastFrameTime;
       lastFrameTime = nowFrame;
@@ -113,58 +99,16 @@ export default function useDriftCorrection({
       }
       const now = getServerTime ? getServerTime() : Date.now();
       const rttComp = rtt ? rtt / 2000 : 0;
-      let expected = (sessionSyncState && typeof sessionSyncState.timestamp === 'number' && typeof sessionSyncState.lastUpdated === 'number')
+      const expected = (sessionSyncState && typeof sessionSyncState.timestamp === 'number' && typeof sessionSyncState.lastUpdated === 'number')
         ? sessionSyncState.timestamp + (now - sessionSyncState.lastUpdated) / 1000 - audioLatency + rttComp + smoothedOffset
         : null;
-      // Apply clock skew compensation if available
-      if (
-        expected !== null &&
-        typeof clockSkew === 'number' &&
-        sessionSyncState &&
-        typeof sessionSyncState.lastUpdated === 'number'
-      ) {
-        const elapsedSeconds = (now - sessionSyncState.lastUpdated) / 1000;
-        expected -= (clockSkew * elapsedSeconds) / 1e6;
-      }
       if (!isFiniteNumber(expected)) {
-        rafId = requestAnimationFrame(correctMicroDriftRAF);
+        requestAnimationFrame(correctMicroDriftRAF);
         return;
       }
       const drift = audio.currentTime - expected;
       lastDrifts.push(drift);
       if (lastDrifts.length > 8) lastDrifts.shift();
-      // --- Fast Sync Logic ---
-      if (!fastSyncActive && Math.abs(drift) > 0.5) {
-        // Enter fast sync mode
-        fastSyncActive = true;
-        fastSyncDriftCount = 0;
-        // Seek immediately to expected
-        fadeAudio(audio, 0, 100);
-        setTimeout(() => {
-          audio.currentTime = expected;
-          setDisplayedCurrentTime && setDisplayedCurrentTime(expected);
-          fadeAudio(audio, 1, 100);
-        }, 110);
-        // Set playbackRate high to catch up
-        audio.playbackRate = drift < 0 ? 1.15 : 0.85; // If behind, speed up; if ahead, slow down
-      }
-      if (fastSyncActive) {
-        // While in fast sync, keep playbackRate high until within 100ms for 3 checks
-        if (Math.abs(drift) > 0.1) {
-          audio.playbackRate = drift < 0 ? 1.15 : 0.85;
-          fastSyncDriftCount = 0;
-        } else {
-          fastSyncDriftCount++;
-          if (fastSyncDriftCount >= 3) {
-            // Exit fast sync mode
-            fastSyncActive = false;
-            rampPlaybackRate(audio, 300, rampLockRef);
-          }
-        }
-        rafId = requestAnimationFrame(correctMicroDriftRAF);
-        return;
-      }
-      // --- End Fast Sync Logic ---
       if (Math.abs(drift) > MICRO_DRIFT_MIN && Math.abs(drift) < MICRO_DRIFT_MAX) {
         if (!microActive && typeof onMicroCorrection === 'function') onMicroCorrection(true);
         microActive = true;
@@ -172,7 +116,7 @@ export default function useDriftCorrection({
         rateAdj = Math.max(1 - MICRO_RATE_CAP_MICRO, Math.min(1 + MICRO_RATE_CAP_MICRO, rateAdj));
         if (Math.abs(audio.playbackRate - rateAdj) > 0.0005) {
           audio.playbackRate = rateAdj;
-          if (enableDriftAnalytics && import.meta.env.MODE === 'development') {
+          if (import.meta.env.MODE === 'development') {
             window._driftAnalytics = window._driftAnalytics || [];
             const entry = {
               type: 'micro', drift, rateAdj, time: Date.now(), current: audio.currentTime, expected,
@@ -194,11 +138,11 @@ export default function useDriftCorrection({
           rampPlaybackRate(audio, 300, rampLockRef);
         }
       }
-      rafId = requestAnimationFrame(correctMicroDriftRAF);
+      requestAnimationFrame(correctMicroDriftRAF);
     }
-    rafId = requestAnimationFrame(correctMicroDriftRAF);
-    return () => { running = false; if (rafId) cancelAnimationFrame(rafId); };
-  }, [isController, sessionSyncState, audioLatency, rtt, smoothedOffset, getServerTime, enableDriftAnalytics, clockSkew]);
+    requestAnimationFrame(correctMicroDriftRAF);
+    return () => { running = false; };
+  }, [isController, sessionSyncState, audioLatency, rtt, smoothedOffset, getServerTime]);
 
   // maybeCorrectDrift function
   function maybeCorrectDrift(audio, expected) {
@@ -219,7 +163,7 @@ export default function useDriftCorrection({
           correctionInProgressRef.current = false;
         }, MICRO_CORRECTION_WINDOW);
         // Log micro-correction
-        if (enableDriftAnalytics && import.meta.env.MODE === 'development') {
+        if (import.meta.env.MODE === 'development') {
           window._driftAnalytics = window._driftAnalytics || [];
           const entry = {
             type: 'micro', drift, rate, time: Date.now(), before, after: expected,
@@ -238,7 +182,7 @@ export default function useDriftCorrection({
         // Large correction: fade out, seek, fade in
         fadeAudio(audio, 0, 120);
         setTimeout(() => {
-          setCurrentTimeSafely(audio, expected, setDisplayedCurrentTime, { fade: false });
+          setCurrentTimeSafely(audio, expected, setDisplayedCurrentTime);
           fadeAudio(audio, 1, 120);
           lastCorrectionRef.current = now;
           setTimeout(() => {
@@ -247,7 +191,7 @@ export default function useDriftCorrection({
           }, 500);
         }, 130);
         // Log large correction
-        if (enableDriftAnalytics && import.meta.env.MODE === 'development') {
+        if (import.meta.env.MODE === 'development') {
           window._driftAnalytics = window._driftAnalytics || [];
           const entry = {
             type: 'large', drift, time: Date.now(), before, after: expected,

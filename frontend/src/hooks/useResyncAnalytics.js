@@ -1,13 +1,8 @@
 import { useState, useCallback } from 'react';
 
-export default function useResyncAnalytics(historySize) {
-  const RESYNC_HISTORY_SIZE =
-    typeof historySize === 'number'
-      ? historySize
-      : (typeof process !== 'undefined' && process.env && process.env.REACT_APP_RESYNC_HISTORY_SIZE)
-        ? parseInt(process.env.REACT_APP_RESYNC_HISTORY_SIZE, 10) || 5
-        : 5;
+const RESYNC_HISTORY_SIZE = 5;
 
+export default function useResyncAnalytics() {
   const [resyncHistory, setResyncHistory] = useState([]);
   const [lastResyncTime, setLastResyncTime] = useState(0);
   const [resyncInProgress, setResyncInProgress] = useState(false);
@@ -46,7 +41,7 @@ export default function useResyncAnalytics(historySize) {
         lastDrift: drift
       };
     });
-  }, [RESYNC_HISTORY_SIZE]);
+  }, []);
 
   return {
     resyncHistory,

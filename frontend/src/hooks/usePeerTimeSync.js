@@ -13,11 +13,7 @@ export default function usePeerTimeSync(socket, localId, peerId) {
   const [connectionState, setConnectionState] = useState('disconnected');
   const pcRef = useRef(null);
   const dcRef = useRef(null);
-  const timeoutRef = useRef(null);
-
-  // NTP batch sync config
-  const BATCH_SIZE = 5; // Number of requests per batch
-  const BATCH_INTERVAL = 2000; // ms between batches
+  const intervalRef = useRef(null);
 
   useEffect(() => {
     if (!socket || !localId || !peerId || localId === peerId) return;
@@ -50,36 +46,24 @@ export default function usePeerTimeSync(socket, localId, peerId) {
 
     // --- 4. Signaling: Offer/Answer Exchange ---
     async function startSignaling() {
-      try {
-        if (isInitiator) {
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-          socket.emit('peer-offer', { to: peerId, from: localId, offer });
-        }
-      } catch (err) {
-        setConnectionState('error');
+      if (isInitiator) {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        socket.emit('peer-offer', { to: peerId, from: localId, offer });
       }
     }
 
     socket.on('peer-offer', async ({ from, offer }) => {
       if (from !== peerId) return;
-      try {
-        await pc.setRemoteDescription(new RTCSessionDescription(offer));
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        socket.emit('peer-answer', { to: from, from: localId, answer });
-      } catch (err) {
-        setConnectionState('error');
-      }
+      await pc.setRemoteDescription(new RTCSessionDescription(offer));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      socket.emit('peer-answer', { to: from, from: localId, answer });
     });
 
     socket.on('peer-answer', async ({ from, answer }) => {
       if (from !== peerId) return;
-      try {
-        await pc.setRemoteDescription(new RTCSessionDescription(answer));
-      } catch (err) {
-        setConnectionState('error');
-      }
+      await pc.setRemoteDescription(new RTCSessionDescription(answer));
     });
 
     socket.on('peer-ice-candidate', async ({ from, candidate }) => {
@@ -96,81 +80,49 @@ export default function usePeerTimeSync(socket, localId, peerId) {
       dcRef.current = dataChannel;
       dataChannel.onopen = () => {
         setConnectionState('connected');
-        // NTP-style batch sync
-        let stopped = false;
-        function sendBatchSync() {
-          if (stopped) return;
-          const batch = [];
-          let responses = 0;
-          // For each batch, send BATCH_SIZE requests
-          for (let i = 0; i < BATCH_SIZE; ++i) {
-            const clientSent = Date.now();
-            batch.push({ clientSent, responded: false });
-            dataChannel.send(JSON.stringify({ type: 'timeSync', clientSent, batchId: clientSent }));
+        // Periodically send time sync messages
+        let lastIntervalFired = Date.now();
+        intervalRef.current = setInterval(() => {
+          const nowInterval = Date.now();
+          const elapsed = nowInterval - lastIntervalFired;
+          lastIntervalFired = nowInterval;
+          // Timer drift detection: if interval fires late, reset connection
+          if (elapsed > 4000) { // 2x the normal 2000ms interval
+            setConnectionState('disconnected');
+            if (intervalRef.current) clearInterval(intervalRef.current);
+            if (dataChannel.readyState === 'open' || dataChannel.readyState === 'connecting') {
+              dataChannel.close();
+            }
+            // Optionally, log or trigger a reconnect here
+            if (typeof window !== 'undefined' && window.console) {
+              console.warn('[PeerTimeSync] Timer drift detected (tab throttling?). Peer sync will reconnect.');
+            }
+            return;
           }
-          // Handler for replies
-          function handleReply(msg, clientReceived) {
-            // Find the batch entry
-            const idx = batch.findIndex(b => b.clientSent === msg.clientSent && !b.responded);
-            if (idx === -1) return;
-            batch[idx].responded = true;
-            const rtt = clientReceived - msg.clientSent;
-            const offset = msg.serverTime + rtt / 2 - clientReceived;
-            batch[idx].rtt = rtt;
-            batch[idx].offset = offset;
-            responses++;
-            // After all responses or after a timeout, pick the best
-            if (responses === BATCH_SIZE) {
-              const valid = batch.filter(b => typeof b.rtt === 'number' && typeof b.offset === 'number');
-              if (valid.length) {
-                const best = valid.reduce((a, b) => (a.rtt < b.rtt ? a : b));
-                setPeerOffset(best.offset);
-                setPeerRtt(best.rtt);
-              }
-            }
-          }
-          // Listen for replies for a short window
-          const replyTimeout = setTimeout(() => {
-            const valid = batch.filter(b => typeof b.rtt === 'number' && typeof b.offset === 'number');
-            if (valid.length) {
-              const best = valid.reduce((a, b) => (a.rtt < b.rtt ? a : b));
-              setPeerOffset(best.offset);
-              setPeerRtt(best.rtt);
-            }
-          }, 400); // 400ms window for replies
-
-          // Attach a temporary message handler for this batch
-          const onMessage = (event) => {
-            const msg = JSON.parse(event.data);
-            if (msg.type === 'timeSyncReply') {
-              handleReply(msg, Date.now());
-            }
-          };
-          dataChannel.addEventListener('message', onMessage);
-          // Schedule next batch
-          timeoutRef.current = setTimeout(() => {
-            dataChannel.removeEventListener('message', onMessage);
-            clearTimeout(replyTimeout);
-            if (!stopped) sendBatchSync();
-          }, BATCH_INTERVAL);
-        }
-        sendBatchSync();
+          const now = Date.now();
+          dataChannel.send(JSON.stringify({ type: 'timeSync', clientSent: now }));
+        }, 2000);
       };
       dataChannel.onclose = () => {
         setConnectionState('disconnected');
-        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+        if (intervalRef.current) clearInterval(intervalRef.current);
       };
       dataChannel.onerror = () => {
         setConnectionState('error');
-        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+        if (intervalRef.current) clearInterval(intervalRef.current);
       };
       dataChannel.onmessage = (event) => {
         const msg = JSON.parse(event.data);
         if (msg.type === 'timeSync') {
           // Respond with server time
           dataChannel.send(JSON.stringify({ type: 'timeSyncReply', clientSent: msg.clientSent, serverTime: Date.now() }));
+        } else if (msg.type === 'timeSyncReply') {
+          const clientReceived = Date.now();
+          const rtt = clientReceived - msg.clientSent;
+          const offset = msg.serverTime + rtt / 2 - clientReceived;
+          setPeerOffset(offset);
+          setPeerRtt(rtt);
         }
-        // timeSyncReply handled in batch logic
       };
     }
 
@@ -179,7 +131,7 @@ export default function usePeerTimeSync(socket, localId, peerId) {
 
     // --- 7. Cleanup ---
     return () => {
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      if (intervalRef.current) clearInterval(intervalRef.current);
       if (dcRef.current) dcRef.current.close();
       if (pcRef.current) pcRef.current.close();
       socket.off('peer-offer');

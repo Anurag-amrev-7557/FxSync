@@ -1,8 +1,14 @@
 import usePeerTimeSync from './usePeerTimeSync';
 
-// Dynamic peer count, but stable order for React hooks
-export default function useMultiPeerTimeSync(socket, clientId, peerIds, maxPeers = 5) {
-  // Always call the same number of hooks in the same order
-  const paddedPeerIds = Array.from({ length: maxPeers }, (_, i) => peerIds[i] || null);
-  return paddedPeerIds.map(peerId => usePeerTimeSync(socket, clientId, peerId));
+// Max number of peers to support for stable hook order
+const MAX_PEERS = 5;
+
+export default function useMultiPeerTimeSync(socket, clientId, peerIds) {
+  return [
+    usePeerTimeSync(socket, clientId, peerIds[0] || null),
+    usePeerTimeSync(socket, clientId, peerIds[1] || null),
+    usePeerTimeSync(socket, clientId, peerIds[2] || null),
+    usePeerTimeSync(socket, clientId, peerIds[3] || null),
+    usePeerTimeSync(socket, clientId, peerIds[4] || null),
+  ];
 } 

@@ -14,12 +14,10 @@
   "dependencies": {
     "@tailwindcss/postcss": "^4.1.11",
     "browser-id3-writer": "^6.2.0",
-    "framer-motion": "^12.23.3",
     "jsmediatags": "^3.9.7",
     "kalmanjs": "^1.1.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "react-responsive": "^10.0.1",
     "react-router-dom": "^7.6.3",
     "socket.io-client": "^4.8.1"
   },
@@ -34,7 +32,6 @@
     "eslint-plugin-react-refresh": "^0.4.20",
     "globals": "^16.2.0",
     "postcss": "^8.5.6",
-    "rollup-plugin-visualizer": "^6.0.3",
     "tailwindcss": "^3.4.17",
     "vite": "^7.0.0"
   }
