@@ -33,7 +33,7 @@ class ErrorBoundary extends React.Component {
     }
     // Optionally log to an external service here
     if (process.env.NODE_ENV === 'development') {
-      // eslint-disable-next-line no-console
+       
       console.error('[ErrorBoundary] Error:', error, errorInfo);
     }
     // Optionally: send to Sentry or similar

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import CreateRoom from './CreateRoom'
+import CreateRoom from './sessionpage/CreateRoom'
 import LoadingSpinner from './LoadingSpinner'
 
 /**

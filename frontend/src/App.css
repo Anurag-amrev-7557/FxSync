@@ -1,4 +1,20 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+/* @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap'); */
+
+html, body {
+  scroll-behavior: smooth;
+}
+
+.scrollable-container {
+  overscroll-behavior: contain;
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #404040 #262626;
+}
+
+
 
 * {
   box-sizing: border-box;
@@ -45,10 +61,17 @@ body {
   color: #ffffff;
 }
 
-/* Focus styles */
-*:focus {
-  outline: 2px solid #0ea5e9;
+/* Only hide outline for mouse users, keep for keyboard users */
+*:focus:not(:focus-visible) {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+:focus-visible {
+  outline: 2px solid #38bdf8 !important; /* Tailwind sky-400 */
   outline-offset: 2px;
+  box-shadow: 0 0 0 2px #0ea5e933;
+  transition: outline-color 0.2s;
 }
 
 /* Smooth transitions for all elements */
@@ -71,6 +94,8 @@ body {
 .animate-slide-in-right,
 .animate-bounce-in {
   will-change: transform, opacity;
+  animation-duration: 0.4s;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* Smooth loading states */
@@ -187,7 +212,7 @@ body {
 }
 
 .animate-shake {
-  animation: shake 0.5s ease-in-out;
+  animation: shake 0.3s ease-out;
 }
 
 /* Staggered animation delays */
@@ -225,7 +250,7 @@ body {
 
 /* Smooth entrance animations */
 .animate-in {
-  animation: fadeInUp 0.6s ease-out forwards;
+  animation: fadeInUp 0.4s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
 @keyframes fadeInUp {
@@ -364,5 +389,140 @@ body {
   to   { opacity: 1; transform: translateY(0);}
 }
 .animate-fade-in-up {
-  animation: fade-in-up 0.5s cubic-bezier(0.22,1,0.36,1);
+  animation: fade-in-up 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes fade-scale-in {
+  0% { opacity: 0; transform: scale(0.96) translateY(8px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+.animate-fade-scale-in {
+  animation: fade-scale-in 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes fade-scale-out {
+  0% { opacity: 1; transform: scale(1) translateY(0); }
+  100% { opacity: 0; transform: scale(0.96) translateY(8px); }
+}
+.animate-fade-scale-out {
+  animation: fade-scale-out 0.3s ease-out;
+}
+
+/* WhatsApp-like chat bubble entry animation */
+@keyframes whatsapp-bubble-entry-right {
+  0% {
+    opacity: 0;
+    transform: translateX(40px) scale(0.95);
+  }
+  80% {
+    opacity: 1;
+    transform: translateX(-4px) scale(1.03);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+@keyframes whatsapp-bubble-entry-left {
+  0% {
+    opacity: 0;
+    transform: translateX(-40px) scale(0.95);
+  }
+  80% {
+    opacity: 1;
+    transform: translateX(4px) scale(1.03);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+.whatsapp-bubble-entry-own {
+  animation: whatsapp-bubble-entry-right 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.whatsapp-bubble-entry-other {
+  animation: whatsapp-bubble-entry-left 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.animate-fade-bounce-in {
+  animation: fadeBounceIn 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes fadeBounceIn {
+  0% { opacity: 0; transform: translateY(30px) scale(0.95); }
+  60% { opacity: 1; transform: translateY(-8px) scale(1.03); }
+  80% { transform: translateY(2px) scale(0.98); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+.animate-float {
+  animation: floatY 2s ease-in-out infinite alternate;
+}
+@keyframes floatY {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(-10px); }
+}
+.animate-fade-in {
+  animation: fadeIn 1.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.enhanced-bubble-appear {
+  animation: enhancedBubbleAppear 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  animation-fill-mode: backwards;
+}
+@keyframes enhancedBubbleAppear {
+  0% {
+    opacity: 0;
+    transform: translateY(30px) scale(0.92) skewY(2deg);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(-6px) scale(1.04) skewY(-1deg);
+  }
+  80% {
+    transform: translateY(2px) scale(0.98) skewY(0.5deg);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1) skewY(0);
+  }
+}
+
+@keyframes bottom-up-scale-in {
+  0% {
+    opacity: 0;
+    transform: translateY(32px) scale(0.92);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.animate-bottom-up-scale-in {
+  animation: bottom-up-scale-in 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (pointer: coarse) {
+  .no-select-mobile {
+    user-select: none;
+    -webkit-user-select: none;
+    -ms-user-select: none;
+    -moz-user-select: none;
+  }
+}
+
+/* Remove blue outline on button focus */
+button:focus, button:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+.cursor-blink {
+  animation: blink-cursor 1s steps(1) infinite;
+}
+@keyframes blink-cursor {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
 }

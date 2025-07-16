@@ -1,10 +1,13 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useContext } from 'react';
 import { useStaggeredAnimation } from '../hooks/useSmoothAppearance';
-import { InlineLoadingSpinner } from './LoadingSpinner';
+import { InlineLoadingSpinner } from '../components/LoadingSpinner';
 import { getClientId } from '../utils/clientId';
 import jsmediatags from 'jsmediatags/dist/jsmediatags.min.js';
+import { VariableSizeList as List } from 'react-window';
+import { ReducedMotionContext } from '../App';
 
 const Playlist = React.memo(function Playlist({ queue = [], isController, socket, sessionId, onSelectTrack, selectedTrackIdx }) {
+  const reducedMotion = useContext(ReducedMotionContext);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -14,9 +17,42 @@ const Playlist = React.memo(function Playlist({ queue = [], isController, socket
   const [allTracks, setAllTracks] = useState([]);
   const [allTracksLoading, setAllTracksLoading] = useState(true);
   const [allTracksError, setAllTracksError] = useState(null);
+  const allTracksScrollRef = useRef(null);
+  const queueScrollRef = useRef(null);
   
+  // Use reducedMotion to skip or minimize animations
   // Smooth staggered animation for queue items
-  const queueAnimations = useStaggeredAnimation(queue, 60, 'animate-slide-in-left');
+  const queueAnimations = reducedMotion ? [] : useStaggeredAnimation(queue, 60, 'animate-slide-in-left');
+
+  // For queue and all-tracks, use VariableSizeList and add scroll position memory logic:
+  const queueListRef = useRef();
+  const allTracksListRef = useRef();
+
+  // Restore scroll position for queue
+  useEffect(() => {
+    const savedOffset = sessionStorage.getItem('playlistQueueScrollOffset');
+    if (queueListRef.current && savedOffset) {
+      queueListRef.current.scrollTo(Number(savedOffset));
+    }
+    return () => {
+      if (queueListRef.current) {
+        sessionStorage.setItem('playlistQueueScrollOffset', queueListRef.current.state.scrollOffset);
+      }
+    };
+  }, [queue.length]);
+
+  // Restore scroll position for all-tracks
+  useEffect(() => {
+    const savedOffset = sessionStorage.getItem('playlistAllTracksScrollOffset');
+    if (allTracksListRef.current && savedOffset) {
+      allTracksListRef.current.scrollTo(Number(savedOffset));
+    }
+    return () => {
+      if (allTracksListRef.current) {
+        sessionStorage.setItem('playlistAllTracksScrollOffset', allTracksListRef.current.state.scrollOffset);
+      }
+    };
+  }, [allTracks.length]);
 
   useEffect(() => {
     const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
@@ -275,45 +311,92 @@ const Playlist = React.memo(function Playlist({ queue = [], isController, socket
         ) : allTracks.length === 0 ? (
           <div className="text-neutral-400 text-xs">No tracks available</div>
         ) : (
-          <div className="divide-y divide-neutral-800">
-            {allTracks.map((track, idx) => (
-              <div
-                key={track.url}
-                className="p-2 hover:bg-primary/10 transition-all duration-200 cursor-pointer flex items-center gap-3"
-                onClick={() => {
-                  if (!isController || !socket || !sessionId) {
-                    // Just preview for non-controller or if missing socket/session
-                    onSelectTrack && onSelectTrack(null, track);
-                    return;
-                  }
-                  // If already in queue, select it
-                  const existingIdx = queue.findIndex(q => q.url === track.url);
-                  if (existingIdx !== -1) {
-                    onSelectTrack && onSelectTrack(existingIdx, track);
-                  } else {
-                    // Add to queue, then select it after confirmation
-                    socket.emit('add_to_queue', { sessionId, url: track.url, title: track.title }, () => {
-                      // Use the new index (end of queue)
-                      onSelectTrack && onSelectTrack(queue.length, track);
-                    });
-                  }
-                }}
-                title={`Play ${track.title}`}
-              >
-                <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${track.type === 'sample' ? 'bg-blue-800' : 'bg-neutral-800'}`}> 
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white">
-                    <path d="M9 18V5l12-2v13"></path>
-                    <circle cx="6" cy="18" r="3"></circle>
-                    <circle cx="18" cy="16" r="3"></circle>
-                  </svg>
+          allTracks.length > 20 ? (
+            <List
+              ref={allTracksListRef}
+              height={320}
+              itemCount={allTracks.length}
+              itemSize={() => 56}
+              width={'100%'}
+              className="divide-y divide-neutral-800 scrollable-container"
+              tabIndex={0}
+              aria-label="All tracks list"
+            >
+              {({ index, style }) => {
+                const track = allTracks[index];
+                return (
+                  <div
+                    style={style}
+                    key={track.url}
+                    className="p-2 hover:bg-primary/10 transition-all duration-200 cursor-pointer flex items-center gap-3"
+                    onClick={() => {
+                      if (!isController || !socket || !sessionId) {
+                        onSelectTrack && onSelectTrack(null, track);
+                        return;
+                      }
+                      const existingIdx = queue.findIndex(q => q.url === track.url);
+                      if (existingIdx !== -1) {
+                        onSelectTrack && onSelectTrack(existingIdx, track);
+                      } else {
+                        socket.emit('add_to_queue', { sessionId, url: track.url, title: track.title }, () => {
+                          onSelectTrack && onSelectTrack(queue.length, track);
+                        });
+                      }
+                    }}
+                    title={`Play ${track.title}`}
+                  >
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${track.type === 'sample' ? 'bg-blue-800' : 'bg-neutral-800'}`}>
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white">
+                        <path d="M9 18V5l12-2v13"></path>
+                        <circle cx="6" cy="18" r="3"></circle>
+                        <circle cx="18" cy="16" r="3"></circle>
+                      </svg>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-white font-medium text-sm truncate">{track.title}</h4>
+                      <span className="text-xs text-neutral-400">{track.type === 'sample' ? 'Sample' : 'User Upload'}</span>
+                    </div>
+                  </div>
+                );
+              }}
+            </List>
+          ) : (
+            <div ref={allTracksScrollRef} className="divide-y divide-neutral-800 scrollable-container" tabIndex="0" aria-label="All tracks list">
+              {allTracks.map((track, idx) => (
+                <div
+                  key={track.url}
+                  className="p-2 hover:bg-primary/10 transition-all duration-200 cursor-pointer flex items-center gap-3"
+                  onClick={() => {
+                    if (!isController || !socket || !sessionId) {
+                      onSelectTrack && onSelectTrack(null, track);
+                      return;
+                    }
+                    const existingIdx = queue.findIndex(q => q.url === track.url);
+                    if (existingIdx !== -1) {
+                      onSelectTrack && onSelectTrack(existingIdx, track);
+                    } else {
+                      socket.emit('add_to_queue', { sessionId, url: track.url, title: track.title }, () => {
+                        onSelectTrack && onSelectTrack(queue.length, track);
+                      });
+                    }
+                  }}
+                  title={`Play ${track.title}`}
+                >
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${track.type === 'sample' ? 'bg-blue-800' : 'bg-neutral-800'}`}> 
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-white">
+                      <path d="M9 18V5l12-2v13"></path>
+                      <circle cx="6" cy="18" r="3"></circle>
+                      <circle cx="18" cy="16" r="3"></circle>
+                    </svg>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h4 className="text-white font-medium text-sm truncate">{track.title}</h4>
+                    <span className="text-xs text-neutral-400">{track.type === 'sample' ? 'Sample' : 'User Upload'}</span>
+                  </div>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <h4 className="text-white font-medium text-sm truncate">{track.title}</h4>
-                  <span className="text-xs text-neutral-400">{track.type === 'sample' ? 'Sample' : 'User Upload'}</span>
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )
         )}
       </div>
 
@@ -334,52 +417,110 @@ const Playlist = React.memo(function Playlist({ queue = [], isController, socket
             </p>
           </div>
         ) : (
-          <div className="divide-y divide-neutral-800">
-            {queue.map((item, idx) => (
-              <div
-                key={idx}
-                className={`p-4 hover:bg-primary/10 transition-all duration-300 group cursor-pointer ${queueAnimations[idx]?.animationClass || ''} ${selectedTrackIdx === idx ? 'bg-primary/20 border-l-4 border-primary' : ''}`}
-                onClick={() => onSelectTrack && onSelectTrack(idx)}
-                title={selectedTrackIdx === idx ? 'Currently Playing' : 'Click to play'}
-              >
-                <div className="flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${selectedTrackIdx === idx ? 'bg-primary/80' : 'bg-neutral-800'}`}> 
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={selectedTrackIdx === idx ? 'text-white' : 'text-neutral-400'}>
-                      <path d="M9 18V5l12-2v13"></path>
-                      <circle cx="6" cy="18" r="3"></circle>
-                      <circle cx="18" cy="16" r="3"></circle>
-                    </svg>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs text-neutral-500 font-mono">#{idx + 1}</span>
-                      <h4 className={`text-white font-medium text-sm truncate ${selectedTrackIdx === idx ? 'font-bold' : ''}`}>{item.title || 'Unknown Track'}</h4>
+          queue.length > 20 ? (
+            <List
+              ref={queueListRef}
+              height={400}
+              itemCount={queue.length}
+              itemSize={() => 72}
+              width={'100%'}
+              className="divide-y divide-neutral-800 scrollable-container"
+              tabIndex={0}
+              aria-label="Queue list"
+            >
+              {({ index, style }) => {
+                const item = queue[index];
+                return (
+                  <div
+                    style={style}
+                    key={index}
+                    className={`p-4 hover:bg-primary/10 transition-all duration-300 group cursor-pointer ${queueAnimations[index]?.animationClass || ''} ${selectedTrackIdx === index ? 'bg-primary/20 border-l-4 border-primary' : ''}`}
+                    onClick={() => onSelectTrack && onSelectTrack(index)}
+                    title={selectedTrackIdx === index ? 'Currently Playing' : 'Click to play'}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${selectedTrackIdx === index ? 'bg-primary/80' : 'bg-neutral-800'}`}>
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={selectedTrackIdx === index ? 'text-white' : 'text-neutral-400'}>
+                          <path d="M9 18V5l12-2v13"></path>
+                          <circle cx="6" cy="18" r="3"></circle>
+                          <circle cx="18" cy="16" r="3"></circle>
+                        </svg>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-xs text-neutral-500 font-mono">#{index + 1}</span>
+                          <h4 className={`text-white font-medium text-sm truncate ${selectedTrackIdx === index ? 'font-bold' : ''}`}>{item.title || 'Unknown Track'}</h4>
+                        </div>
+                        <p className="text-neutral-400 text-xs truncate">{item.url}</p>
+                      </div>
+                      {isController && (
+                        <button
+                          className="opacity-0 group-hover:opacity-100 p-2 text-neutral-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all duration-200"
+                          onClick={e => { e.stopPropagation(); handleRemove(index); }}
+                          disabled={loading}
+                          title="Remove track"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="3,6 5,6 21,6"></polyline>
+                            <path d="M19,6v14a2,2 0 0,1 -2,2H7a2,2 0 0,1 -2,-2V6m3,0V4a2,2 0 0,1 2,-2h4a2,2 0 0,1 2,2v2"></path>
+                            <line x1="10" y1="11" x2="10" y2="17"></line>
+                            <line x1="14" y1="11" x2="14" y2="17"></line>
+                          </svg>
+                        </button>
+                      )}
                     </div>
-                    <p className="text-neutral-400 text-xs truncate">{item.url}</p>
                   </div>
-                  {isController && (
-                    <button
-                      className="opacity-0 group-hover:opacity-100 p-2 text-neutral-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all duration-200"
-                      onClick={e => { e.stopPropagation(); handleRemove(idx); }}
-                      disabled={loading}
-                      title="Remove track"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <polyline points="3,6 5,6 21,6"></polyline>
-                        <path d="M19,6v14a2,2 0 0,1 -2,2H7a2,2 0 0,1 -2,-2V6m3,0V4a2,2 0 0,1 2,-2h4a2,2 0 0,1 2,2v2"></path>
-                        <line x1="10" y1="11" x2="10" y2="17"></line>
-                        <line x1="14" y1="11" x2="14" y2="17"></line>
+                );
+              }}
+            </List>
+          ) : (
+            <div ref={queueScrollRef} className="divide-y divide-neutral-800 scrollable-container" tabIndex="0" aria-label="Queue list">
+              {queue.map((item, idx) => (
+                <div
+                  key={idx}
+                  className={`p-4 hover:bg-primary/10 transition-all duration-300 group cursor-pointer ${queueAnimations[idx]?.animationClass || ''} ${selectedTrackIdx === idx ? 'bg-primary/20 border-l-4 border-primary' : ''}`}
+                  onClick={() => onSelectTrack && onSelectTrack(idx)}
+                  title={selectedTrackIdx === idx ? 'Currently Playing' : 'Click to play'}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 ${selectedTrackIdx === idx ? 'bg-primary/80' : 'bg-neutral-800'}`}> 
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={selectedTrackIdx === idx ? 'text-white' : 'text-neutral-400'}>
+                        <path d="M9 18V5l12-2v13"></path>
+                        <circle cx="6" cy="18" r="3"></circle>
+                        <circle cx="18" cy="16" r="3"></circle>
                       </svg>
-                    </button>
-                  )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-xs text-neutral-500 font-mono">#{idx + 1}</span>
+                        <h4 className={`text-white font-medium text-sm truncate ${selectedTrackIdx === idx ? 'font-bold' : ''}`}>{item.title || 'Unknown Track'}</h4>
+                      </div>
+                      <p className="text-neutral-400 text-xs truncate">{item.url}</p>
+                    </div>
+                    {isController && (
+                      <button
+                        className="opacity-0 group-hover:opacity-100 p-2 text-neutral-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all duration-200"
+                        onClick={e => { e.stopPropagation(); handleRemove(idx); }}
+                        disabled={loading}
+                        title="Remove track"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="3,6 5,6 21,6"></polyline>
+                          <path d="M19,6v14a2,2 0 0,1 -2,2H7a2,2 0 0,1 -2,-2V6m3,0V4a2,2 0 0,1 2,-2h4a2,2 0 0,1 2,2v2"></path>
+                          <line x1="10" y1="11" x2="10" y2="17"></line>
+                          <line x1="14" y1="11" x2="14" y2="17"></line>
+                        </svg>
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )
         )}
       </div>
     </div>
   );
 });
 
-export default Playlist; 
+export default Playlist;

@@ -1,30 +1,29 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
-import { useParams } from 'react-router-dom'
-import SessionForm from './SessionForm'
-import AudioPlayer from './AudioPlayer'
-import DeviceList from './DeviceList'
-import ControllerRequestManager from './ControllerRequestManager'
-import ChatBox from './ChatBox'
-import Playlist from './Playlist'
-import ResizableLayout from './ResizableLayout'
-import ExitRoomModal from './ExitRoomModal'
-import BottomTabBar from './BottomTabBar'
-import useSmoothAppearance from '../hooks/useSmoothAppearance'
-import { 
-  saveMessages, 
-  loadMessages, 
-  loadQueue, 
-  saveSessionData, 
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useParams } from 'react-router-dom';
+import SessionForm from './SessionForm';
+import AudioPlayer from './AudioPlayer';
+import DeviceList from './DeviceList';
+import ControllerRequestManager from './ControllerRequestManager';
+import ChatBox from './ChatBox';
+import Playlist from './Playlist';
+import ResizableLayout from './ResizableLayout';
+import ExitRoomModal from './ExitRoomModal';
+import BottomTabBar from './BottomTabBar';
+import useSmoothAppearance from '../hooks/useSmoothAppearance';
+import {
+  loadMessages,
+  loadQueue,
+  saveSessionData,
   loadSessionData,
   clearSessionData,
-  cleanupOldSessions 
-} from '../utils/persistence'
-import usePeerTimeSync from '../hooks/usePeerTimeSync'
-import useChatMessages from '../hooks/useChatMessages'
-import useQueue from '../hooks/useQueue'
-import useUltraPreciseOffset from '../hooks/useUltraPreciseOffset'
-import useModalState from '../hooks/useModalState'
-import useMobileTab from '../hooks/useMobileTab'
+  cleanupOldSessions,
+} from '../utils/persistence';
+import usePeerTimeSync from '../hooks/usePeerTimeSync';
+import useChatMessages from '../hooks/useChatMessages';
+import useQueue from '../hooks/useQueue';
+import useUltraPreciseOffset from '../hooks/useUltraPreciseOffset';
+import useModalState from '../hooks/useModalState';
+import useMobileTab from '../hooks/useMobileTab';
 
 function SessionPage({
   currentSessionId,
@@ -85,26 +84,14 @@ function SessionPage({
       try {
         savedSessionData = loadSessionData(urlSessionId);
       } catch (e) {
-        if (import.meta.env.MODE === 'development') {
-           
-          console.warn('[SessionPage][AutoJoin] Failed to load session data', e);
-        }
       }
       try {
         savedMessages = loadMessages(urlSessionId) || [];
       } catch (e) {
-        if (import.meta.env.MODE === 'development') {
-           
-          console.warn('[SessionPage][AutoJoin] Failed to load messages', e);
-        }
       }
       try {
         savedQueue = loadQueue(urlSessionId) || [];
       } catch (e) {
-        if (import.meta.env.MODE === 'development') {
-           
-          console.warn('[SessionPage][AutoJoin] Failed to load queue', e);
-        }
       }
 
       // Generate a random display name for auto-join if no saved data
@@ -138,17 +125,6 @@ function SessionPage({
         autoDisplayName = generatedName;
       }
 
-      // Logging for debugging
-      if (import.meta.env.MODE === 'development') {
-         
-        console.log('[SessionPage][AutoJoin] Joining session', {
-          urlSessionId,
-          autoDisplayName,
-          savedMessagesCount: savedMessages.length,
-          savedQueueCount: savedQueue.length,
-        });
-      }
-
       setCurrentSessionId(urlSessionId);
       setDisplayName(autoDisplayName);
       // In auto-join effect, after loading savedQueue:
@@ -166,10 +142,6 @@ function SessionPage({
           displayName: autoDisplayName,
         });
       } catch (e) {
-        if (import.meta.env.MODE === 'development') {
-           
-          console.warn('[SessionPage][AutoJoin] Failed to save session data', e);
-        }
       }
     }
   // Add clients as a dependency for duplicate name avoidance
@@ -201,30 +173,10 @@ function SessionPage({
       const clampedIdx = Math.max(0, Math.min(pendingTrackIdx.current, queue.length - 1));
       setCurrentTrackOverride(pendingTrackIdx.currentTrack || null);
       setSelectedTrackIdx(clampedIdx);
-      if (import.meta.env.MODE === 'development') {
-         
-        console.log('[SessionPage][listener-fix] Applied buffered track_change after queue set:', {
-          clampedIdx,
-          currentTrack: pendingTrackIdx.currentTrack,
-          queue
-        });
-      }
       pendingTrackIdx.current = null;
       pendingTrackIdx.currentTrack = null;
     }
   }, [queue]);
-
-  // Debug: Log all socket events received
-  useEffect(() => {
-    if (!socket) return;
-    const logAll = (event, ...args) => {
-      console.log('[SOCKET EVENT]', event, ...args);
-    };
-    socket.onAny(logAll);
-    return () => {
-      socket.offAny(logAll);
-    };
-  }, [socket]);
 
   // Enhanced: On mount or when joining a session, request sync state, set current track, and handle edge cases robustly
   useEffect(() => {
@@ -232,22 +184,9 @@ function SessionPage({
 
     let didCancel = false;
 
-    // Defensive: Add timeout fallback in case server doesn't respond
-    let syncTimeout = setTimeout(() => {
-      if (import.meta.env.MODE === 'development') {
-         
-        console.warn('[SessionPage][sync_request] Timed out waiting for sync state');
-      }
-    }, 4000);
 
     socket.emit('sync_request', { sessionId: currentSessionId }, (state) => {
-      clearTimeout(syncTimeout);
       if (didCancel) return;
-
-      if (import.meta.env.MODE === 'development') {
-         
-        console.log('[SessionPage][sync_request] Received state:', state);
-      }
 
       if (state && state.currentTrack) {
         setCurrentTrackOverride(state.currentTrack);
@@ -259,40 +198,24 @@ function SessionPage({
           );
           if (idx !== -1) {
             setSelectedTrackIdx(idx);
-            if (import.meta.env.MODE === 'development') {
-               
-              console.log('[SessionPage][sync_request] Matched currentTrack in queue at idx', idx);
-            }
           } else {
             setSelectedTrackIdx(0);
-            if (import.meta.env.MODE === 'development') {
-               
-              console.warn('[SessionPage][sync_request] currentTrack not found in queue, defaulting to idx 0');
-            }
           }
         } else {
           setSelectedTrackIdx(0);
-          if (import.meta.env.MODE === 'development') {
-             
-            console.warn('[SessionPage][sync_request] Queue empty or not loaded, defaulting to idx 0');
-          }
         }
       } else if (state && typeof state.currentTrackIdx === 'number' && queue && queue.length > 0) {
         // Fallback: If only currentTrackIdx is provided
         const clampedIdx = Math.max(0, Math.min(state.currentTrackIdx, queue.length - 1));
         setSelectedTrackIdx(clampedIdx);
         setCurrentTrackOverride(queue[clampedIdx] || null);
-        if (import.meta.env.MODE === 'development') {
-           
-          console.log('[SessionPage][sync_request] Used currentTrackIdx fallback:', clampedIdx);
-        }
       }
     });
 
     // Cleanup to avoid setting state after unmount
     return () => {
       didCancel = true;
-      clearTimeout(syncTimeout);
+      // clearTimeout(syncTimeout); // Removed: syncTimeout is not defined or used
     };
   }, [socket, currentSessionId, queue, selectedTrackIdx]);
 
@@ -313,19 +236,11 @@ function SessionPage({
     try {
       savedMessages = loadMessages(sessionId) || [];
     } catch (e) {
-      if (import.meta.env.MODE === 'development') {
-         
-        console.warn('[SessionPage][handleJoin] Failed to load messages', e);
-      }
       savedMessages = [];
     }
     try {
       savedQueue = loadQueue(sessionId) || [];
     } catch (e) {
-      if (import.meta.env.MODE === 'development') {
-         
-        console.warn('[SessionPage][handleJoin] Failed to load queue', e);
-      }
       savedQueue = [];
     }
 
@@ -338,10 +253,6 @@ function SessionPage({
     try {
       saveSessionData(sessionId, { displayName });
     } catch (e) {
-      if (import.meta.env.MODE === 'development') {
-         
-        console.warn('[SessionPage][handleJoin] Failed to save session data', e);
-      }
     }
 
     // Optionally focus chat input after join (if present)
@@ -349,11 +260,6 @@ function SessionPage({
       const chatInput = document.querySelector('input[name="chat"]');
       if (chatInput) chatInput.focus();
     }, 200);
-
-    if (import.meta.env.MODE === 'development') {
-       
-      console.log('[SessionPage][handleJoin] Joined session', { sessionId, displayName, messages: savedMessages.length, queue: savedQueue.length });
-    }
   }
 
   const handleExitRoom = () => {
@@ -384,19 +290,11 @@ function SessionPage({
       if (isController && socket) {
         socket.emit('track_change', { sessionId: currentSessionId, idx }, { override: true, track: trackObj });
       }
-      if (import.meta.env.MODE === 'development') {
-         
-        console.log('[SessionPage][handleSelectTrack] Overriding with custom track', { idx, trackObj });
-      }
       return;
     }
 
     // Defensive: Validate idx and queue
     if (typeof idx !== 'number' || idx < 0 || !Array.isArray(queue) || idx >= queue.length) {
-      if (import.meta.env.MODE === 'development') {
-         
-        console.warn('[SessionPage][handleSelectTrack] Invalid track index', { idx, queueLength: queue ? queue.length : null });
-      }
       return;
     }
 
@@ -406,15 +304,10 @@ function SessionPage({
     if (isController && socket) {
       socket.emit('track_change', { sessionId: currentSessionId, idx }, { override: false });
     }
-    if (import.meta.env.MODE === 'development') {
-       
-      console.log('[SessionPage][handleSelectTrack] Selected track from queue', { idx, track: queue[idx] });
-    }
   }, [setSelectedTrackIdx, setCurrentTrackOverride, isController, socket, currentSessionId, queue]);
 
   // In render, always derive currentTrack from latest queue and selectedTrackIdx
-  const currentTrack = currentTrackOverride || (queue && queue.length > 0 ? queue[selectedTrackIdx] : null);
-  console.log('[DEBUG] Render: currentTrack', currentTrack, 'selectedTrackIdx', selectedTrackIdx, 'queue', queue);
+  const currentTrack = useMemo(() => currentTrackOverride || (queue && queue.length > 0 ? queue[selectedTrackIdx] : null), [currentTrackOverride, queue, selectedTrackIdx]);
 
   // When sessionSyncState changes (from join_session), initialize playback/session state
   useEffect(() => {
@@ -453,8 +346,7 @@ function SessionPage({
   // Remove: syncQuality useMemo and allOffsets/best/ultraPreciseOffset logic
   // Instead, use the hook:
   const { ultraPreciseOffset, syncQuality, allOffsets } = useUltraPreciseOffset(peerSyncs, timeOffset, rtt, jitter, drift)
-  // Debug log for ultra-precise offset
-  console.log('Ultra-precise offset:', ultraPreciseOffset, 'All offsets:', allOffsets);
+
 
   // Ensure savedMessages is always defined before useChatMessages
   let savedMessages = [];
@@ -463,7 +355,7 @@ function SessionPage({
   } catch (e) {
     savedMessages = [];
   }
-  const [messages, setMessages] = useChatMessages(socket, currentSessionId, savedMessages)
+  const [messages, setMessages, markDelivered] = useChatMessages(socket, currentSessionId, savedMessages)
 
   // Ensure mobileTab is always defined before use
   const [mobileTab, setMobileTab] = useMobileTab(0);
@@ -629,6 +521,7 @@ function SessionPage({
                     clientId={clientId}
                     displayName={displayName}
                     messages={messages}
+                    markDelivered={markDelivered}
                     onSend={(msg) => {
                       // setMessages((prev) => { // This will be handled by useChatMessages
                       //   const newMessages = [...prev, msg]
@@ -767,6 +660,7 @@ function SessionPage({
                   clientId={clientId}
                   displayName={displayName}
                   messages={messages}
+                  markDelivered={markDelivered}
                   onSend={(msg) => {
                     // setMessages((prev) => { // This will be handled by useChatMessages
                     //   const newMessages = [...prev, msg]

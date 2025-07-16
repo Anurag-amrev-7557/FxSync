@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useContext } from 'react';
 import { useStaggeredAnimation } from '../hooks/useSmoothAppearance';
+import { VariableSizeList as List } from 'react-window';
+import { ReducedMotionContext } from '../App';
 
 // Helper: Minimalist & Modern Device avatar with status indicator (Black & White Dark Theme)
 function DeviceAvatar({ isController, isCurrentUser }) {
@@ -144,16 +146,26 @@ function MakeControllerButton({ onClick, displayName }) {
 const DeviceList = React.memo(function DeviceList({ clients = [], controllerClientId, clientId, socket, mobile = false, isAudioTabActive = false }) {
   const isController = controllerClientId && clientId && controllerClientId === clientId;
   const [shouldAnimate, setShouldAnimate] = useState(false);
+  const deviceListScrollRef = useRef(null);
+  const deviceListVirtRef = useRef();
+  const reducedMotion = useContext(ReducedMotionContext);
+
+  // Use reducedMotion to skip or minimize animations
+  useEffect(() => {
+    if (reducedMotion) {
+      setShouldAnimate(false);
+    }
+  }, [reducedMotion]);
 
   // Smooth staggered animation for client list
-  const clientAnimations = useStaggeredAnimation(clients, 50, 'animate-slide-in-left');
+  const clientAnimations = reducedMotion ? [] : useStaggeredAnimation(clients, 60, 'animate-slide-in-left');
 
   // Trigger animation for mobile device list
   useEffect(() => {
     if (mobile) {
       const timer = setTimeout(() => {
         setShouldAnimate(true);
-      }, 100);
+      }, 400); // was 100
       return () => clearTimeout(timer);
     }
   }, [mobile]);
@@ -164,10 +176,35 @@ const DeviceList = React.memo(function DeviceList({ clients = [], controllerClie
       setShouldAnimate(false);
       const timer = setTimeout(() => {
         setShouldAnimate(true);
-      }, 50);
+      }, 400); // was 50
       return () => clearTimeout(timer);
     }
   }, [mobile, isAudioTabActive]);
+
+  // Restore scroll position for device list
+  useEffect(() => {
+    const savedOffset = sessionStorage.getItem('deviceListScrollOffset');
+    if (deviceListVirtRef.current && savedOffset) {
+      deviceListVirtRef.current.scrollTo(Number(savedOffset));
+    }
+    return () => {
+      if (deviceListVirtRef.current) {
+        sessionStorage.setItem('deviceListScrollOffset', deviceListVirtRef.current.state.scrollOffset);
+      }
+    };
+  }, [clients.length]);
+
+  useEffect(() => {
+    const el = deviceListScrollRef.current;
+    if (!el) return;
+    const savedScroll = sessionStorage.getItem('deviceListScrollTop');
+    if (savedScroll) {
+      el.scrollTop = parseInt(savedScroll, 10);
+    }
+    return () => {
+      if (el) sessionStorage.setItem('deviceListScrollTop', el.scrollTop);
+    };
+  }, []);
 
   const handleOfferController = (targetClientId) => {
     if (!socket || !isController) return;
@@ -208,54 +245,112 @@ const DeviceList = React.memo(function DeviceList({ clients = [], controllerClie
           </div>
         </div>
         {/* Device List */}
-        <div className="bg-gradient-to-br from-neutral-900/90 to-neutral-900/80 rounded-xl border border-neutral-800 overflow-hidden shadow-xl">
+        <div className="bg-gradient-to-br from-neutral-900/90 to-neutral-900/80 rounded-xl border border-neutral-800 overflow-hidden shadow-xl scrollable-container" tabIndex="0" aria-label="Device list">
           {clients.length === 0 ? (
             <EmptyState mobile />
           ) : (
-            <ul className="divide-y divide-neutral-800">
-              {clients.map((c, index) => {
-                const isCurrentUser = c.clientId === clientId;
-                const isCurrentController = c.clientId === controllerClientId;
-                return (
-                  <li
-                    key={c.id}
-                    className={`flex items-center px-3 py-3 transition-all duration-300 group gap-3 relative
-                      ${isCurrentController ? 'bg-primary/10 border-l-4 border-l-primary shadow-md' : 'hover:bg-neutral-800/60'}
-                      ${clientAnimations[index]?.animationClass || ''}
-                    `}
-                  >
-                    <DeviceAvatar isController={isCurrentController} isCurrentUser={isCurrentUser} />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className={`font-semibold text-sm truncate transition-colors duration-200
-                          ${isCurrentController ? 'text-primary' : isCurrentUser ? 'text-accent' : 'text-white'}
-                        `}>
-                          {c.displayName || c.clientId || c.id}
-                        </span>
-                        {isCurrentUser && (
-                          <span className="px-1.5 py-0.5 bg-accent/20 text-accent rounded text-xs ml-1 font-medium border border-accent/30">You</span>
-                        )}
+            clients.length > 20 ? (
+              <List
+                ref={deviceListVirtRef}
+                height={320}
+                itemCount={clients.length}
+                itemSize={() => 56}
+                width={'100%'}
+                className="divide-y divide-neutral-800 scrollable-container"
+                tabIndex={0}
+                aria-label="Device list"
+              >
+                {({ index, style }) => {
+                  const c = clients[index];
+                  const isCurrentUser = c.clientId === clientId;
+                  const isCurrentController = c.clientId === controllerClientId;
+                  return (
+                    <li
+                      style={style}
+                      key={c.id}
+                      className={`flex items-center px-3 py-3 transition-all duration-300 group gap-3 relative
+                        ${isCurrentController ? 'bg-primary/10 border-l-4 border-l-primary shadow-md' : 'hover:bg-neutral-800/60'}
+                        ${clientAnimations[index]?.animationClass || ''}
+                      `}
+                    >
+                      <DeviceAvatar isController={isCurrentController} isCurrentUser={isCurrentUser} />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className={`font-semibold text-sm truncate transition-colors duration-200
+                            ${isCurrentController ? 'text-primary' : isCurrentUser ? 'text-accent' : 'text-white'}
+                          `}>
+                            {c.displayName || c.clientId || c.id}
+                          </span>
+                          {isCurrentUser && (
+                            <span className="px-1.5 py-0.5 bg-accent/20 text-accent rounded text-xs ml-1 font-medium border border-accent/30">You</span>
+                          )}
+                        </div>
+                        <p className="text-neutral-400 text-xs truncate">
+                          {c.deviceInfo || 'Unknown device'}
+                        </p>
                       </div>
-                      <p className="text-neutral-400 text-xs truncate">
-                        {c.deviceInfo || 'Unknown device'}
-                      </p>
-                    </div>
-                    {isCurrentController ? (
-                      <div className="flex flex-col items-end gap-1 ml-2">
-                        <ControllerBadge />
+                      {isCurrentController ? (
+                        <div className="flex flex-col items-end gap-1 ml-2">
+                          <ControllerBadge />
+                        </div>
+                      ) : isController && !isCurrentUser && (
+                        <div className="ml-2">
+                          <MakeControllerButton
+                            onClick={() => handleOfferController(c.clientId)}
+                            displayName={c.displayName || c.clientId}
+                          />
+                        </div>
+                      )}
+                    </li>
+                  );
+                }}
+              </List>
+            ) : (
+              <ul className="divide-y divide-neutral-800">
+                {clients.map((c, index) => {
+                  const isCurrentUser = c.clientId === clientId;
+                  const isCurrentController = c.clientId === controllerClientId;
+                  return (
+                    <li
+                      key={c.id}
+                      className={`flex items-center px-3 py-3 transition-all duration-300 group gap-3 relative
+                        ${isCurrentController ? 'bg-primary/10 border-l-4 border-l-primary shadow-md' : 'hover:bg-neutral-800/60'}
+                        ${clientAnimations[index]?.animationClass || ''}
+                      `}
+                    >
+                      <DeviceAvatar isController={isCurrentController} isCurrentUser={isCurrentUser} />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className={`font-semibold text-sm truncate transition-colors duration-200
+                            ${isCurrentController ? 'text-primary' : isCurrentUser ? 'text-accent' : 'text-white'}
+                          `}>
+                            {c.displayName || c.clientId || c.id}
+                          </span>
+                          {isCurrentUser && (
+                            <span className="px-1.5 py-0.5 bg-accent/20 text-accent rounded text-xs ml-1 font-medium border border-accent/30">You</span>
+                          )}
+                        </div>
+                        <p className="text-neutral-400 text-xs truncate">
+                          {c.deviceInfo || 'Unknown device'}
+                        </p>
                       </div>
-                    ) : isController && !isCurrentUser && (
-                      <div className="ml-2">
-                        <MakeControllerButton
-                          onClick={() => handleOfferController(c.clientId)}
-                          displayName={c.displayName || c.clientId}
-                        />
-                      </div>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
+                      {isCurrentController ? (
+                        <div className="flex flex-col items-end gap-1 ml-2">
+                          <ControllerBadge />
+                        </div>
+                      ) : isController && !isCurrentUser && (
+                        <div className="ml-2">
+                          <MakeControllerButton
+                            onClick={() => handleOfferController(c.clientId)}
+                            displayName={c.displayName || c.clientId}
+                          />
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )
           )}
         </div>
       </div>
@@ -284,59 +379,122 @@ const DeviceList = React.memo(function DeviceList({ clients = [], controllerClie
       </div>
 
       {/* Device List */}
-      <div className="bg-gradient-to-br from-neutral-900/80 to-neutral-900/60 rounded-xl border border-neutral-800 overflow-hidden shadow-xl">
+      <div ref={deviceListScrollRef} className="bg-gradient-to-br from-neutral-900/80 to-neutral-900/60 rounded-xl border border-neutral-800 overflow-hidden shadow-xl scrollable-container" tabIndex="0" aria-label="Device list">
         {clients.length === 0 ? (
           <EmptyState />
         ) : (
-          <ul className="divide-y divide-neutral-800">
-            {clients.map((c, index) => {
-              const isCurrentUser = c.clientId === clientId;
-              const isCurrentController = c.clientId === controllerClientId;
-              return (
-                <li
-                  key={c.id}
-                  className={`flex items-center p-4 transition-all duration-300 group relative
-                    ${isCurrentController ? 'bg-primary/10 border-l-4 border-l-primary shadow-md' : 'hover:bg-neutral-800/50'}
-                    ${clientAnimations[index]?.animationClass || ''}
-                  `}
-                >
-                  <div className="flex items-center gap-3 flex-1">
-                    <DeviceAvatar isController={isCurrentController} isCurrentUser={isCurrentUser} />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className={`font-semibold text-sm truncate transition-colors duration-200
-                          ${isCurrentController ? 'text-primary' : isCurrentUser ? 'text-accent' : 'text-white'}
-                        `}>
-                          {c.displayName || c.clientId || c.id}
-                        </span>
+          clients.length > 20 ? (
+            <List
+              ref={deviceListVirtRef}
+              height={320}
+              itemCount={clients.length}
+              itemSize={() => 56}
+              width={'100%'}
+              className="divide-y divide-neutral-800 scrollable-container"
+              tabIndex={0}
+              aria-label="Device list"
+            >
+              {({ index, style }) => {
+                const c = clients[index];
+                const isCurrentUser = c.clientId === clientId;
+                const isCurrentController = c.clientId === controllerClientId;
+                return (
+                  <li
+                    style={style}
+                    key={c.id}
+                    className={`flex items-center p-4 transition-all duration-300 group relative
+                      ${isCurrentController ? 'bg-primary/10 border-l-4 border-l-primary shadow-md' : 'hover:bg-neutral-800/50'}
+                      ${clientAnimations[index]?.animationClass || ''}
+                    `}
+                  >
+                    <div className="flex items-center gap-3 flex-1">
+                      <DeviceAvatar isController={isCurrentController} isCurrentUser={isCurrentUser} />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className={`font-semibold text-sm truncate transition-colors duration-200
+                            ${isCurrentController ? 'text-primary' : isCurrentUser ? 'text-accent' : 'text-white'}
+                          `}>
+                            {c.displayName || c.clientId || c.id}
+                          </span>
+                        </div>
+                        <p className="text-neutral-400 text-xs truncate">
+                          {c.deviceInfo || 'Unknown device'}
+                        </p>
                       </div>
-                      <p className="text-neutral-400 text-xs truncate">
-                        {c.deviceInfo || 'Unknown device'}
-                      </p>
                     </div>
-                  </div>
-                  {isCurrentController ? (
-                    <div className="flex items-center gap-1 ml-2">
-                      <ControllerBadge />
-                      {isCurrentUser && (
-                        <span className="ml-1 px-2 py-0.5 rounded-full text-xs font-medium bg-accent/10 text-accent border border-accent/20 shadow-none">You</span>
-                      )}
+                    {isCurrentController ? (
+                      <div className="flex items-center gap-1 ml-2">
+                        <ControllerBadge />
+                        {isCurrentUser && (
+                          <span className="ml-1 px-2 py-0.5 rounded-full text-xs font-medium bg-accent/10 text-accent border border-accent/20 shadow-none">You</span>
+                        )}
+                      </div>
+                    ) : isController && !isCurrentUser ? (
+                      <div className="opacity-0 group-hover:opacity-100 transition-all duration-300 ml-2">
+                        <MakeControllerButton
+                          onClick={() => handleOfferController(c.clientId)}
+                          displayName={c.displayName || c.clientId}
+                          className="px-2 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 shadow-none"
+                        />
+                      </div>
+                    ) : isCurrentUser ? (
+                      <span className="ml-2 px-2 py-0.5 rounded-full text-xs font-medium bg-accent/10 text-accent border border-accent/20 shadow-none">You</span>
+                    ) : null}
+                  </li>
+                );
+              }}
+            </List>
+          ) : (
+            <ul className="divide-y divide-neutral-800">
+              {clients.map((c, index) => {
+                const isCurrentUser = c.clientId === clientId;
+                const isCurrentController = c.clientId === controllerClientId;
+                return (
+                  <li
+                    key={c.id}
+                    className={`flex items-center p-4 transition-all duration-300 group relative
+                      ${isCurrentController ? 'bg-primary/10 border-l-4 border-l-primary shadow-md' : 'hover:bg-neutral-800/50'}
+                      ${clientAnimations[index]?.animationClass || ''}
+                    `}
+                  >
+                    <div className="flex items-center gap-3 flex-1">
+                      <DeviceAvatar isController={isCurrentController} isCurrentUser={isCurrentUser} />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className={`font-semibold text-sm truncate transition-colors duration-200
+                            ${isCurrentController ? 'text-primary' : isCurrentUser ? 'text-accent' : 'text-white'}
+                          `}>
+                            {c.displayName || c.clientId || c.id}
+                          </span>
+                        </div>
+                        <p className="text-neutral-400 text-xs truncate">
+                          {c.deviceInfo || 'Unknown device'}
+                        </p>
+                      </div>
                     </div>
-                  ) : isController && !isCurrentUser ? (
-                    <div className="opacity-0 group-hover:opacity-100 transition-all duration-300 ml-2">
-                      <MakeControllerButton
-                        onClick={() => handleOfferController(c.clientId)}
-                        displayName={c.displayName || c.clientId}
-                        className="px-2 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 shadow-none"
-                      />
-                    </div>
-                  ) : isCurrentUser ? (
-                    <span className="ml-2 px-2 py-0.5 rounded-full text-xs font-medium bg-accent/10 text-accent border border-accent/20 shadow-none">You</span>
-                  ) : null}
-                </li>
-              );
-            })}
-          </ul>
+                    {isCurrentController ? (
+                      <div className="flex items-center gap-1 ml-2">
+                        <ControllerBadge />
+                        {isCurrentUser && (
+                          <span className="ml-1 px-2 py-0.5 rounded-full text-xs font-medium bg-accent/10 text-accent border border-accent/20 shadow-none">You</span>
+                        )}
+                      </div>
+                    ) : isController && !isCurrentUser ? (
+                      <div className="opacity-0 group-hover:opacity-100 transition-all duration-300 ml-2">
+                        <MakeControllerButton
+                          onClick={() => handleOfferController(c.clientId)}
+                          displayName={c.displayName || c.clientId}
+                          className="px-2 py-0.5 rounded-full text-xs font-medium bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 shadow-none"
+                        />
+                      </div>
+                    ) : isCurrentUser ? (
+                      <span className="ml-2 px-2 py-0.5 rounded-full text-xs font-medium bg-accent/10 text-accent border border-accent/20 shadow-none">You</span>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          )
         )}
       </div>
     </div>

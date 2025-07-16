@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useContext } from 'react';
 import SyncStatus from './SyncStatus';
 import useSmoothAppearance from '../hooks/useSmoothAppearance';
 import LoadingSpinner from './LoadingSpinner';
@@ -9,13 +9,14 @@ import useResyncAnalytics from '../hooks/useResyncAnalytics'
 import SYNC_CONFIG from '../utils/syncConfig';
 import useUltraPreciseOffset from '../hooks/useUltraPreciseOffset';
 import { createEMA } from '../utils/syncConfig';
+import { ReducedMotionContext } from '../App';
 
 // Add global error handlers
 if (typeof window !== 'undefined' && !window._audioPlayerErrorHandlerAdded) {
-  window.addEventListener('unhandledrejection', function(event) {
+  window.addEventListener('unhandledrejection', function() {
     // Remove all console.log, console.warn, and console.error statements
   });
-  window.addEventListener('error', function(event) {
+  window.addEventListener('error', function() {
     // Remove all console.log, console.warn, and console.error statements
   });
   window._audioPlayerErrorHandlerAdded = true;
@@ -106,22 +107,14 @@ function setCurrentTimeSafely(audio, value, setCurrentTime) {
   }
 
   // Helper to actually set currentTime and update state
-  const doSet = (context, eventType = 'immediate') => {
+  const doSet = (context) => {
     try {
       // Only set if different to avoid unnecessary seeks
       if (Math.abs(audio.currentTime - value) > 0.01) {
         audio.currentTime = value;
         setCurrentTime(value);
-        // Optionally, fire a custom event for debugging
-        // audio.dispatchEvent(new CustomEvent('currentTimeSetSafely', { detail: { value, eventType } }));
-        // Enhanced: log only in dev
-        if (import.meta.env.MODE === 'development') {
-          console.log(`[setCurrentTimeSafely] Set currentTime (${eventType})`, { ...context, actual: audio.currentTime });
-        }
       }
-    } catch (e) {
-      console.warn(`[setCurrentTimeSafely] Failed to set currentTime (${eventType}):`, context, e);
-    }
+    } catch {/* ignored */}
   };
 
   // If audio is ready and duration is known, set immediately
@@ -130,7 +123,7 @@ function setCurrentTimeSafely(audio, value, setCurrentTime) {
     audio.duration &&
     isFinite(audio.duration)
   ) {
-    doSet(logContext, 'immediate');
+    doSet(logContext);
     return;
   }
 
@@ -139,10 +132,6 @@ function setCurrentTimeSafely(audio, value, setCurrentTime) {
     if (value === 0 && audio.src && !audio.src.includes('forceReload')) {
       // Append a dummy query param to force reload
       audio.src = audio.src + (audio.src.includes('?') ? '&' : '?') + 'forceReload=' + Date.now();
-      // Optionally, log
-      if (import.meta.env.MODE === 'development') {
-        console.log('[setCurrentTimeSafely] Forcing reload due to NaN duration', logContext);
-      }
     }
   }
 
@@ -164,7 +153,7 @@ function setCurrentTimeSafely(audio, value, setCurrentTime) {
       event: 'loadedmetadata',
     };
     if (audio.duration && isFinite(audio.duration)) {
-      doSet(context, 'loadedmetadata');
+      doSet(context);
     } else {
       console.warn('[setCurrentTimeSafely] Still not ready after loadedmetadata', context);
     }
@@ -182,7 +171,7 @@ function setCurrentTimeSafely(audio, value, setCurrentTime) {
       event: 'canplay',
     };
     if (audio.duration && isFinite(audio.duration)) {
-      doSet(context, 'canplay');
+      doSet(context);
     } else {
       console.warn('[setCurrentTimeSafely] Still not ready after canplay', context);
     }
@@ -204,7 +193,7 @@ function setCurrentTimeSafely(audio, value, setCurrentTime) {
         event: 'timeout',
       };
       if (audio.duration && isFinite(audio.duration)) {
-        doSet(context, 'timeout');
+        doSet(context);
       } else {
         console.warn('[setCurrentTimeSafely] Timeout waiting for audio readiness', context);
       }
@@ -230,13 +219,8 @@ function getNow(getServerTime) {
         }
         return localNow();
       }
-    } catch (e) {
-      if (import.meta.env.MODE === 'development') {
-         
-        console.error('[AudioPlayer][getNow] getServerTime threw error:', e, 'Falling back to high-res local time.');
-      }
-      return localNow();
-    }
+    } catch {/* ignored */}
+    return localNow();
   } else {
     if (import.meta.env.MODE === 'development') {
        
@@ -251,7 +235,7 @@ function getNow(getServerTime) {
  * Uses EMA smoothing for offset and drift, and micro-correction for imperceptible sync.
  * All hooks and event listeners are cleaned up and follow React best practices.
  */
-export default function AudioPlayer({
+function AudioPlayer({
   disabled = false,
   socket,
   controllerClientId,
@@ -267,6 +251,12 @@ export default function AudioPlayer({
   sessionSyncState = null,
   forceNtpBatchSync,
 }) {
+  const reducedMotion = useContext(ReducedMotionContext); // <-- Move this to the top
+  // --- All hooks must be at the top level (rules of hooks) ---
+  const [showDriftDebug, setShowDriftDebug] = useState(false);
+  const [showLatencyCal, setShowLatencyCal] = useState(false);
+  const [edgeCaseBanner, setEdgeCaseBanner] = useState(null);
+  const [showCalibrateBanner, setShowCalibrateBanner] = useState(false);
   // Fix: manualLatency must be declared before any useEffect or code that references it
   const [manualLatency, setManualLatency] = useState(() => {
     const saved = localStorage.getItem('audioLatencyOverride');
@@ -308,7 +298,7 @@ export default function AudioPlayer({
   const driftParams = getDriftCorrectionParams({ rtt, jitter });
 
   // After calling useUltraPreciseOffset, destructure as:
-  const { ultraPreciseOffset: computedUltraPreciseOffset, syncQuality, allOffsets, selectedSource } = useUltraPreciseOffset(
+  const { ultraPreciseOffset: computedUltraPreciseOffset, syncQuality, selectedSource } = useUltraPreciseOffset(
     [], // Pass an empty array if no peerSyncs are available
     timeOffset,
     rtt,
@@ -374,7 +364,6 @@ export default function AudioPlayer({
   // Remove: resyncHistory, lastResyncTime, resyncInProgress, smartResyncSuggestion, resyncStats, updateResyncHistory
   // Instead, use:
   const {
-    resyncHistory,
     lastResyncTime,
     setLastResyncTime,
     resyncInProgress,
@@ -388,7 +377,16 @@ export default function AudioPlayer({
   // Jitter buffer: only correct drift if sustained for N checks
   const driftCountRef = useRef(0);
 
+  // Use reducedMotion to skip or minimize animations
   useEffect(() => {
+    if (reducedMotion) {
+      setAnimating(false);
+      setShouldAnimate(false);
+    }
+  }, [reducedMotion]);
+
+  useEffect(() => {
+    if (reducedMotion) return;
     if ((currentTrack?.title || '') !== displayedTitle) {
       setAnimating(true);
       setDirection('up');
@@ -397,10 +395,10 @@ export default function AudioPlayer({
         setDisplayedTitle(currentTrack?.title || '');
         setTimeout(() => {
           setAnimating(false);
-        }, 320); // match in duration
-      }, 320); // match out duration
+        }, 400);
+      }, 400);
     }
-  }, [currentTrack?.title]);
+  }, [currentTrack?.title, reducedMotion]);
 
   // Trigger animation for mobile audio player
   useEffect(() => {
@@ -434,7 +432,6 @@ export default function AudioPlayer({
         // Remove trailing slash if present
         url = backendUrl.replace(/\/$/, '') + url;
       }
-      console.log('AudioPlayer: Setting audioUrl to', url);
       setAudioUrl(url);
       // setLoading(false); // Removed
       // setAudioError(null); // Removed
@@ -525,7 +522,6 @@ export default function AudioPlayer({
     
     // If we're not the controller and audio is playing but shouldn't be, pause it
     if (!isController && !isPlaying && !audio.paused) {
-      console.log('Pausing audio: listener detected audio playing when it should be paused');
       audio.pause();
     }
   }, [isController, isPlaying]);
@@ -536,14 +532,6 @@ export default function AudioPlayer({
 
     let syncTimeout = null;
     let resyncTimeout = null;
-
-    // Helper: log with context and level
-    const log = (level, ...args) => {
-      if (import.meta.env.MODE === 'development') {
-         
-        console[level]?.('[AudioPlayer][sync_state]', ...args);
-      }
-    };
 
     // Helper: show sync status for a limited time, then revert to "In Sync"
     const showSyncStatus = (status, duration = 1200) => {
@@ -584,14 +572,12 @@ export default function AudioPlayer({
         !isFinite(timestamp) ||
         !isFinite(lastUpdated)
       ) {
-        log('warn', 'SYNC_STATE: invalid state received', { isPlaying, timestamp, lastUpdated, ctrlId, trackId, meta });
         showSyncStatus('Sync failed');
         setErrorBanner('Sync failed: Invalid state received from server.');
         return;
       }
       const audio = audioRef.current;
       if (!audio) {
-        log('warn', 'SYNC_STATE: audio element not available');
         return;
       }
       // Use serverTime if present, else fallback
@@ -600,7 +586,6 @@ export default function AudioPlayer({
         now = serverTime;
       } else {
         now = getNow(getServerTime);
-        log('warn', 'SYNC_STATE: serverTime missing, using getNow(getServerTime)', { now });
       }
       // Compensate for measured audio latency and RTT (one-way delay)
       const rttComp = rtt ? rtt / 2000 : 0; // ms to s, one-way
@@ -625,16 +610,6 @@ export default function AudioPlayer({
         trackId,
       });
       if (window._audioDriftHistory.length > 10) window._audioDriftHistory.shift();
-
-      // Log drift for debugging (dev only)
-      log('log', '[DriftCheck] SYNC_STATE drift:', drift, {
-        current: audio.currentTime,
-        expected,
-        isPlaying,
-        ctrlId,
-        trackId,
-        meta,
-      });
 
       // Enhanced: show drift in UI if large
       if (drift > SYNC_CONFIG.DRIFT_THRESHOLD) {
@@ -662,7 +637,6 @@ export default function AudioPlayer({
       // Only play/pause if state differs
       if (isPlaying && audio.paused) {
         audio.play().catch(e => {
-          log('warn', 'SYNC_STATE: failed to play audio', e);
         });
       } else if (!isPlaying && !audio.paused) {
         audio.pause();
@@ -700,9 +674,6 @@ export default function AudioPlayer({
       }
       // Defensive check: only emit if sessionId is set
       if (!socket.sessionId) {
-        if (import.meta.env.MODE === 'development') {
-          console.warn('[DriftCheck] No sessionId set on socket, skipping sync_request');
-        }
         return;
       }
       socket.emit('sync_request', { sessionId: socket.sessionId }, (state) => {
@@ -738,19 +709,6 @@ export default function AudioPlayer({
         const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000 + rttComp + smoothedOffset;
         const drift = Math.abs(audio.currentTime - expectedSynced);
 
-        // Enhanced: log drift only if significant or in dev
-        if (drift > SYNC_CONFIG.DRIFT_THRESHOLD || import.meta.env.MODE === 'development') {
-          console.log(
-            '[DriftCheck] PERIODIC drift:',
-            drift.toFixed(3),
-            'current:',
-            audio.currentTime.toFixed(3),
-            'expected:',
-            expectedSynced.toFixed(3),
-            'isPlaying:', audio.paused ? 'paused' : 'playing'
-          );
-        }
-
         // Only correct if not in cooldown
         const nowMs = Date.now();
         const canCorrect = nowMs - lastCorrection > correctionCooldown;
@@ -782,7 +740,6 @@ export default function AudioPlayer({
           }
         } else {
           if (driftCountRef.current > 0 && import.meta.env.MODE === 'development') {
-            console.log('[DriftCheck] Drift back in threshold, resetting counter');
           }
           driftCountRef.current = 0;
           setSyncStatus('In Sync');
@@ -873,14 +830,6 @@ export default function AudioPlayer({
           safeExpected = Math.max(0, expectedSynced);
         }
 
-        log('Syncing audio to', {
-          expectedSynced,
-          safeExpected,
-          isPlaying: state.isPlaying,
-          duration: audio.duration,
-          src: audio.currentSrc,
-        });
-
         setCurrentTimeSafely(audio, safeExpected, setDisplayedCurrentTime);
         setIsPlaying(state.isPlaying);
 
@@ -895,9 +844,7 @@ export default function AudioPlayer({
           audio.pause();
           setCurrentTimeSafely(audio, safeExpected, setDisplayedCurrentTime);
         }
-      } catch (err) {
-        warn('Exception in sync_request callback', err);
-      }
+      } catch {/* ignored */}
     });
   }, [socket, getServerTime, audioLatency, rtt, smoothedOffset]);
 
@@ -914,18 +861,9 @@ export default function AudioPlayer({
         emittedAt: now,
         latency: audioLatency,
       };
-      if (import.meta.env.MODE === 'development') {
-         
-        console.log('[AudioPlayer][emitPlay]', payload);
-      }
       try {
         socket.emit('play', payload);
-      } catch (err) {
-        if (import.meta.env.MODE === 'development') {
-           
-          console.error('[AudioPlayer][emitPlay] Failed to emit play event', err, payload);
-        }
-      }
+      } catch {/* ignored */}
     }
   };
 
@@ -938,18 +876,9 @@ export default function AudioPlayer({
         clientId,
         emittedAt: getNow(getServerTime),
       };
-      if (import.meta.env.MODE === 'development') {
-         
-        console.log('[AudioPlayer][emitPause]', payload);
-      }
       try {
         socket.emit('pause', payload);
-      } catch (err) {
-        if (import.meta.env.MODE === 'development') {
-           
-          console.error('[AudioPlayer][emitPause] Failed to emit pause event', err, payload);
-        }
-      }
+      } catch {/* ignored */}
     }
   };
 
@@ -961,18 +890,9 @@ export default function AudioPlayer({
         clientId,
         emittedAt: getNow(getServerTime),
       };
-      if (import.meta.env.MODE === 'development') {
-         
-        console.log('[AudioPlayer][emitSeek]', payload);
-      }
       try {
         socket.emit('seek', payload);
-      } catch (err) {
-        if (import.meta.env.MODE === 'development') {
-           
-          console.error('[AudioPlayer][emitSeek] Failed to emit seek event', err, payload);
-        }
-      }
+      } catch {/* ignored */}
     }
   };
 
@@ -995,16 +915,8 @@ export default function AudioPlayer({
       }
       setIsPlaying(true);
       emitPlay();
-      if (import.meta.env.MODE === 'development') {
-         
-        console.log('[AudioPlayer][handlePlay] Play triggered successfully');
-      }
-    } catch (err) {
+    } catch {
       setIsPlaying(false);
-      if (import.meta.env.MODE === 'development') {
-         
-        console.error('[AudioPlayer][handlePlay] Failed to play audio', err);
-      }
     }
   };
 
@@ -1021,16 +933,7 @@ export default function AudioPlayer({
       audio.pause();
       setIsPlaying(false);
       emitPause();
-      if (import.meta.env.MODE === 'development') {
-         
-        console.log('[AudioPlayer][handlePause] Pause triggered successfully');
-      }
-    } catch (err) {
-      if (import.meta.env.MODE === 'development') {
-         
-        console.error('[AudioPlayer][handlePause] Failed to pause audio', err);
-      }
-    }
+    } catch {/* ignored */}
   };
 
   // Enhanced Manual re-sync with improved logging, error handling, user feedback, and analytics
@@ -1065,7 +968,7 @@ export default function AudioPlayer({
           await result;
         }
         setSyncStatus('NTP batch sync complete. Re-syncing...');
-      } catch (e) {
+      } catch {
         setSyncStatus('NTP batch sync failed.');
         setTimeout(() => setSyncStatus('In Sync'), 1500);
         setResyncInProgress(false);
@@ -1123,8 +1026,7 @@ export default function AudioPlayer({
       if (ctx.baseLatency && ctx.baseLatency > 0 && ctx.baseLatency < 1) {
         setAudioLatency(ctx.baseLatency);
       }
-    } catch (e) {
-      // Ignore, fallback to default
+    } catch { // Ignore, fallback to default
     } finally {
       if (ctx && typeof ctx.close === 'function') ctx.close();
     }
@@ -1178,7 +1080,7 @@ export default function AudioPlayer({
     o.frequency.value = 880;
     o.connect(ctx.destination);
     o.start();
-    setTimeout(() => { o.stop(); ctx.close(); }, 200);
+    setTimeout(() => { o.stop(); ctx.close(); }, 300); // was 200
   }
   function handleLatencyWizardNext() {
     if (latencyWizardStep === 1) {
@@ -1380,12 +1282,6 @@ export default function AudioPlayer({
       </div>
     );
   }
-
-  // Add at the top level of the component (after hooks):
-  const [showDriftDebug, setShowDriftDebug] = useState(false);
-  const [showLatencyCal, setShowLatencyCal] = useState(false);
-  const [edgeCaseBanner, setEdgeCaseBanner] = useState(null);
-  const [showCalibrateBanner, setShowCalibrateBanner] = useState(false);
 
   // Show calibration banner if repeated drift or poor sync quality
   useEffect(() => {
@@ -1802,4 +1698,6 @@ export default function AudioPlayer({
 )}
     </div>
   );
-} 
+}
+
+export default React.memo(AudioPlayer); 

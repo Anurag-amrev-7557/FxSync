@@ -1,10 +1,13 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, createContext } from 'react'
 import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom'
 import SessionPage from './components/SessionPage'
-import CreateRoomPage from './components/CreateRoomPage'
+import CreateRoomPage from './components/SessionForm'
 import useSocket from './hooks/useSocket'
 import './App.css'
 import ErrorBoundary from './components/ErrorBoundary'
+import usePrefersReducedMotion from './hooks/usePrefersReducedMotion';
+
+export const ReducedMotionContext = createContext(false);
 
 // Enhanced App component with better state management and routing
 function App() {
@@ -34,6 +37,8 @@ function App() {
 
   // Enhanced socket connection with better error handling
   const { rtt, timeOffset, jitter, drift, forceNtpBatchSync, ...socketStuff } = useSocket(currentSessionId, displayName, undefined, setSessionSyncState)
+
+  const reducedMotion = usePrefersReducedMotion();
 
   // Persist session data to localStorage
   useEffect(() => {
@@ -70,7 +75,7 @@ function App() {
   }
 
   return (
-    <ErrorBoundary>
+    <ReducedMotionContext.Provider value={reducedMotion}>
       <Router>
         <div className="app-container">
           <Routes>
@@ -127,7 +132,7 @@ function App() {
           </Routes>
         </div>
       </Router>
-    </ErrorBoundary>
+    </ReducedMotionContext.Provider>
   )
 }
 

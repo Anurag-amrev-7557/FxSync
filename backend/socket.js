@@ -5,6 +5,7 @@ import { log } from './utils/utils.js';
 import { getSessionFiles, removeSessionFiles } from './managers/fileManager.js';
 import fs from 'fs';
 import path from 'path';
+import { v4 as uuidv4 } from 'uuid';
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -27,7 +28,31 @@ function buildSessionSyncState(session) {
   };
 }
 
+// Simple HTML escape utility
+function escapeHtml(str) {
+  return str.replace(/[&<>'"]/g, function(tag) {
+    const charsToReplace = {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      "'": '&#39;',
+      '"': '&quot;'
+    };
+    return charsToReplace[tag] || tag;
+  });
+}
+
+// --- In-memory chat message storage per session ---
+function getSessionMessages(sessionId) {
+  const session = getSession(sessionId);
+  if (!session) return null;
+  if (!session.messages) session.messages = [];
+  return session.messages;
+}
+
 export function setupSocket(io) {
+  // --- Rate limiting state ---
+  const chatRateLimit = {};
   io.on('connection', (socket) => {
     console.log('Socket connected:', socket.id);
 
@@ -424,16 +449,41 @@ export function setupSocket(io) {
       typeof callback === "function" && callback({ success: true });
     });
 
-    socket.on('chat_message', ({ sessionId, message, sender, displayName } = {}) => {
+    socket.on('chat_message', ({ sessionId, message, sender, displayName } = {}, callback) => {
+      // --- Rate limiting ---
+      const now = Date.now();
+      if (!chatRateLimit[socket.id]) chatRateLimit[socket.id] = [];
+      // Remove timestamps older than 3 seconds
+      chatRateLimit[socket.id] = chatRateLimit[socket.id].filter(ts => now - ts < 3000);
+      if (chatRateLimit[socket.id].length >= 5) {
+        if (typeof callback === 'function') callback({ error: 'You are sending messages too quickly. Please slow down.' });
+        return;
+      }
+      chatRateLimit[socket.id].push(now);
       console.log('Backend: Received chat_message event:', { sessionId, message, sender, displayName, socketId: socket.id });
       if (!sessionId || !message || typeof message !== 'string') {
         console.log('Backend: Invalid chat message data:', { sessionId, message, sender });
+        if (typeof callback === 'function') callback({ error: 'Invalid chat message data' });
         return;
       }
+      // Message length and content validation
+      const MAX_LENGTH = 500;
+      const trimmed = message.trim();
+      if (!trimmed) {
+        if (typeof callback === 'function') callback({ error: 'Message cannot be empty or whitespace.' });
+        return;
+      }
+      if (trimmed.length > MAX_LENGTH) {
+        if (typeof callback === 'function') callback({ error: `Message too long (max ${MAX_LENGTH} characters).` });
+        return;
+      }
+      // Sanitize message to prevent XSS
+      const safeMessage = escapeHtml(trimmed);
       const session = getSession(sessionId);
       console.log('Backend: Available sessions:', Object.keys(getAllSessions()));
       if (!session) {
         console.log('Backend: Session not found:', sessionId);
+        if (typeof callback === 'function') callback({ error: 'Session not found' });
         return;
       }
       // Try to get displayName from payload, else from session.clients map
@@ -454,9 +504,65 @@ export function setupSocket(io) {
         }
         resolvedDisplayName = clientInfo && clientInfo.displayName ? clientInfo.displayName : undefined;
       }
-      const formattedMessage = formatChatMessage(sender || socket.id, message, resolvedDisplayName);
-      console.log('Backend: Formatted message:', formattedMessage);
+      let formattedMessage = formatChatMessage(sender || socket.id, safeMessage, resolvedDisplayName);
+      // Ensure messageId is present
+      if (!formattedMessage.messageId) {
+        formattedMessage = { ...formattedMessage, messageId: uuidv4() };
+      }
+      // Store message in session
+      const sessionMessages = getSessionMessages(sessionId);
+      if (sessionMessages) sessionMessages.push(formattedMessage);
       io.to(sessionId).emit('chat_message', formattedMessage);
+      if (typeof callback === 'function') callback({ success: true, message: formattedMessage });
+    });
+
+    // Edit message event
+    socket.on('edit_message', ({ sessionId, messageId, newMessage, clientId }, callback) => {
+      const sessionMessages = getSessionMessages(sessionId);
+      if (!sessionMessages) return callback && callback({ error: 'Session not found' });
+      const msgIdx = sessionMessages.findIndex(m => m.messageId === messageId);
+      if (msgIdx === -1) return callback && callback({ error: 'Message not found' });
+      const msg = sessionMessages[msgIdx];
+      if (msg.sender !== clientId) return callback && callback({ error: 'Not allowed' });
+      // Validate and sanitize new message
+      const trimmed = (newMessage || '').trim();
+      if (!trimmed) return callback && callback({ error: 'Message cannot be empty.' });
+      if (trimmed.length > 500) return callback && callback({ error: 'Message too long (max 500 characters).' });
+      msg.message = escapeHtml(trimmed);
+      msg.edited = true;
+      msg.editTimestamp = Date.now();
+      io.to(sessionId).emit('message_edited', msg);
+      callback && callback({ success: true, message: msg });
+    });
+
+    // Delete message event
+    socket.on('delete_message', ({ sessionId, messageId, clientId }, callback) => {
+      const sessionMessages = getSessionMessages(sessionId);
+      if (!sessionMessages) return callback && callback({ error: 'Session not found' });
+      const msgIdx = sessionMessages.findIndex(m => m.messageId === messageId);
+      if (msgIdx === -1) return callback && callback({ error: 'Message not found' });
+      const msg = sessionMessages[msgIdx];
+      if (msg.sender !== clientId) return callback && callback({ error: 'Not allowed' });
+      sessionMessages.splice(msgIdx, 1);
+      io.to(sessionId).emit('message_deleted', { messageId });
+      callback && callback({ success: true });
+    });
+
+    // Report message event
+    socket.on('report_message', ({ sessionId, messageId, reporterId, reason }, callback) => {
+      const sessionMessages = getSessionMessages(sessionId);
+      if (!sessionMessages) return callback && callback({ error: 'Session not found' });
+      const msg = sessionMessages.find(m => m.messageId === messageId);
+      if (!msg) return callback && callback({ error: 'Message not found' });
+      // For now, just log the report
+      console.log('[REPORT] Message reported:', {
+        sessionId,
+        messageId,
+        reporterId,
+        reason,
+        reportedMessage: msg
+      });
+      callback && callback({ success: true });
     });
 
     socket.on('reaction', ({ sessionId, reaction, sender } = {}) => {
@@ -822,6 +928,17 @@ export function setupSocket(io) {
       // (Optional) Adaptive correction logic can be added here
     });
 
+    // Typing indicator events
+    socket.on('typing', ({ sessionId, clientId, displayName }) => {
+      if (!sessionId || !clientId) return;
+      // Broadcast to all except sender
+      socket.to(sessionId).emit('user_typing', { clientId, displayName });
+    });
+    socket.on('stop_typing', ({ sessionId, clientId }) => {
+      if (!sessionId || !clientId) return;
+      socket.to(sessionId).emit('user_stop_typing', { clientId });
+    });
+
     socket.on('disconnect', () => {
       for (const [sessionId, session] of Object.entries(getAllSessions())) {
         const clientId = getClientIdBySocket(sessionId, socket.id);
@@ -904,6 +1021,8 @@ export function setupSocket(io) {
             clientSocket.leave(sessionId);
           }
         }
+        // Clean up uploaded files and in-memory file tracking
+        removeSessionFiles(sessionId);
         deleteSession(sessionId);
         log(`Session ${sessionId} timed out and was removed.`);
       } else {

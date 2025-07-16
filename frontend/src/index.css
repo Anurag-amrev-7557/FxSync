@@ -27,6 +27,20 @@ body {
   color: #ffffff;
 }
 
+html, body {
+  scroll-behavior: smooth;
+}
+
+.scrollable-container {
+  overscroll-behavior: contain;
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #404040 #262626;
+}
+
 /* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
@@ -51,10 +65,17 @@ body {
   color: #ffffff;
 }
 
-/* Focus styles */
-*:focus {
-  outline: 2px solid #0ea5e9;
+/* Only hide outline for mouse users, keep for keyboard users */
+*:focus:not(:focus-visible) {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+:focus-visible {
+  outline: 2px solid #38bdf8 !important; /* Tailwind sky-400 */
   outline-offset: 2px;
+  box-shadow: 0 0 0 2px #0ea5e933;
+  transition: outline-color 0.2s;
 }
 
 /* Remove default button styles */
@@ -370,19 +391,82 @@ input[type="range"]::-moz-range-thumb {
 
 /* Animation utility classes */
 .animate-slide-in-right {
-  animation: slide-in-right 0.3s ease-out;
+  animation: slide-in-right 0.4s cubic-bezier(0.22, 1, 0.36, 1);
 }
-
 .animate-fade-in-scale {
-  animation: fade-in-scale 0.3s ease-out;
+  animation: fade-in-scale 0.4s cubic-bezier(0.22, 1, 0.36, 1);
 }
-
 .animate-bounce-in {
-  animation: bounce-in 0.6s ease-out;
+  animation: bounce-in 0.4s cubic-bezier(0.22, 1, 0.36, 1);
 }
-
 .animate-shake {
-  animation: shake 0.5s ease-in-out;
+  animation: shake 0.3s ease-out;
+}
+.animate-fade-in {
+  animation: fade-in 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.animate-scale-in {
+  animation: scale-in 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.animate-slide-in-left {
+  animation: slide-in-left 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.animate-slide-up-from-bottom {
+  animation: slide-up-from-bottom 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.animate-slide-down-from-top {
+  animation: slide-down-from-top 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.animate-glow-pulse {
+  animation: glow-pulse 2s ease-in-out infinite;
+}
+.animate-gradient-shift {
+  animation: gradient-shift 2s ease-in-out infinite;
+}
+.animate-float-up {
+  animation: float-up 2s ease-in-out infinite;
+}
+.animate-particle-burst {
+  animation: particle-burst 0.3s ease-out;
+}
+.animate-magnetic-pull {
+  animation: magnetic-pull 0.3s ease-out;
+}
+.animate-ripple {
+  animation: ripple 0.3s ease-out;
+}
+.animate-glow-pulse-enhanced {
+  animation: glow-pulse-enhanced 2s ease-in-out infinite;
+}
+.animate-text-reveal {
+  animation: text-reveal 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.animate-stagger-in {
+  animation: stagger-in 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.animate-cursor-blink {
+  animation: cursor-blink 2s ease-in-out infinite;
+}
+.animate-hover-lift-enhanced {
+  animation: hover-lift-enhanced 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.animate-parallax-float {
+  animation: parallax-float 2s ease-in-out infinite;
+}
+.animate-wave {
+  animation: wave-animation 2s ease-in-out infinite;
+}
+.animate-bounce-rotate {
+  animation: bounce-rotate 2s ease-in-out infinite;
+}
+.animate-shimmer {
+  animation: shimmer 2s ease-in-out infinite;
+}
+.stagger-animate {
+  transition: all 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.stagger-animate.animate-in {
+  transition-delay: 60ms;
 }
 
 /* 3D Flip Animation */
@@ -403,35 +487,6 @@ input[type="range"]::-moz-range-thumb {
 .transform-3d {
   transform-style: preserve-3d;
   backface-visibility: hidden;
-}
-
-.animate-fade-in {
-  animation: fade-in 0.5s ease-out;
-}
-
-.animate-scale-in {
-  animation: scale-in 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.animate-slide-in-left {
-  animation: slide-in-left 0.4s ease-out;
-}
-
-.animate-slide-up-from-bottom {
-  animation: slide-up-from-bottom 0.6s cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.animate-slide-down-from-top {
-  animation: slide-down-from-top 0.6s cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.animate-glow-pulse {
-  animation: glow-pulse 2s ease-in-out infinite;
-}
-
-.animate-gradient-shift {
-  background-size: 200% 200%;
-  animation: gradient-shift 3s ease infinite;
 }
 
 /* Enhanced hover effects */
@@ -671,19 +726,19 @@ input[type="range"]::-moz-range-thumb {
 
 /* Apply enhanced animations */
 .animate-float-up {
-  animation: float-up 8s linear forwards;
+  animation: float-up 2s ease-in-out infinite;
 }
 
 .animate-particle-burst {
-  animation: particle-burst 0.8s ease-out forwards;
+  animation: particle-burst 0.3s ease-out;
 }
 
 .animate-magnetic-pull {
-  animation: magnetic-pull 0.3s ease-out forwards;
+  animation: magnetic-pull 0.3s ease-out;
 }
 
 .animate-ripple {
-  animation: ripple 0.6s ease-out forwards;
+  animation: ripple 0.3s ease-out;
 }
 
 .animate-glow-pulse-enhanced {
@@ -691,19 +746,19 @@ input[type="range"]::-moz-range-thumb {
 }
 
 .animate-text-reveal {
-  animation: text-reveal 0.6s ease-out forwards;
+  animation: text-reveal 0.4s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .animate-stagger-in {
-  animation: stagger-in 0.5s ease-out forwards;
+  animation: stagger-in 0.4s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .animate-cursor-blink {
-  animation: cursor-blink 0.6s ease-in-out infinite;
+  animation: cursor-blink 2s ease-in-out infinite;
 }
 
 .animate-hover-lift-enhanced {
-  animation: hover-lift-enhanced 0.3s ease-out forwards;
+  animation: hover-lift-enhanced 0.4s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .animate-parallax-float {
@@ -711,7 +766,7 @@ input[type="range"]::-moz-range-thumb {
 }
 
 .animate-wave {
-  animation: wave-animation 1s ease-in-out infinite;
+  animation: wave-animation 2s ease-in-out infinite;
 }
 
 .animate-bounce-rotate {
@@ -719,9 +774,7 @@ input[type="range"]::-moz-range-thumb {
 }
 
 .animate-shimmer {
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent);
-  background-size: 200% 100%;
-  animation: shimmer 2s infinite;
+  animation: shimmer 2s ease-in-out infinite;
 }
 
 /* Enhanced utility classes */
@@ -736,12 +789,13 @@ input[type="range"]::-moz-range-thumb {
 .stagger-animate {
   opacity: 0;
   transform: translateY(20px);
-  transition: all 0.5s ease-out;
+  transition: all 0.4s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .stagger-animate.animate-in {
   opacity: 1;
   transform: translateY(0);
+  transition-delay: 60ms;
 }
 
 /* Enhanced focus states */

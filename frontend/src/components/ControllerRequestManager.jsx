@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useContext } from 'react';
 import useSmoothAppearance from '../hooks/useSmoothAppearance';
+import { ReducedMotionContext } from '../App';
 
 export default function ControllerRequestManager({
   socket,
@@ -25,6 +26,8 @@ export default function ControllerRequestManager({
   
   const isController = controllerClientId && clientId && controllerClientId === clientId;
   const hasPendingRequest = pendingControllerRequests.some(req => req.clientId === clientId);
+  
+  const reducedMotion = useContext(ReducedMotionContext);
   
   // Show request received notification for controller
   useEffect(() => {
@@ -53,7 +56,7 @@ export default function ControllerRequestManager({
   useEffect(() => {
     if (controllerOfferAccepted && isController) {
       setShowOfferAccepted(true);
-      setTimeout(() => setShowOfferAccepted(false), 4000);
+      setTimeout(() => setShowOfferAccepted(false), 400);
     }
   }, [controllerOfferAccepted, isController]);
 
@@ -61,7 +64,7 @@ export default function ControllerRequestManager({
   useEffect(() => {
     if (controllerOfferDeclined && isController) {
       setShowOfferDeclined(true);
-      setTimeout(() => setShowOfferDeclined(false), 4000);
+      setTimeout(() => setShowOfferDeclined(false), 400);
     }
   }, [controllerOfferDeclined, isController]);
   
@@ -89,7 +92,7 @@ export default function ControllerRequestManager({
       setRequestStatus(null);
       setRequestStartTime(null);
       setRequestResult('approved');
-      setTimeout(() => setRequestResult(null), 4000);
+      setTimeout(() => setRequestResult(null), 400);
     }
     
     // Detect when request is denied (no longer pending but not controller)
@@ -97,7 +100,7 @@ export default function ControllerRequestManager({
       setRequestStatus(null);
       setRequestStartTime(null);
       setRequestResult('denied');
-      setTimeout(() => setRequestResult(null), 4000);
+      setTimeout(() => setRequestResult(null), 400);
     }
     
     // Update wasController state
@@ -208,13 +211,13 @@ export default function ControllerRequestManager({
   };
   
   // Enhanced smooth appearance for notifications with staggered animations
-  const requestReceivedVisible = useSmoothAppearance(showRequestReceived, 200, 'animate-slide-in-right');
-  const requestStatusVisible = useSmoothAppearance(requestStatus, 200, 'animate-fade-in-scale');
-  const requestResultVisible = useSmoothAppearance(requestResult, 300, 'animate-bounce-in');
-  const controllerOfferVisible = useSmoothAppearance(showControllerOffer, 200, 'animate-bounce-in');
-  const offerSentVisible = useSmoothAppearance(showOfferSent, 200, 'animate-slide-in-right');
-  const offerAcceptedVisible = useSmoothAppearance(showOfferAccepted, 200, 'animate-bounce-in');
-  const offerDeclinedVisible = useSmoothAppearance(showOfferDeclined, 200, 'animate-shake');
+  const requestReceivedVisible = reducedMotion ? { isVisible: true, animationClass: '' } : useSmoothAppearance(showRequestReceived, 400, 'animate-slide-in-right');
+  const requestStatusVisible = reducedMotion ? { isVisible: true, animationClass: '' } : useSmoothAppearance(requestStatus, 400, 'animate-fade-in-scale');
+  const requestResultVisible = reducedMotion ? { isVisible: true, animationClass: '' } : useSmoothAppearance(requestResult, 400, 'animate-bounce-in');
+  const controllerOfferVisible = reducedMotion ? { isVisible: true, animationClass: '' } : useSmoothAppearance(showControllerOffer, 400, 'animate-bounce-in');
+  const offerSentVisible = reducedMotion ? { isVisible: true, animationClass: '' } : useSmoothAppearance(showOfferSent, 400, 'animate-slide-in-right');
+  const offerAcceptedVisible = reducedMotion ? { isVisible: true, animationClass: '' } : useSmoothAppearance(showOfferAccepted, 400, 'animate-bounce-in');
+  const offerDeclinedVisible = reducedMotion ? { isVisible: true, animationClass: '' } : useSmoothAppearance(showOfferDeclined, 400, 'animate-shake');
   
   return (
     <div className={`space-y-3 ${(isController && (showRequestReceived || pendingControllerRequests.length > 0)) || (!isController && (requestStatus || requestResult)) ? 'border-t border-neutral-800 pt-4' : ''}`}>

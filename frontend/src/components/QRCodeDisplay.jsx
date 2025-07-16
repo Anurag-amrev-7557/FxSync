@@ -1,7 +1,6 @@
-import { useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 
-export default function QRCodeDisplay({ value, size = 128, label = '', showCopy = true }) {
+export default function QRCodeDisplay({ value, size = 128, label = '' }) {
 
   return (
     <div className="flex flex-col items-center gap-2">

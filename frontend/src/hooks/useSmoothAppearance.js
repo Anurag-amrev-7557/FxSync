@@ -63,7 +63,7 @@ export default function useSmoothAppearance(shouldShow, options = {}) {
           setHasAnimated(false);
         }
         if (onExit) onExit();
-      }, 300); // Exit animation duration
+      }, 400); // Exit animation duration (was 300)
 
       return () => clearTimeout(exitTimer);
     }
@@ -145,7 +145,7 @@ export default function useSmoothAppearance(shouldShow, options = {}) {
  */
 export function useStaggeredAnimation(items, options = {}) {
   const {
-    staggerDelay = 100,
+    staggerDelay = 60, // was 100
     animationClass = 'animate-slide-up',
     reverse = false,
     loop = false,

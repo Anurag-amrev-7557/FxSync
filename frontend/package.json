@@ -9,24 +9,23 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "start": "vite",
-    "env:example": "echo 'VITE_BACKEND_URL=http://localhost:4000' > .env && echo 'Created example .env file'"
+    "env:example": "echo 'VITE_BACKEND_URL=http://localhost:4000' > .env && echo 'Created example .env file'",
+    "analyze": "vite build"
   },
   "dependencies": {
-    "@react-three/drei": "^10.5.0",
-    "@react-three/fiber": "^9.2.0",
     "@tailwindcss/postcss": "^4.1.11",
     "@tanstack/react-query": "^5.83.0",
     "browser-id3-writer": "^6.2.0",
-    "canvas-confetti": "^1.9.3",
-    "framer-motion": "^12.23.5",
     "jsmediatags": "^3.9.7",
     "kalmanjs": "^1.1.0",
+    "prop-types": "^15.8.1",
     "qrcode.react": "^4.2.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "react-icons": "^5.5.0",
     "react-router-dom": "^7.6.3",
-    "socket.io-client": "^4.8.1",
-    "three": "^0.178.0"
+    "react-window": "^1.8.11",
+    "socket.io-client": "^4.8.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.29.0",
@@ -39,7 +38,9 @@
     "eslint-plugin-react-refresh": "^0.4.20",
     "globals": "^16.2.0",
     "postcss": "^8.5.6",
+    "rollup-plugin-visualizer": "^6.0.3",
     "tailwindcss": "^3.4.17",
-    "vite": "^7.0.0"
+    "vite": "^7.0.0",
+    "vite-plugin-pwa": "^1.0.1"
   }
 }
