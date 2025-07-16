@@ -1801,7 +1801,7 @@ function isHexColor(str) {
         </div>
       )}
       {state.showChatSettings && (
-        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/70 animate-fade-scale-in">
+        <div className={`inset-0 z-40 flex items-center justify-center bg-black/70 animate-fade-scale-in ${mobile ? 'fixed' : 'absolute'}`}>
           <div className="bg-neutral-950 rounded-xl w-full max-w-sm sm:max-w-md md:max-w-lg lg:max-w-xl shadow-none flex flex-col gap-0 backdrop-blur-md transition-all duration-200 overflow-hidden relative border border-neutral-800
             mx-2 sm:mx-4 md:mx-8" style={{ maxHeight: '90vh' }}>
             {/* Header */}

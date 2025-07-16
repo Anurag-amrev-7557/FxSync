@@ -914,3 +914,9 @@ input[type="range"]::-moz-range-thumb {
   background-size: 50px 50px, 100px 100px;
   background-position: 0 0, 25px 25px;
 }
+
+/* Remove blue outline and box-shadow for all buttons and inputs on focus */
+button:focus, button:focus-visible, input:focus, input:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}

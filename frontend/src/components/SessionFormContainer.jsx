@@ -28,6 +28,7 @@ const SessionFormContainer = React.memo(function SessionFormContainer({
   regenerateName,
   isGlowing,
   showCursor,
+  handleJoin, // <-- add this prop
 }) {
   return (
     <div ref={formRef} className="relative z-20 order-2 lg:order-2">
@@ -58,7 +59,7 @@ const SessionFormContainer = React.memo(function SessionFormContainer({
               <p className="text-sm sm:text-base text-neutral-400 transition-all duration-500 delay-100">Enter a room code to start listening together</p>
             </div>
 
-            <form onSubmit={e => { e.preventDefault(); formDispatch({ type: 'JOIN' }); }} className="space-y-4 sm:space-y-6">
+            <form onSubmit={e => { e.preventDefault(); handleJoin(); }} className="space-y-4 sm:space-y-6">
               {/* Display Name Field */}
               <div className="flex items-center justify-between p-4 bg-neutral-800/40 rounded-xl border border-neutral-600/50 transition-all duration-300 hover:bg-neutral-800/60 hover:border-neutral-500/70 group hover:scale-[1.02] hover:shadow-lg">
                 <div className="text-xs sm:text-sm text-neutral-400 transition-all duration-300 group-hover:text-neutral-300 font-medium">You'll join as</div>

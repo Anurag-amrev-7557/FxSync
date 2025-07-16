@@ -1,5 +1,5 @@
 import { getSession, createSession, deleteSession, addClient, removeClient, setController, getAllSessions, getClients, updatePlayback, updateTimestamp, getClientIdBySocket, getSocketIdByClientId, addControllerRequest, removeControllerRequest, getPendingControllerRequests, clearExpiredControllerRequests } from './managers/sessionManager.js';
-import { addToQueue, removeFromQueue, getQueue } from './managers/queueManager.js';
+import { addToQueue, removeFromQueue, getQueue, reorderQueue } from './managers/queueManager.js';
 import { formatChatMessage, formatReaction } from './managers/chatManager.js';
 import { log } from './utils/utils.js';
 import { getSessionFiles, removeSessionFiles } from './managers/fileManager.js';
@@ -50,13 +50,72 @@ function getSessionMessages(sessionId) {
   return session.messages;
 }
 
+// --- Validation helpers ---
+function isValidSessionId(id) {
+  return typeof id === 'string' && id.length >= 1 && id.length <= 64 && /^[a-zA-Z0-9_-]+$/.test(id);
+}
+function isValidDisplayName(name) {
+  return typeof name === 'string' && name.length >= 1 && name.length <= 64;
+}
+function isValidClientId(id) {
+  return typeof id === 'string' && id.length >= 1 && id.length <= 64 && /^[a-zA-Z0-9_-]+$/.test(id);
+}
+function isValidTimestamp(ts) {
+  return typeof ts === 'number' && isFinite(ts) && ts >= 0;
+}
+// Helper to sanitize displayName
+function safeDisplayName(name) {
+  if (typeof name !== 'string') return '';
+  // Remove HTML tags and limit to 64 chars
+  return name.replace(/<[^>]*>/g, '').slice(0, 64);
+}
+
 export function setupSocket(io) {
   // --- Rate limiting state ---
   const chatRateLimit = {};
   io.on('connection', (socket) => {
     console.log('Socket connected:', socket.id);
 
+      /**
+   * reorder_queue event:
+   * - Only controller can reorder.
+   * - Updates the session queue order and broadcasts to all clients.
+   * - Returns error if not allowed or invalid.
+   */
+  socket.on('reorder_queue', ({ sessionId, newQueue } = {}, callback) => {
+    if (!sessionId || !Array.isArray(newQueue)) {
+      return typeof callback === 'function' && callback({ error: 'Invalid input' });
+    }
+    const session = getSession(sessionId);
+    if (!session) return typeof callback === 'function' && callback({ error: 'Session not found' });
+    const clientId = getClientIdBySocket(sessionId, socket.id);
+    if (session.controllerClientId !== clientId) return typeof callback === 'function' && callback({ error: 'Not allowed' });
+    // Defensive: Only reorder tracks that exist in the current queue (by url)
+    const currentQueue = getQueue(sessionId) || [];
+    const currentUrls = new Set(currentQueue.map(t => t.url));
+    const filteredNewQueue = newQueue.filter(t => t && currentUrls.has(t.url));
+    if (filteredNewQueue.length !== currentQueue.length) {
+      return typeof callback === 'function' && callback({ error: 'Invalid queue reorder' });
+    }
+    reorderQueue(sessionId, filteredNewQueue);
+    io.to(sessionId).emit('queue_update', filteredNewQueue);
+    if (typeof callback === 'function') callback({ success: true, queue: filteredNewQueue });
+  });
+
     socket.on('join_session', ({ sessionId, displayName, deviceInfo, clientId } = {}, callback) => {
+      // Input validation
+      if (!isValidSessionId(sessionId)) {
+        log('join_session: missing or invalid sessionId');
+        return typeof callback === "function" && callback({ error: 'Invalid sessionId' });
+      }
+      if (displayName && !isValidDisplayName(displayName)) {
+        return typeof callback === "function" && callback({ error: 'Invalid displayName' });
+      }
+      if (clientId && !isValidClientId(clientId)) {
+        return typeof callback === "function" && callback({ error: 'Invalid clientId' });
+      }
+      // Sanitize displayName before storing/broadcasting
+      const safeName = displayName ? safeDisplayName(displayName) : undefined;
       console.log('join_session event received', { sessionId, clientId });
       if (!sessionId || typeof sessionId !== 'string') {
         log('join_session: missing or invalid sessionId');
@@ -67,7 +126,7 @@ export function setupSocket(io) {
         session = createSession(sessionId, socket.id, clientId);
         log('Session created:', sessionId);
       }
-      addClient(sessionId, socket.id, displayName, deviceInfo, clientId);
+      addClient(sessionId, socket.id, safeName, deviceInfo, clientId);
       socket.join(sessionId);
       log('Socket', socket.id, 'joined session', sessionId, 'as client', clientId);
       // Ensure controllerClientId is set (first joiner becomes controller)
@@ -109,7 +168,7 @@ export function setupSocket(io) {
     });
 
     socket.on('play', ({ sessionId, timestamp } = {}) => {
-      if (!sessionId || typeof timestamp !== 'number') return;
+      if (!isValidSessionId(sessionId) || !isValidTimestamp(timestamp)) return;
       const session = getSession(sessionId);
       if (!session) return;
       const clientId = getClientIdBySocket(sessionId, socket.id);
@@ -127,7 +186,7 @@ export function setupSocket(io) {
     });
 
     socket.on('pause', ({ sessionId, timestamp } = {}) => {
-      if (!sessionId || typeof timestamp !== 'number') return;
+      if (!isValidSessionId(sessionId) || !isValidTimestamp(timestamp)) return;
       const session = getSession(sessionId);
       if (!session) return;
       const clientId = getClientIdBySocket(sessionId, socket.id);
@@ -145,7 +204,7 @@ export function setupSocket(io) {
     });
 
     socket.on('seek', ({ sessionId, timestamp } = {}) => {
-      if (!sessionId || typeof timestamp !== 'number') return;
+      if (!isValidSessionId(sessionId) || !isValidTimestamp(timestamp)) return;
       const session = getSession(sessionId);
       if (!session) return;
       const clientId = getClientIdBySocket(sessionId, socket.id);
@@ -164,6 +223,10 @@ export function setupSocket(io) {
 
     socket.on('sync_request', async ({ sessionId } = {}, callback) => {
       try {
+        if (!isValidSessionId(sessionId)) {
+          if (typeof callback === "function") callback({ error: 'Invalid sessionId' });
+          return;
+        }
         if (!sessionId) {
           if (typeof callback === "function") callback({ error: 'No sessionId provided' });
           return;
@@ -487,7 +550,7 @@ export function setupSocket(io) {
         return;
       }
       // Try to get displayName from payload, else from session.clients map
-      let resolvedDisplayName = displayName;
+      let resolvedDisplayName = displayName ? safeDisplayName(displayName) : undefined;
       if (!resolvedDisplayName) {
         // Try to find by socketId or clientId
         let clientInfo = null;
@@ -502,7 +565,7 @@ export function setupSocket(io) {
             }
           }
         }
-        resolvedDisplayName = clientInfo && clientInfo.displayName ? clientInfo.displayName : undefined;
+        resolvedDisplayName = clientInfo && clientInfo.displayName ? safeDisplayName(clientInfo.displayName) : undefined;
       }
       let formattedMessage = formatChatMessage(sender || socket.id, safeMessage, resolvedDisplayName);
       // Ensure messageId is present
@@ -932,7 +995,7 @@ export function setupSocket(io) {
     socket.on('typing', ({ sessionId, clientId, displayName }) => {
       if (!sessionId || !clientId) return;
       // Broadcast to all except sender
-      socket.to(sessionId).emit('user_typing', { clientId, displayName });
+      socket.to(sessionId).emit('user_typing', { clientId, displayName: safeDisplayName(displayName) });
     });
     socket.on('stop_typing', ({ sessionId, clientId }) => {
       if (!sessionId || !clientId) return;

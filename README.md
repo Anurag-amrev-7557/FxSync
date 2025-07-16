@@ -128,6 +128,24 @@ Please read our [Code of Conduct](#) and [Contributing Guide](#) before submitti
 
 ---
 
+## 🔒 Security Practices
+
+- All sensitive configuration (API keys, backend URLs, secrets) must be managed via environment variables and never hardcoded.
+- All HTTP endpoints and socket events are rate-limited to prevent abuse.
+- All user input is validated and sanitized using Joi (backend) and custom sanitizers (frontend).
+- File uploads are virus-scanned and old files are cleaned up automatically.
+- Sensitive data is never exposed in API responses or logs.
+- HTTP security headers are set using helmet, and HTTPS is enforced in production.
+- Dev-only dependencies are excluded from production builds.
+
+## 🛡️ Monitoring & Error Reporting
+
+- For production deployments, set up error and activity monitoring using tools like Sentry, LogRocket, or Datadog.
+- Monitor server logs for suspicious activity and rate limit violations.
+- Regularly audit dependencies with `npm audit` and keep all packages up to date.
+
+---
+
 ## ❓ FAQ
 
 **Q: Can I use my own audio files?**

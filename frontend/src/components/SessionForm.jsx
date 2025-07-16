@@ -42,6 +42,12 @@ function formReducer(state, action) {
   }
 }
 
+// Utility function to detect mobile or tablet devices
+function isMobileOrTablet() {
+  if (typeof navigator === 'undefined') return false;
+  return /Mobi|Android|iPhone|iPad|iPod|Opera Mini|IEMobile|BlackBerry|webOS|Windows Phone|Tablet|Mobile/i.test(navigator.userAgent);
+}
+
 export default function SessionForm({ onJoin, currentSessionId }) {
   // Form state
   const [formState, formDispatch] = useReducer(formReducer, initialFormState);
@@ -112,6 +118,7 @@ export default function SessionForm({ onJoin, currentSessionId }) {
   const throttledClick = useCallback(
     throttle((e) => {
       if (formState.reducedMotion) return;
+      if (isMobileOrTablet()) return; // Disable particles on mobile/tablet
       const now = Date.now();
       const particles = Array.from({ length: 8 }, (_, i) => ({
         created: now,
@@ -484,6 +491,13 @@ export default function SessionForm({ onJoin, currentSessionId }) {
       if (fetchControllerRef.current) fetchControllerRef.current.abort();
     };
   }, []);
+
+  // Add handleJoin function
+  const handleJoin = () => {
+    if (formState.sessionId && formState.displayName) {
+      onJoin(formState.sessionId, formState.displayName);
+    }
+  };
 
   if (currentSessionId) {
     return (
@@ -884,8 +898,8 @@ export default function SessionForm({ onJoin, currentSessionId }) {
                 formState={formState}
                 formDispatch={formDispatch}
                 formRef={formRef}
-                                inputRef={inputRef}
-                                measureRef={measureRef}
+                inputRef={inputRef}
+                measureRef={measureRef}
                 cursorRef={cursorRef}
                 joinFormRef={joinFormRef}
                 createFormRef={createFormRef}
@@ -901,6 +915,7 @@ export default function SessionForm({ onJoin, currentSessionId }) {
                 regenerateName={regenerateName}
                 isGlowing={isGlowingRef.current}
                 showCursor={showCursorRef.current}
+                handleJoin={handleJoin} // <-- pass the new handler
               />
             </div>
           </div>

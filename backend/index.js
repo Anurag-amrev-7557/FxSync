@@ -3,6 +3,7 @@ import http from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
 import compression from 'compression';
+import helmet from 'helmet';
 import { setupSocket } from './socket.js';
 import audioRouter from './routes/audio.js';
 import sessionRouter from './routes/session.js';
@@ -13,6 +14,9 @@ dotenv.config();
 
 const app = express();
 app.use(compression());
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' }
+}));
 const server = http.createServer(app);
 
 const allowedOrigins = (process.env.FRONTEND_ORIGINS

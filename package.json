@@ -1,11 +1,11 @@
 {
   "dependencies": {
-    "@tanstack/react-query": "^5.83.0",
-    "compression": "^1.8.0",
-    "react-icons": "^5.5.0",
-    "react-window": "^1.8.11"
-  },
-  "devDependencies": {
-    "rollup-plugin-visualizer": "^6.0.3"
+    "@hello-pangea/dnd": "^18.0.1",
+    "axios": "^1.10.0",
+    "clamscan": "^2.4.0",
+    "express-rate-limit": "^8.0.0",
+    "helmet": "^8.1.0",
+    "joi": "^17.13.3",
+    "node-cron": "^4.2.1"
   }
 }

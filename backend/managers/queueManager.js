@@ -1,9 +1,16 @@
 import { getSession } from './sessionManager.js';
 
+// Helper to sanitize track titles
+function safeTitle(title) {
+  if (typeof title !== 'string') return '';
+  // Remove HTML tags and limit to 128 chars
+  return title.replace(/<[^>]*>/g, '').slice(0, 128);
+}
+
 export function addToQueue(sessionId, url, title) {
   const session = getSession(sessionId);
   if (!session) return false;
-  session.queue.push({ url, title: title || url });
+  session.queue.push({ url, title: safeTitle(title || url) });
   return true;
 }
 
@@ -17,4 +24,20 @@ export function removeFromQueue(sessionId, index) {
 export function getQueue(sessionId) {
   const session = getSession(sessionId);
   return session ? session.queue : [];
+}
+
+// Reorder the queue for a session
+export function reorderQueue(sessionId, newQueue) {
+  const session = getSession(sessionId);
+  if (!session || !Array.isArray(newQueue)) return false;
+  // Only keep valid tracks (with url and title)
+  session.queue = newQueue.map(track => ({
+    url: track.url,
+    title: typeof track.title === 'string' ? track.title : '',
+    artist: track.artist || '',
+    album: track.album || '',
+    duration: track.duration || 0,
+    type: track.type || undefined
+  }));
+  return true;
 } 

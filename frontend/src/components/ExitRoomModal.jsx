@@ -95,7 +95,12 @@ function ExitRoomModal({ isOpen, onClose, onConfirm, roomName }) {
           relative
           bg-gradient-to-br from-neutral-900/95 to-neutral-950/95
           border border-neutral-700/60
-          rounded-2xl p-8 max-w-lg w-full mx-4 shadow-2xl
+          rounded-2xl
+          p-4 sm:p-6 md:p-8
+          w-full
+          max-w-[95vw] sm:max-w-md md:max-w-lg
+          mx-2 sm:mx-4
+          shadow-2xl
           overflow-hidden
           ${exiting
             ? 'animate-[modal-pop-out_0.4s_cubic-bezier(0.22,1,0.36,1)_forwards]'
@@ -109,30 +114,56 @@ function ExitRoomModal({ isOpen, onClose, onConfirm, roomName }) {
         }}
       >
         {/* Decorative Glow */}
-        <div className={`absolute -top-10 -right-10 w-40 h-40 bg-red-600/10 rounded-full blur-3xl pointer-events-none ${exiting ? 'animate-[fade-out-glow_0.4s_ease_forwards]' : 'animate-[fade-in-glow_0.7s_ease]'}`} />
+        <div className={`
+          absolute
+          -top-10 -right-10
+          w-32 h-32 sm:w-40 sm:h-40
+          bg-red-600/10 rounded-full blur-3xl pointer-events-none
+          ${exiting ? 'animate-[fade-out-glow_0.4s_ease_forwards]' : 'animate-[fade-in-glow_0.7s_ease]'}
+        `} />
         {/* Header */}
-        <div className={`flex items-center gap-5 mb-7 ${exiting ? 'animate-[slide-up-fade-out_0.35s_0.05s_forwards]' : 'animate-[slide-down-fade_0.5s_0.08s_both]'}`}>
-          <div className={`w-14 h-14 bg-gradient-to-br from-red-500/30 to-red-700/30 rounded-2xl flex items-center justify-center border-2 border-red-500/40 shadow-lg ${exiting ? 'animate-[pop-out_0.35s_0.13s_forwards]' : 'animate-[pop-in_0.5s_0.13s_both]'}`}>
-            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-red-400 drop-shadow-glow">
+        <div className={`
+          flex flex-col sm:flex-row items-center gap-4 sm:gap-5 mb-5 sm:mb-7
+          ${exiting ? 'animate-[slide-up-fade-out_0.35s_0.05s_forwards]' : 'animate-[slide-down-fade_0.5s_0.08s_both]'}
+        `}>
+          <div className={`
+            w-12 h-12 sm:w-14 sm:h-14
+            bg-gradient-to-br from-red-500/30 to-red-700/30
+            rounded-2xl flex items-center justify-center border-2 border-red-500/40 shadow-lg
+            ${exiting ? 'animate-[pop-out_0.35s_0.13s_forwards]' : 'animate-[pop-in_0.5s_0.13s_both]'}
+          `}>
+            <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-red-400 drop-shadow-glow">
               <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
               <polyline points="16,17 21,12 16,7"></polyline>
               <line x1="21" y1="12" x2="9" y2="12"></line>
             </svg>
           </div>
-          <div>
-            <h3 id="exit-room-title" className="text-2xl font-extrabold text-white mb-1 tracking-tight flex items-center gap-2">
+          <div className="flex-1 w-full">
+            <h3 id="exit-room-title" className="text-xl sm:text-2xl font-extrabold text-white mb-1 tracking-tight flex items-center gap-2">
               Exit Room
               <span className="inline-block w-2 h-2 bg-red-500 rounded-full animate-pulse" />
             </h3>
-            <p className="text-base text-neutral-400 font-medium">Are you sure you want to leave this session?</p>
+            <p className="text-sm sm:text-base text-neutral-400 font-medium">Are you sure you want to leave this session?</p>
           </div>
         </div>
         
         {/* Room Info */}
-        <div className={`bg-gradient-to-r from-neutral-800/70 to-neutral-700/40 rounded-xl p-5 mb-7 border border-neutral-600/40 shadow-inner flex flex-col gap-2 ${exiting ? 'animate-[slide-down-fade-out_0.35s_0.18s_forwards]' : 'animate-[slide-up-fade_0.5s_0.18s_both]'}`}>
-          <div className="flex items-center gap-3 mb-1">
-            <div className={`w-9 h-9 bg-primary/30 rounded-lg flex items-center justify-center shadow ${exiting ? 'animate-[pop-out_0.35s_0.22s_forwards]' : 'animate-[pop-in_0.5s_0.22s_both]'}`}>
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
+        <div className={`
+          bg-gradient-to-r from-neutral-800/70 to-neutral-700/40
+          rounded-xl
+          p-3 sm:p-5
+          mb-5 sm:mb-7
+          border border-neutral-600/40 shadow-inner
+          flex flex-col gap-2
+          ${exiting ? 'animate-[slide-down-fade-out_0.35s_0.18s_forwards]' : 'animate-[slide-up-fade_0.5s_0.18s_both]'}
+        `}>
+          <div className="flex items-center gap-2 sm:gap-3 mb-1">
+            <div className={`
+              w-8 h-8 sm:w-9 sm:h-9
+              bg-primary/30 rounded-lg flex items-center justify-center shadow
+              ${exiting ? 'animate-[pop-out_0.35s_0.22s_forwards]' : 'animate-[pop-in_0.5s_0.22s_both]'}
+            `}>
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
                 <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
                 <circle cx="9" cy="7" r="4"></circle>
                 <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
@@ -140,7 +171,7 @@ function ExitRoomModal({ isOpen, onClose, onConfirm, roomName }) {
               </svg>
             </div>
             <div>
-              <p className="text-base font-semibold text-neutral-200">
+              <p className="text-sm sm:text-base font-semibold text-neutral-200">
                 <span className="text-neutral-400 font-normal">Room:</span> <span className="text-primary">{roomName}</span>
               </p>
             </div>
@@ -155,10 +186,13 @@ function ExitRoomModal({ isOpen, onClose, onConfirm, roomName }) {
         </div>
         
         {/* Action Buttons */}
-        <div className={`flex gap-4 mt-2 ${exiting ? 'animate-[fade-out_0.3s_0.32s_forwards]' : 'animate-[fade-in_0.5s_0.32s_both]'}`}>
+        <div className={`
+          flex flex-row gap-3 sm:gap-4 mt-2
+          ${exiting ? 'animate-[fade-out_0.3s_0.32s_forwards]' : 'animate-[fade-in_0.5s_0.32s_both]'}
+        `}>
           <button
             onClick={handleClose}
-            className="flex-1 flex items-center justify-center gap-2 px-5 py-3 bg-neutral-800/90 hover:bg-neutral-700/90 text-white rounded-xl transition-all duration-200 hover:shadow-lg hover:scale-[1.03] font-semibold border border-neutral-700/60 focus:outline-none focus:ring-2 focus:ring-primary/40"
+            className="flex-1 flex items-center justify-center gap-2 px-4 py-3 sm:px-5 sm:py-3 bg-neutral-800/90 hover:bg-neutral-700/90 text-white rounded-xl transition-all duration-200 hover:shadow-lg hover:scale-[1.03] font-semibold border border-neutral-700/60 focus:outline-none focus:ring-2 focus:ring-primary/40"
             autoFocus
             disabled={exiting}
           >
@@ -170,7 +204,7 @@ function ExitRoomModal({ isOpen, onClose, onConfirm, roomName }) {
           </button>
           <button
             onClick={handleConfirm}
-            className="flex-1 flex items-center justify-center gap-2 px-5 py-3 bg-gradient-to-r from-red-600 via-red-700 to-red-800 hover:from-red-700 hover:to-red-900 text-white rounded-xl transition-all duration-200 hover:shadow-xl hover:scale-[1.04] font-semibold shadow-md border border-red-700/60 focus:outline-none focus:ring-2 focus:ring-red-500/40"
+            className="flex-1 flex items-center justify-center gap-2 px-4 py-3 sm:px-5 sm:py-3 bg-gradient-to-r from-red-600 via-red-700 to-red-800 hover:from-red-700 hover:to-red-900 text-white rounded-xl transition-all duration-200 hover:shadow-xl hover:scale-[1.04] font-semibold shadow-md border border-red-700/60 focus:outline-none focus:ring-2 focus:ring-red-500/40"
             disabled={exiting}
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -182,9 +216,13 @@ function ExitRoomModal({ isOpen, onClose, onConfirm, roomName }) {
           </button>
         </div>
         {/* Subtle bottom fade */}
-        <div className={`absolute left-0 right-0 bottom-0 h-8 bg-gradient-to-t from-black/40 to-transparent pointer-events-none rounded-b-2xl ${exiting ? 'animate-[fade-out_0.3s_0.4s_forwards]' : 'animate-[fade-in_0.7s_0.4s_both]'}`} />
+        <div className={`
+          absolute left-0 right-0 bottom-0 h-6 sm:h-8
+          bg-gradient-to-t from-black/40 to-transparent pointer-events-none rounded-b-2xl
+          ${exiting ? 'animate-[fade-out_0.3s_0.4s_forwards]' : 'animate-[fade-in_0.7s_0.4s_both]'}
+        `} />
       </div>
-      {/* Custom keyframes for entrance and exit animations */}
+      {/* Custom keyframes for entrance and exit animations, plus responsive tweaks */}
       <style>
         {`
         @keyframes modal-pop {
@@ -365,6 +403,12 @@ function ExitRoomModal({ isOpen, onClose, onConfirm, roomName }) {
             opacity: 0;
             transform: scale(0.8);
             filter: blur(12px);
+          }
+        }
+        /* Responsive font and layout tweaks for mobile */
+        @media (max-width: 640px) {
+          #exit-room-title {
+            font-size: 1.15rem !important;
           }
         }
         `}
