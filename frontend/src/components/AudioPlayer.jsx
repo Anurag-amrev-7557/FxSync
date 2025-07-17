@@ -9,6 +9,14 @@ import useResyncAnalytics from '../hooks/useResyncAnalytics'
 import SYNC_CONFIG from '../utils/syncConfig';
 import useUltraPreciseOffset from '../hooks/useUltraPreciseOffset';
 import { createEMA } from '../utils/syncConfig';
+import PlayerControls from './AudioPlayer/PlayerControls';
+import ProgressBar from './AudioPlayer/ProgressBar';
+import ErrorBanner from './AudioPlayer/ErrorBanner';
+import TrackInfo from './AudioPlayer/TrackInfo';
+import SyncStatusBanner from './AudioPlayer/SyncStatusBanner';
+import DiagnosticsPanel from './AudioPlayer/DiagnosticsPanel';
+import LatencyCalBanner from './AudioPlayer/LatencyCalBanner';
+import LatencyWizardModal from './AudioPlayer/LatencyWizardModal';
 
 // Add global error handlers
 if (typeof window !== 'undefined' && !window._audioPlayerErrorHandlerAdded) {
@@ -266,14 +274,45 @@ export default function AudioPlayer({
   timeOffset, // fallback only if ultraPreciseOffset is unavailable
   sessionSyncState = null,
   forceNtpBatchSync,
+  queue = [], // Add queue prop
+  selectedTrackIdx = 0, // Add selectedTrackIdx prop
+  onSelectTrack, // Add onSelectTrack prop
+  sessionId, // Add sessionId prop
 }) {
   // Fix: manualLatency must be declared before any useEffect or code that references it
   const [manualLatency, setManualLatency] = useState(() => {
     const saved = localStorage.getItem('audioLatencyOverride');
     return saved ? parseFloat(saved) : null;
   });
+
   // Use controllerClientId/clientId for sticky controller logic
   const isController = controllerClientId && clientId && controllerClientId === clientId;
+
+  // Add handlers for previous and next buttons
+  const handlePrevious = () => {
+    if (!isController || !socket || !queue || queue.length === 0) return;
+    const newIdx = selectedTrackIdx > 0 ? selectedTrackIdx - 1 : queue.length - 1;
+    if (onSelectTrack) {
+      onSelectTrack(newIdx);
+    } else if (socket && sessionId) {
+      socket.emit('track_change', { sessionId, idx: newIdx });
+    }
+  };
+
+  const handleNext = () => {
+    if (!isController || !socket || !queue || queue.length === 0) return;
+    const newIdx = selectedTrackIdx < queue.length - 1 ? selectedTrackIdx + 1 : 0;
+    if (onSelectTrack) {
+      onSelectTrack(newIdx);
+    } else if (socket && sessionId) {
+      socket.emit('track_change', { sessionId, idx: newIdx });
+    }
+  };
+
+  // Check if previous/next buttons should be enabled
+  const canNavigate = isController && queue && queue.length > 1;
+  const canGoPrevious = canNavigate && selectedTrackIdx > 0;
+  const canGoNext = canNavigate && selectedTrackIdx < queue.length - 1;
   // Remove: audioUrl, loading, audioError, isPlaying, duration, displayedCurrentTime, audioRef, and their setters
   // Instead, use:
   const {
@@ -289,6 +328,7 @@ export default function AudioPlayer({
     setAudioError,
     setAudioUrl,
     handleSeek,
+    isSeeking,
   } = useAudioElement({ currentTrack, isController, getServerTime })
   const [syncStatus, setSyncStatus] = useState('In Sync');
   const [shouldAnimate, setShouldAnimate] = useState(false);
@@ -1156,6 +1196,8 @@ export default function AudioPlayer({
       if (!audio) return;
       const actual = audio.currentTime;
       setDisplayedCurrentTime(prev => {
+        // Don't animate if currently seeking
+        if (isSeeking) return prev;
         // If the difference is tiny, snap to actual
         if (Math.abs(prev - actual) < 0.015) return actual;
         // Otherwise, ease toward actual (lerp)
@@ -1165,7 +1207,7 @@ export default function AudioPlayer({
     };
     raf = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(raf);
-  }, [audioUrl]);
+  }, [audioUrl, isSeeking]);
 
   // Wrap handleSeek to emit seek event if controller
   const handleSeekWithEmit = (time) => {
@@ -1212,34 +1254,15 @@ export default function AudioPlayer({
   }
 
   // --- Latency Calibration Wizard Modal ---
-  {showLatencyWizard && (
-    <div style={{position:'fixed',top:0,left:0,width:'100vw',height:'100vh',background:'rgba(0,0,0,0.7)',zIndex:10000,display:'flex',alignItems:'center',justifyContent:'center'}}>
-      <div style={{background:'#18181b',padding:32,borderRadius:16,maxWidth:340,width:'90vw',boxShadow:'0 4px 32px #000',color:'#fff',textAlign:'center'}}>
-        {latencyWizardStep === 1 && (
-          <>
-            <h2 style={{fontSize:20,fontWeight:700,marginBottom:12}}>Audio Latency Calibration</h2>
-            <p style={{marginBottom:18}}>When you click <b>Play Test Sound</b>, you will hear a beep. As soon as you hear it, click <b>I Heard It!</b> as quickly as possible.</p>
-            <button onClick={handleLatencyWizardNext} className="px-4 py-2 bg-blue-600 rounded text-white font-semibold hover:bg-blue-700 transition">Play Test Sound</button>
-            <button onClick={handleLatencyWizardCancel} className="ml-3 px-3 py-2 bg-neutral-700 rounded text-white hover:bg-neutral-600 transition">Cancel</button>
-          </>
-        )}
-        {latencyWizardStep === 2 && (
-          <>
-            <h2 style={{fontSize:20,fontWeight:700,marginBottom:12}}>Click When You Hear the Beep</h2>
-            <p style={{marginBottom:18}}>Click <b>I Heard It!</b> as soon as you hear the beep sound.</p>
-            <button onClick={handleLatencyWizardNext} className="px-4 py-2 bg-green-600 rounded text-white font-semibold hover:bg-green-700 transition">I Heard It!</button>
-          </>
-        )}
-        {latencyWizardStep === 3 && (
-          <>
-            <h2 style={{fontSize:20,fontWeight:700,marginBottom:12}}>Calibration Complete</h2>
-            <p style={{marginBottom:18}}>Measured latency: <b>{latencyTestResult ? (latencyTestResult*1000).toFixed(0) : '--'} ms</b></p>
-            <button onClick={handleLatencyWizardNext} className="px-4 py-2 bg-blue-600 rounded text-white font-semibold hover:bg-blue-700 transition">Done</button>
-          </>
-        )}
-      </div>
-    </div>
-  )}
+  <LatencyWizardModal
+    show={showLatencyWizard}
+    step={latencyWizardStep}
+    testResult={latencyTestResult}
+    onNext={handleLatencyWizardNext}
+    onCancel={handleLatencyWizardCancel}
+    onPlayTestSound={playTestSound}
+    testStart={latencyTestStart}
+  />
 
   // --- MOBILE REDESIGN ---
   if (mobile) {
@@ -1316,7 +1339,7 @@ export default function AudioPlayer({
       dragProgress = expanded ? 1 : 0;
     }
     // Interpolated values
-    const minHeight = 68, maxHeight = 340;
+    const minHeight = 80, maxHeight = expanded ? 500 : 340; // Allow more height when expanded
     const interpHeight = minHeight + (maxHeight - minHeight) * dragProgress;
     const interpPadding = 8 + (20 * dragProgress);
 
@@ -1363,27 +1386,27 @@ export default function AudioPlayer({
         <div className={`${shouldAnimate ? 'animate-slide-up-from-bottom' : 'opacity-0 translate-y-full'}`}>
           <div
             className={
-              `bg-neutral-900/90 backdrop-blur-lg rounded-2xl shadow-2xl flex flex-col gap-2 border border-neutral-800 overflow-hidden` +
+              `bg-neutral-900/95 backdrop-blur-xl rounded-3xl shadow-2xl flex flex-col gap-2 border border-neutral-700/50 overflow-hidden` +
               (dragging ? '' : ' transition-all duration-300')
             }
             style={{
-              minHeight: interpHeight,
-              maxHeight: interpHeight + 60,
+              minHeight: expanded ? 'auto' : interpHeight,
+              maxHeight: expanded ? 'none' : interpHeight + 60,
               paddingTop: interpPadding,
-              paddingBottom: interpPadding,
+              paddingBottom: expanded ? 12 : interpPadding,
             }}
           >
             {/* Drag handle / tap area */}
             <div
-              className="flex justify-center items-center cursor-pointer select-none mb-1"
+              className="flex justify-center items-center cursor-pointer select-none"
               onClick={toggleExpanded}
               onTouchStart={onHandleTouchStart}
               onTouchMove={onHandleTouchMove}
               onTouchEnd={onHandleTouchEnd}
               onMouseDown={onHandleMouseDown}
-              style={{ height: 18, touchAction: 'none' }}
+              style={{ touchAction: 'none' }}
             >
-              <div className={`w-8 h-1.5 rounded-full transition-colors duration-200 ${dragging ? 'bg-primary' : 'bg-neutral-700'}`} />
+              <div className={`w-10 h-1 rounded-full transition-all duration-200 ${dragging ? 'bg-primary shadow-lg' : 'bg-neutral-600'}`} />
             </div>
             {/* Interpolated content: fade/slide between compact and expanded */}
             <div style={{ position: 'relative', flex: 1 }}>
@@ -1401,36 +1424,37 @@ export default function AudioPlayer({
               >
                 {/* ...compact view code... */}
                 {!expanded && (
-                  <div className="flex items-center gap-2 w-full">
-                    <button
-                      className="w-12 h-12 rounded-full flex items-center justify-center bg-primary shadow-lg text-white text-2xl active:scale-95 transition-all duration-200"
-                      onClick={isPlaying ? handlePause : handlePlay}
-                      disabled={disabled || !isController || !audioUrl}
-                      aria-label={isPlaying ? 'Pause' : 'Play'}
-                    >
-                      {isPlaying ? (
-                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
-                      ) : (
-                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-                      )}
-                    </button>
-                    <div className="flex-1 flex flex-col min-w-0">
-                      <div className="text-xs text-white font-semibold truncate max-w-full">{displayedTitle || 'Unknown Track'}</div>
-                      <div className="flex items-center gap-2 w-full mt-1 pr-4">
-                        <span className="text-[11px] text-neutral-400 w-8 text-left font-mono">{formatTime(displayedCurrentTime)}</span>
-                        <input
-                          type="range"
-                          min={0}
-                          max={isFinite(duration) ? duration : 0}
-                          step={0.01}
-                          value={isFinite(displayedCurrentTime) ? displayedCurrentTime : 0}
-                          onChange={e => handleSeekWithEmit(Number(e.target.value))}
-                          className="flex-1 h-2 bg-neutral-800 rounded-full appearance-none cursor-pointer accent-primary"
-                          style={{ WebkitAppearance: 'none', appearance: 'none' }}
-                          disabled={disabled || !isController || !audioUrl}
-                        />
-                        <span className="text-[11px] text-neutral-400 w-8 text-right font-mono">{formatTime(duration)}</span>
+                  <div className="flex items-center gap-3 px-3 py-2">
+                    <PlayerControls
+                      isPlaying={isPlaying}
+                      onPlay={handlePlay}
+                      onPause={handlePause}
+                      onNext={handleNext}
+                      onPrevious={handlePrevious}
+                      canGoNext={canGoNext}
+                      canGoPrevious={canGoPrevious}
+                      disabled={disabled}
+                      isController={isController}
+                      audioUrl={audioUrl}
+                    />
+                    {/* Track Info & Progress */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="text-xs text-white font-medium truncate">
+                          {displayedTitle || 'Unknown Track'}
+                        </div>
+                        <div className="text-[10px] text-neutral-400 font-mono ml-2 flex-shrink-0">
+                          {formatTime(displayedCurrentTime)} / {formatTime(duration)}
+                        </div>
                       </div>
+                      
+                      {/* Compact Progress Bar */}
+                      <ProgressBar
+                        currentTime={displayedCurrentTime}
+                        duration={duration}
+                        onSeek={handleSeekWithEmit}
+                        disabled={disabled || !isController || !audioUrl}
+                      />
                     </div>
                   </div>
                 )}
@@ -1449,108 +1473,94 @@ export default function AudioPlayer({
               >
                 {/* ...expanded view code... */}
                 {expanded && (
-                  <>
-                    {/* Track Title */}
-                    <div className="mb-2 text-center min-h-[1.5em] relative flex items-center justify-center" style={{height: '1.5em'}}>
-                      <span
-                        className={`inline-block mt-6 text-md font-semibold text-white transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]
-                          ${animating && direction === 'up' ? 'opacity-0 translate-x-6 scale-95' : ''}
-                          ${animating && direction === 'down' ? 'opacity-0 -translate-x-6 scale-95' : ''}
-                          ${!animating ? 'opacity-100 translate-x-0 scale-100' : ''}
-                        `}
-                        style={{
-                          willChange: 'opacity, transform',
-                          transitionProperty: 'opacity, transform',
-                        }}
-                      >
-                        {displayedTitle || 'Unknown Track'}
-                      </span>
-                    </div>
-                    {/* Progress bar */}
-                    <div className="flex items-center gap-2 w-full">
-                      <span className="text-[11px] text-neutral-400 w-8 text-left font-mono">{formatTime(displayedCurrentTime)}</span>
-                      <input
-                        type="range"
-                        min={0}
-                        max={isFinite(duration) ? duration : 0}
-                        step={0.01}
-                        value={isFinite(displayedCurrentTime) ? displayedCurrentTime : 0}
-                        onChange={e => handleSeekWithEmit(Number(e.target.value))}
-                        className="flex-1 h-3 bg-neutral-800 rounded-full appearance-none cursor-pointer accent-primary"
-                        style={{ WebkitAppearance: 'none', appearance: 'none' }}
-                        disabled={disabled || !isController || !audioUrl}
-                      />
-                      <span className="text-[11px] text-neutral-400 w-8 text-right font-mono">{formatTime(duration)}</span>
-                    </div>
-                    {/* Controls row */}
-                    <div className="flex items-center justify-between mt-1">
-                      <button
-                        className="w-12 h-12 rounded-full flex items-center justify-center bg-primary shadow-lg text-white text-2xl active:scale-95 transition-all duration-200"
-                        onClick={isPlaying ? handlePause : handlePlay}
-                        disabled={disabled || !isController || !audioUrl}
-                        aria-label={isPlaying ? 'Pause' : 'Play'}
-                      >
-                        {isPlaying ? (
-                          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
-                        ) : (
-                          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-                        )}
-                      </button>
-                      <button
-                        className={`ml-2 px-3 py-2 rounded-lg text-xs font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 shadow ${
-                          resyncInProgress 
-                            ? 'bg-blue-600 text-white' 
-                            : smartResyncSuggestion 
-                              ? 'bg-orange-600 hover:bg-orange-700 text-white' 
-                              : 'bg-neutral-800 hover:bg-neutral-700 text-white'
-                        }`}
-                        onClick={handleResync}
-                        disabled={disabled || !audioUrl || resyncInProgress}
-                        aria-label="Re-sync"
-                      >
-                        {resyncInProgress ? (
-                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
-                            <path d="M21 12a9 9 0 11-6.219-8.56"></path>
-                          </svg>
-                        ) : (
-                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
-                            <path d="M21 3v5h-5"></path>
-                            <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
-                            <path d="M3 21v-5h5"></path>
-                          </svg>
-                        )}
-                        <span className="hidden sm:inline">
-                          {resyncInProgress ? 'Syncing...' : smartResyncSuggestion ? 'Sync*' : 'Sync'}
-                        </span>
-                      </button>
-                    </div>
-                                        {/* Top: Track info and sync status */}
-                                        <div className="flex items-center justify-between mb-1">
-                      <div className="text-xs text-white font-semibold truncate max-w-[60%]">
-                        Now Playing
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <SyncStatus status={syncStatus} />
-                        {microCorrectionActive && (
-                          <span title="Fine-tuning playback for micro-drift" className="ml-1 animate-pulse text-blue-400" style={{fontSize: 16, verticalAlign: 'middle'}}>
-                            <svg width="16" height="16" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="10" cy="10" r="7" stroke="currentColor" strokeWidth="2" fill="none"/><path d="M10 5v5l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                          </span>
-                        )}
+                  <div className="px-4 py-3 space-y-4 pb-0" style={{ paddingBottom: 0 }}>
+                    {/* Header Section */}
+                    <div className="space-y-3">
+                      {/* Utility Buttons */}
+                      <div className="flex items-center justify-between">
                         <button
-                          className="ml-2 px-2 py-0.5 bg-neutral-700 text-xs rounded hover:bg-neutral-600 transition"
+                          className="w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700/80 transition-all duration-200 text-white flex items-center justify-center shadow-md backdrop-blur-sm border border-neutral-700/50"
                           onClick={startLatencyWizard}
                           title="Calibrate device audio latency"
-                          style={{fontSize: 11, fontWeight: 500}}
                         >
-                          Calibrate Latency
+                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="12" cy="12" r="3"></circle>
+                            <path d="M12 1v6m0 6v6"></path>
+                            <path d="M12 1a11 11 0 0 0-11 11c0 2.5 1 4.8 2.6 6.5"></path>
+                            <path d="M12 1a11 11 0 0 1 11 11c0 2.5-1 4.8-2.6 6.5"></path>
+                          </svg>
                         </button>
-                        {isController && (
-                          <span className="ml-1 px-2 py-0.5 bg-primary/20 text-primary text-[10px] rounded font-bold">Controller</span>
-                        )}
+                        
+                        <button
+                          className={`w-8 h-8 rounded-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed text-white flex items-center justify-center shadow-md backdrop-blur-sm border ${
+                            resyncInProgress 
+                              ? 'bg-blue-600/90 border-blue-500/50' 
+                              : smartResyncSuggestion 
+                                ? 'bg-orange-600/90 hover:bg-orange-700/90 border-orange-500/50' 
+                                : 'bg-neutral-800/80 hover:bg-neutral-700/80 border-neutral-700/50'
+                          }`}
+                          onClick={handleResync}
+                          disabled={disabled || !audioUrl || resyncInProgress}
+                          aria-label="Re-sync"
+                        >
+                          {resyncInProgress ? (
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
+                              <path d="M21 12a9 9 0 11-6.219-8.56"></path>
+                            </svg>
+                          ) : (
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
+                              <path d="M21 3v5h-5"></path>
+                              <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
+                              <path d="M3 21v-5h5"></path>
+                            </svg>
+                          )}
+                        </button>
+                      </div>
+                      
+                      {/* Track Title */}
+                      <div className="text-center">
+                        <TrackInfo
+                          title={displayedTitle}
+                          animating={animating}
+                          direction={direction}
+                        />
                       </div>
                     </div>
-                  </>
+
+                    {/* Progress Section */}
+                    <div className="space-y-2">
+                      {/* Time Display */}
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-neutral-400 font-mono">{formatTime(displayedCurrentTime)}</span>
+                        <span className="text-neutral-400 font-mono">{formatTime(duration)}</span>
+                      </div>
+                      
+                      {/* Progress Bar */}
+                      <ProgressBar
+                        currentTime={displayedCurrentTime}
+                        duration={duration}
+                        onSeek={handleSeekWithEmit}
+                        disabled={disabled || !isController || !audioUrl}
+                      />
+                    </div>
+
+                    {/* Controls Section */}
+                    <div className="flex items-center justify-center gap-3">
+                      <PlayerControls
+                        isPlaying={isPlaying}
+                        onPlay={handlePlay}
+                        onPause={handlePause}
+                        onNext={handleNext}
+                        onPrevious={handlePrevious}
+                        canGoNext={canGoNext}
+                        canGoPrevious={canGoPrevious}
+                        disabled={disabled}
+                        isController={isController}
+                        audioUrl={audioUrl}
+                      />
+                    </div>
+                  </div>
                 )}
               </div>
             </div>
@@ -1584,6 +1594,8 @@ export default function AudioPlayer({
     );
   }
 
+
+
   return (
     <div className={`audio-player transition-all duration-500 ${audioLoaded.animationClass}`}>
       {/* Only one audio element for desktop, and only if not mobile */}
@@ -1603,90 +1615,29 @@ export default function AudioPlayer({
         />
       )}
       {errorBanner && (
-  <div style={{
-    position: 'fixed',
-    top: 20,
-    left: '50%',
-    transform: 'translateX(-50%)',
-    zIndex: 20000,
-    background: '#b91c1c',
-    color: '#fff',
-    padding: '12px 28px',
-    borderRadius: 10,
-    fontSize: 16,
-    fontWeight: 'bold',
-    boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
-    border: '2px solid #991b1b',
-  }}>
-    {errorBanner}
-  </div>
+  <ErrorBanner
+    message={errorBanner}
+    color="#b91c1c"
+    onDismiss={() => setErrorBanner(null)}
+  />
 )}
       {edgeCaseBanner && (
-  <div style={{
-    position: 'fixed',
-    top: 70,
-    left: '50%',
-    transform: 'translateX(-50%)',
-    zIndex: 20001,
-    background: '#2563eb',
-    color: '#fff',
-    padding: '12px 28px',
-    borderRadius: 10,
-    fontSize: 15,
-    fontWeight: 'bold',
-    boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
-    border: '2px solid #1d4ed8',
-    display: 'flex',
-    alignItems: 'center',
-    gap: 16,
-  }}>
-    <span>{edgeCaseBanner}</span>
-    <button
-      style={{
-        marginLeft: 12,
-        background: '#1e40af',
-        color: '#fff',
-        border: 'none',
-        borderRadius: 6,
-        padding: '4px 12px',
-        fontWeight: 500,
-        cursor: 'pointer',
-      }}
-      onClick={() => { setEdgeCaseBanner(null); handleResync(); }}
-    >
-      Re-sync now
-    </button>
-    <button
-      style={{
-        marginLeft: 8,
-        background: 'transparent',
-        color: '#fff',
-        border: 'none',
-        fontSize: 18,
-        cursor: 'pointer',
-      }}
-      aria-label="Dismiss"
-      onClick={() => setEdgeCaseBanner(null)}
-    >
-      ×
-    </button>
-  </div>
+  <ErrorBanner
+    message={edgeCaseBanner}
+    color="#2563eb"
+    onDismiss={() => setEdgeCaseBanner(null)}
+    onResync={handleResync}
+    showResync={true}
+    resyncLabel="Re-sync now"
+  />
 )}
       {/* Track Title */}
       <div className="mb-2 text-center min-h-[1.5em] relative flex items-center justify-center" style={{height: '1.5em'}}>
-        <span
-          className={`inline-block text-lg font-semibold text-white transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]
-            ${animating && direction === 'up' ? 'opacity-0 translate-x-6 scale-95' : ''}
-            ${animating && direction === 'down' ? 'opacity-0 -translate-x-6 scale-95' : ''}
-            ${!animating ? 'opacity-100 translate-x-0 scale-100' : ''}
-          `}
-          style={{
-            willChange: 'opacity, transform',
-            transitionProperty: 'opacity, transform',
-          }}
-        >
-          {displayedTitle || 'Unknown Track'}
-        </span>
+        <TrackInfo
+          title={displayedTitle}
+          animating={animating}
+          direction={direction}
+        />
       </div>
       {/* Now Playing Section */}
       <div className="bg-neutral-900/50 rounded-lg border border-neutral-800 p-4">
@@ -1712,87 +1663,59 @@ export default function AudioPlayer({
 
         {/* Progress Bar */}
         <div className="mb-4">
-          <input
-            type="range"
-            min={0}
-            max={isFinite(duration) ? duration : 0}
-            step={0.01}
-            value={isFinite(displayedCurrentTime) ? displayedCurrentTime : 0}
-            onChange={e => handleSeekWithEmit(Number(e.target.value))}
-            className="w-full h-2 bg-neutral-800 rounded-lg appearance-none cursor-pointer"
-            style={{
-              WebkitAppearance: 'none',
-              appearance: 'none',
-            }}
-            disabled={disabled || !isController || !audioUrl}
-          />
+          <div className="relative">
+            <div className="h-2 bg-neutral-800 rounded-lg overflow-hidden">
+              <div 
+                className="h-full bg-white rounded-lg transition-all duration-300"
+                style={{ 
+                  width: `${isFinite(duration) && duration > 0 ? (displayedCurrentTime / duration) * 100 : 0}%` 
+                }}
+              />
+            </div>
+            {/* Custom Thumb */}
+            <div 
+              className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full shadow-lg border border-neutral-300 transition-all duration-200 hover:scale-110"
+              style={{ 
+                left: `${isFinite(duration) && duration > 0 ? (displayedCurrentTime / duration) * 100 : 0}%`,
+                transform: 'translate(-50%, -50%)'
+              }}
+            />
+            <input
+              type="range"
+              min={0}
+              max={isFinite(duration) ? duration : 0}
+              step={0.01}
+              value={isFinite(displayedCurrentTime) ? displayedCurrentTime : 0}
+              onChange={e => handleSeekWithEmit(Number(e.target.value))}
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+              disabled={disabled || !isController || !audioUrl}
+            />
+          </div>
         </div>
 
         {/* Controls */}
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <button
-              className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 ${
-                isPlaying 
-                  ? 'bg-red-500 hover:bg-red-600 text-white' 
-                  : 'bg-primary hover:bg-primary/90 text-white'
-              } disabled:opacity-50 disabled:cursor-not-allowed`}
-              onClick={isPlaying ? handlePause : handlePlay}
-              disabled={disabled || !isController || !audioUrl}
-            >
-              {isPlaying ? (
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="6" y="4" width="4" height="16"></rect>
-                  <rect x="14" y="4" width="4" height="16"></rect>
-                </svg>
-              ) : (
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polygon points="5 3 19 12 5 21 5 3"></polygon>
-                </svg>
-              )}
-            </button>
-            
-            <button
-              className={`px-3 py-2 rounded-lg text-sm transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 ${
-                resyncInProgress 
-                  ? 'bg-blue-600 text-white' 
-                  : smartResyncSuggestion 
-                    ? 'bg-orange-600 hover:bg-orange-700 text-white' 
-                    : 'bg-neutral-800 hover:bg-neutral-700 text-white'
-              }`}
-              onClick={handleResync}
-              disabled={disabled || !audioUrl || resyncInProgress}
-            >
-              {resyncInProgress ? (
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
-                  <path d="M21 12a9 9 0 11-6.219-8.56"></path>
-                </svg>
-              ) : (
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
-                  <path d="M21 3v5h-5"></path>
-                  <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
-                  <path d="M3 21v-5h5"></path>
-                </svg>
-              )}
-              {resyncInProgress ? 'Syncing...' : smartResyncSuggestion ? 'Re-sync*' : 'Re-sync'}
-            </button>
-          </div>
-
+          <PlayerControls
+            isPlaying={isPlaying}
+            onPlay={handlePlay}
+            onPause={handlePause}
+            onNext={handleNext}
+            onPrevious={handlePrevious}
+            canGoNext={canGoNext}
+            canGoPrevious={canGoPrevious}
+            disabled={disabled}
+            isController={isController}
+            audioUrl={audioUrl}
+          />
           <div className="text-right">
-            <SyncStatus 
-              status={syncStatus} 
+            <SyncStatusBanner
+              status={syncStatus}
               showSmartSuggestion={smartResyncSuggestion}
+              syncQuality={syncQuality}
+              selectedSource={selectedSource}
+              isController={isController}
+              resyncStats={resyncStats}
             />
-            <div className={`text-xs mt-1 ${syncQuality.color}`}>{syncQuality.label} ({selectedSource})</div>
-            <div className="text-neutral-400 text-xs mt-1">
-              {isController ? 'You are the controller' : 'You are a listener'}
-            </div>
-            {resyncStats.totalResyncs > 0 && (
-              <div className="text-neutral-500 text-xs mt-1">
-                Sync: {resyncStats.successfulResyncs}/{resyncStats.totalResyncs} successful
-              </div>
-            )}
           </div>
         </div>
       </div>
@@ -1818,88 +1741,24 @@ export default function AudioPlayer({
   </div>
 )}
       {import.meta.env.MODE === 'development' && showDriftDebug && (
-  <div style={{
-    position: 'fixed',
-    bottom: 24,
-    right: 24,
-    zIndex: 20020,
-    background: '#18181b',
-    color: '#fff',
-    padding: '14px 22px',
-    borderRadius: 10,
-    fontSize: 14,
-    maxWidth: 340,
-    boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
-    border: '1.5px solid #444',
-  }}>
-    <div style={{fontWeight: 'bold', marginBottom: 8}}>Sync Diagnostics</div>
-    <div>Drift: <b>{resyncStats.lastDrift?.toFixed(3) ?? '--'}</b> s</div>
-    <div>RTT: <b>{rtt?.toFixed(1) ?? '--'}</b> ms</div>
-    <div>Jitter: <b>{jitter?.toFixed(1) ?? '--'}</b> ms</div>
-    <div>Sync Quality: <b>{syncQuality.label}</b></div>
-    <div>Source: <b>{selectedSource}</b></div>
-    {/* --- New diagnostics --- */}
-    <div style={{marginTop: 8, color: '#aaf'}}>
-      Raw Offset: <b>{computedUltraPreciseOffset?.toFixed(4) ?? '--'}</b> s<br/>
-      Smoothed Offset: <b>{smoothedOffset?.toFixed(4) ?? '--'}</b> s
-    </div>
-    {/* Optionally, show last raw drift if available */}
-    {window._audioDriftHistory && window._audioDriftHistory.length > 0 && (
-      <div style={{marginTop: 8, color: '#faa'}}>
-        Last Raw Drift: <b>{window._audioDriftHistory[window._audioDriftHistory.length-1].drift?.toFixed(4) ?? '--'}</b> s
-      </div>
-    )}
-    <div style={{color:'#aaa', fontSize:12, marginTop:8}}>Press <b>D</b> to toggle this panel.</div>
-  </div>
+  <DiagnosticsPanel
+    audioLatency={audioLatency}
+    manualLatency={manualLatency}
+    setManualLatency={setManualLatency}
+    resyncStats={resyncStats}
+    rtt={rtt}
+    jitter={jitter}
+    syncQuality={syncQuality}
+    selectedSource={selectedSource}
+    computedUltraPreciseOffset={computedUltraPreciseOffset}
+    smoothedOffset={smoothedOffset}
+  />
 )}
       {import.meta.env.MODE === 'development' && showCalibrateBanner && (
-  <div style={{
-    position: 'fixed',
-    top: 24,
-    left: '50%',
-    transform: 'translateX(-50%)',
-    zIndex: 20010,
-    background: '#f59e42',
-    color: '#222',
-    padding: '10px 24px',
-    borderRadius: 8,
-    fontWeight: 600,
-    fontSize: 15,
-    boxShadow: '0 2px 8px rgba(0,0,0,0.18)',
-    border: '2px solid #f59e42',
-    display: 'flex',
-    alignItems: 'center',
-    gap: 16,
-  }}>
-    <span>⚡️ Your device may need latency calibration for best sync.</span>
-    <button
-      style={{
-        background: '#ea580c',
-        color: '#fff',
-        border: 'none',
-        borderRadius: 6,
-        padding: '4px 14px',
-        fontWeight: 500,
-        cursor: 'pointer',
-      }}
-      onClick={() => { setShowCalibrateBanner(false); startLatencyWizard(); }}
-    >
-      Calibrate Now
-    </button>
-    <button
-      style={{
-        background: 'transparent',
-        color: '#222',
-        border: 'none',
-        fontSize: 18,
-        cursor: 'pointer',
-      }}
-      aria-label="Dismiss"
-      onClick={() => setShowCalibrateBanner(false)}
-    >
-      ×
-    </button>
-  </div>
+  <LatencyCalBanner
+    onCalibrate={() => { setShowCalibrateBanner(false); startLatencyWizard(); }}
+    onDismiss={() => setShowCalibrateBanner(false)}
+  />
 )}
     </div>
   );

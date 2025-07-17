@@ -6,6 +6,7 @@ import useSocket from './hooks/useSocket'
 import './App.css'
 import ErrorBoundary from './components/ErrorBoundary'
 import usePrefersReducedMotion from './hooks/usePrefersReducedMotion';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 export const ReducedMotionContext = createContext(false);
 
@@ -136,4 +137,12 @@ function App() {
   )
 }
 
-export default App
+const queryClient = new QueryClient();
+
+export default function AppWithQueryProvider() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <App />
+    </QueryClientProvider>
+  );
+}

@@ -8,6 +8,7 @@ import UploadForm from './UploadForm';
 // import AllTracksList from './AllTracksList'; // Removed as per edit hint
 import QueueList from './QueueList';
 import Toast from './Toast';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 // Helper to format duration in seconds to mm:ss
 function formatDuration(seconds) {
@@ -76,13 +77,43 @@ const Playlist = React.memo(function Playlist({ queue = [], isController, socket
   const [selectedFile, setSelectedFile] = useState(null);
   const [selectedFiles, setSelectedFiles] = useState([]);
   const fileInputRef = useRef();
-  const [allTracks, setAllTracks] = useState([]);
-  const [allTracksLoading, setAllTracksLoading] = useState(false); // Changed to false for lazy loading
-  const [allTracksError, setAllTracksError] = useState(null);
-  const allTracksScrollRef = useRef(null);
-  const queueScrollRef = useRef(null);
+  const queryClient = useQueryClient();
   const [uploadError, setUploadError] = useState("");
   const [toast, setToast] = useState("");
+
+  // Fetch all tracks with React Query
+  const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
+  const {
+    data: allTracks = [],
+    isLoading: allTracksLoading,
+    error: allTracksError,
+    refetch: refetchAllTracks,
+  } = useQuery({
+    queryKey: ['all-tracks'],
+    queryFn: async () => {
+      const res = await fetch(`${backendUrl}/audio/all-tracks`);
+      if (!res.ok) throw new Error('Failed to fetch tracks');
+      return res.json();
+    },
+    staleTime: 1000 * 60 * 5, // 5 minutes
+    cacheTime: 1000 * 60 * 30, // 30 minutes
+    refetchOnWindowFocus: false,
+  });
+
+  // Prefetch all-tracks on mount for snappy UX
+  React.useEffect(() => {
+    queryClient.prefetchQuery({
+      queryKey: ['all-tracks'],
+      queryFn: async () => {
+        const res = await fetch(`${backendUrl}/audio/all-tracks`);
+        if (!res.ok) throw new Error('Failed to fetch tracks');
+        return res.json();
+      },
+      staleTime: 1000 * 60 * 5,
+      cacheTime: 1000 * 60 * 30,
+    });
+  }, [queryClient, backendUrl]);
+
   const [allTracksSearch, setAllTracksSearch] = useState("");
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [modalAnimating, setModalAnimating] = useState(true);
@@ -315,6 +346,7 @@ const Playlist = React.memo(function Playlist({ queue = [], isController, socket
   // For queue and all-tracks, use VariableSizeList and add scroll position memory logic:
   const queueListRef = useRef();
   const allTracksListRef = useRef();
+  const queueScrollRef = useRef();
 
   // Restore scroll position for queue
   useEffect(() => {
@@ -366,37 +398,14 @@ const Playlist = React.memo(function Playlist({ queue = [], isController, socket
     };
   }, [allTracks.length]);
 
-  // Lazy load all tracks only when needed (removed from initial load)
-  const loadAllTracks = useCallback(() => {
-    if (allTracksLoading || allTracks.length > 0) return; // Prevent duplicate requests
-    
-    const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
-    setAllTracksLoading(true);
-    setAllTracksError(null);
-    
-    fetch(`${backendUrl}/audio/all-tracks`)
-      .then(res => {
-        if (!res.ok) throw new Error('Failed to fetch tracks');
-        return res.json();
-      })
-      .then(data => {
-        setAllTracks(data);
-        setAllTracksLoading(false);
-      })
-      .catch(err => {
-        setAllTracksError('Could not load tracks');
-        setAllTracksLoading(false);
-      });
-  }, [allTracksLoading, allTracks.length]);
-
-  // Add a useEffect to auto-add sample tracks to the queue if empty
+  // Add all sample tracks to the queue by default if queue is empty
   useEffect(() => {
-    if (queue.length === 0 && isController && socket && sessionId) {
+    if (queue.length === 0 && socket && sessionId) {
       SAMPLE_TRACKS.forEach((track) => {
         socket.emit('add_to_queue', { sessionId, ...track });
       });
     }
-  }, [queue.length, isController, socket, sessionId]);
+  }, [queue.length, socket, sessionId]);
 
   const handleAdd = useCallback(async (e) => {
     e.preventDefault();
@@ -769,7 +778,7 @@ const Playlist = React.memo(function Playlist({ queue = [], isController, socket
       />
 
       {/* Show filtered tracks if any */}
-      {filteredAllTracks.length > 0 && (
+      {/* {filteredAllTracks.length > 0 && (
         <div className="mb-2 px-2">
           <div className="text-xs text-neutral-400 mb-1">All Tracks</div>
           <ul className="divide-y divide-neutral-800">
@@ -781,7 +790,7 @@ const Playlist = React.memo(function Playlist({ queue = [], isController, socket
             ))}
           </ul>
         </div>
-      )}
+      )} */}
 
       {/* AllTracksList removed: no browse all tracks UI */}
       {/* <AllTracksList

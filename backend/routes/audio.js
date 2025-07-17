@@ -95,12 +95,32 @@ router.post(
   }
 );
 
-// Serve uploaded files with CORS headers
+// Serve uploaded files with CORS headers and strong HTTP caching
+const ONE_YEAR = 365 * 24 * 60 * 60; // seconds
 router.use('/uploads', (req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*'); // Or restrict to your frontend origin
   res.header('Cross-Origin-Resource-Policy', 'cross-origin');
+  // Set strong caching for audio files
+  res.header('Cache-Control', `public, max-age=${ONE_YEAR}, immutable`);
   next();
-}, express.static(uploadsDir));
+}, express.static(uploadsDir, {
+  etag: true,
+  maxAge: ONE_YEAR * 1000, // ms
+  immutable: true
+}));
+
+// Serve /uploads/samples with same caching and CORS
+const samplesDir = path.join(uploadsDir, 'samples');
+router.use('/uploads/samples', (req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.header('Cache-Control', `public, max-age=${ONE_YEAR}, immutable`);
+  next();
+}, express.static(samplesDir, {
+  etag: true,
+  maxAge: ONE_YEAR * 1000,
+  immutable: true
+}));
 
 // List all tracks (user uploads + samples)
 router.get('/all-tracks', (req, res) => {

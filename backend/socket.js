@@ -7,6 +7,7 @@ import fs from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import dotenv from 'dotenv';
+import { fileURLToPath } from 'url';
 dotenv.config();
 
 // Helper to build full session sync state for advanced sync
@@ -101,6 +102,23 @@ export function setupSocket(io) {
       if (!session) {
         session = createSession(sessionId, socket.id, clientId);
         log('Session created:', sessionId);
+      }
+      // Auto-populate queue with all sample tracks if empty
+      if ((session.queue?.length ?? 0) === 0) {
+        const samplesDir = path.join(process.cwd(), 'uploads', 'samples');
+        if (fs.existsSync(samplesDir)) {
+          const files = fs.readdirSync(samplesDir);
+          files.forEach(file => {
+            if (file.endsWith('.mp3')) {
+              addToQueue(
+                sessionId,
+                `/audio/uploads/samples/${encodeURIComponent(file)}`,
+                file.replace(/\.mp3$/i, ''),
+                { type: 'sample' }
+              );
+            }
+          });
+        }
       }
       addClient(sessionId, socket.id, safeName, deviceInfo, clientId);
       socket.join(sessionId);

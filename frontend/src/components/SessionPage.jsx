@@ -502,6 +502,10 @@ function SessionPage({
                         ultraPreciseOffset={ultraPreciseOffset} // <-- Canonical hybrid offset
                         sessionSyncState={sessionSyncState}
                         forceNtpBatchSync={forceNtpBatchSync}
+                        queue={queue}
+                        selectedTrackIdx={selectedTrackIdx}
+                        onSelectTrack={handleSelectTrack}
+                        sessionId={currentSessionId}
                       />
                     </div>
                     <div className="p-4">
@@ -664,6 +668,10 @@ function SessionPage({
                         rtt={rtt}
                         sessionSyncState={sessionSyncState}
                         forceNtpBatchSync={forceNtpBatchSync}
+                        queue={queue}
+                        selectedTrackIdx={selectedTrackIdx}
+                        onSelectTrack={handleSelectTrack}
+                        sessionId={currentSessionId}
                       />
                     </div>
                   </div>
@@ -701,6 +709,10 @@ function SessionPage({
                         rtt={rtt}
                         sessionSyncState={sessionSyncState}
                         forceNtpBatchSync={forceNtpBatchSync}
+                        queue={queue}
+                        selectedTrackIdx={selectedTrackIdx}
+                        onSelectTrack={handleSelectTrack}
+                        sessionId={currentSessionId}
                       />
                     </div>
                   </div>

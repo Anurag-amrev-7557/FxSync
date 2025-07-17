@@ -99,8 +99,17 @@ function BottomTabBar({ mobileTab, setMobileTab, unreadCount = 0, compact = fals
   return (
     <nav
       ref={containerRef}
-      className="fixed bottom-4 left-1/2 transform -translate-x-1/2 w-[92vw] max-w-sm bg-black/80 backdrop-blur-lg flex relative z-50 shadow-2xl rounded-full px-2 py-1 gap-1 border border-neutral-900/70"
-      style={{ boxShadow: '0 8px 32px 0 rgba(0,0,0,0.38)', position: 'fixed' }}
+      className="fixed bottom-0 left-1/2 transform -translate-x-1/2 w-full max-w-[600px] bg-black/80 backdrop-blur-lg flex relative z-50 shadow-2xl rounded-t-2xl px-1 sm:px-2 py-1 gap-1 border-t border-neutral-900/70 overflow-x-auto min-w-0"
+      style={{
+        boxShadow: '0 8px 32px 0 rgba(0,0,0,0.38)',
+        position: 'fixed',
+        paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 4px)', // Safe area for iOS/Android
+        left: '50%',
+        transform: 'translateX(-50%)',
+        width: '100%',
+        maxWidth: 600,
+        minWidth: 0,
+      }}
       aria-label="Main navigation"
       role="tablist"
     >
@@ -130,12 +139,15 @@ function BottomTabBar({ mobileTab, setMobileTab, unreadCount = 0, compact = fals
           <button
             key={tab.label}
             ref={tabRefs[idx]}
-            className={`flex-1 flex flex-row items-center justify-center py-2 px-3 relative z-20 transition-all duration-400 ease-[cubic-bezier(0.22,1,0.36,1)] active:scale-95 active:bg-neutral-800/40 active:shadow-inner focus:outline-none hover:bg-neutral-800/20 rounded-full gap-2 ${isActive ? 'scale-105 shadow-lg' : ''} ${isActive ? 'text-black font-bold' : 'text-white hover:text-neutral-200'} ${isDisabled ? 'opacity-40 pointer-events-none' : ''}`}
+            className={`flex-1 flex flex-row items-center justify-center min-w-[44px] min-h-[44px] py-1 px-2 sm:px-3 relative z-20 transition-all duration-400 ease-[cubic-bezier(0.22,1,0.36,1)] active:scale-95 active:bg-neutral-800/40 active:shadow-inner focus:outline-none hover:bg-neutral-800/20 rounded-full gap-2 ${isActive ? 'scale-105 shadow-lg' : ''} ${isActive ? 'text-black font-bold' : 'text-white hover:text-neutral-200'} ${isDisabled ? 'opacity-40 pointer-events-none' : ''}`}
             style={{
               zIndex: 10,
               transition: 'transform 400ms cubic-bezier(0.22,1,0.36,1), box-shadow 400ms cubic-bezier(0.22,1,0.36,1)',
               outline: 'none',
               boxShadow: 'none',
+              flex: 1,
+              minWidth: 44,
+              minHeight: 44,
             }}
             onClick={() => !isDisabled && setMobileTab(idx)}
             onKeyDown={e => handleKeyDown(e, idx)}
@@ -149,7 +161,7 @@ function BottomTabBar({ mobileTab, setMobileTab, unreadCount = 0, compact = fals
             {isActive && (
               <div className="absolute top-0 left-1/2 transform -translate-x-1/2 w-10 h-0.5 bg-primary rounded-full animate-pulse shadow-lg shadow-primary/50"></div>
             )}
-            <div className="w-5 h-5 flex items-center justify-center relative">
+            <div className={`w-5 h-5 flex items-center justify-center relative${isActive ? ' tabbar-pulse-content' : ''}`}>
               {tab.icon(isActive)}
               {/* Unread badge for chat */}
               {tab.badge > 0 && (
@@ -159,7 +171,7 @@ function BottomTabBar({ mobileTab, setMobileTab, unreadCount = 0, compact = fals
               )}
             </div>
             {!compact && (
-              <span className={`text-sm font-medium ${isActive ? 'text-black font-bold' : 'text-white'}`}>{tab.label}</span>
+              <span className={`text-sm font-medium${isActive ? ' tabbar-pulse-content' : ''} ${isActive ? 'text-black font-bold' : 'text-white'}`}>{tab.label}</span>
             )}
             {isActive && (
               <div className="absolute inset-0 bg-primary/10 rounded-full animate-pulse pointer-events-none"></div>
@@ -172,3 +184,16 @@ function BottomTabBar({ mobileTab, setMobileTab, unreadCount = 0, compact = fals
 }
 
 export default BottomTabBar
+
+/*
+Add this CSS to your global stylesheet (e.g., index.css or App.css):
+
+.tabbar-pulse-content {
+  animation: tabbar-pulse 1.2s infinite cubic-bezier(0.4,0,0.2,1);
+}
+@keyframes tabbar-pulse {
+  0% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.08); opacity: 0.92; }
+  100% { transform: scale(1); opacity: 1; }
+}
+*/

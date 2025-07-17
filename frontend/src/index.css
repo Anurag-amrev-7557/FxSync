@@ -1033,3 +1033,13 @@ button:focus, button:focus-visible, input:focus, input:focus-visible {
   outline: none !important;
   box-shadow: none !important;
 }
+
+/* Pulse effect for BottomTabBar active tab content */
+.tabbar-pulse-content {
+  animation: tabbar-pulse 1.2s infinite cubic-bezier(0.4,0,0.2,1);
+}
+@keyframes tabbar-pulse {
+  0% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.08); opacity: 0.92; }
+  100% { transform: scale(1); opacity: 1; }
+}

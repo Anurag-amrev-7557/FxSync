@@ -9,6 +9,7 @@ export default function useAudioElement({ currentTrack, isController, getServerT
   const [isPlaying, setIsPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [displayedCurrentTime, setDisplayedCurrentTime] = useState(0);
+  const [isSeeking, setIsSeeking] = useState(false);
   const audioRef = useRef(null);
 
   // Set audio source to currentTrack.url if available
@@ -66,7 +67,12 @@ export default function useAudioElement({ currentTrack, isController, getServerT
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
-    const update = () => setDisplayedCurrentTime(audio.currentTime);
+    const update = () => {
+      // Only update displayedCurrentTime if not currently seeking
+      if (!isSeeking) {
+        setDisplayedCurrentTime(audio.currentTime);
+      }
+    };
     const setDur = () => setDuration(audio.duration || 0);
     const handlePlaying = () => setIsPlaying(true);
     const handlePause = () => setIsPlaying(false);
@@ -83,17 +89,21 @@ export default function useAudioElement({ currentTrack, isController, getServerT
       audio.removeEventListener('pause', handlePause);
       audio.removeEventListener('error', handleError);
     };
-  }, [audioUrl]);
+  }, [audioUrl, isSeeking]);
 
   // Seek handler
   const handleSeek = useCallback((time) => {
     const audio = audioRef.current;
     if (audio && typeof time === 'number') {
+      setIsSeeking(true);
+      setDisplayedCurrentTime(time);
+      
       fadeAudio(audio, 0, 100);
       setTimeout(() => {
         audio.currentTime = time;
-        setDisplayedCurrentTime(time);
         fadeAudio(audio, 1, 100);
+        // Allow timeupdate events to resume after a short delay
+        setTimeout(() => setIsSeeking(false), 200);
       }, 110);
     }
   }, []);
@@ -111,5 +121,6 @@ export default function useAudioElement({ currentTrack, isController, getServerT
     setAudioError,
     setAudioUrl,
     handleSeek,
+    isSeeking,
   };
 } 
