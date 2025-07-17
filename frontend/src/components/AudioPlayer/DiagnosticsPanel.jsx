@@ -47,12 +47,6 @@ export default function DiagnosticsPanel({ audioLatency, manualLatency, setManua
         </div>
       )}
       <div style={{color:'#aaa', fontSize:12, marginTop:8}}>Press <b>D</b> to toggle this panel.</div>
-      <div style={{marginTop: 16, color: '#aaf'}}>
-        <div style={{fontWeight: 'bold', marginBottom: 8}}>Audio Latency Calibration</div>
-        <div>Measured: <b>{audioLatency?.toFixed(3) ?? '--'}s</b></div>
-        <div>Override: <input type="number" step="0.001" min="0" max="1" value={manualLatency ?? ''} onChange={e => setManualLatency(parseFloat(e.target.value) || 0)} style={{width: 80, marginLeft: 8}} /> s</div>
-        <button style={{marginTop: 10, padding: '4px 10px', borderRadius: 6, background: '#444', color: '#fff', border: 'none', cursor: 'pointer'}} onClick={() => { setManualLatency(null); localStorage.removeItem('audioLatencyOverride'); }}>Reset</button>
-      </div>
     </div>
   );
 }

@@ -31,10 +31,10 @@ export default function PlayerControls({
     <div className="flex items-center gap-3">
       {/* Previous Button */}
       <button
-        className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-200 ${
+        className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-200 border-none bg-transparent p-0 ${
           canGoPrevious 
-            ? 'bg-neutral-700 hover:bg-neutral-600 text-white' 
-            : 'bg-neutral-800 text-neutral-500 cursor-not-allowed'
+            ? 'text-white hover:text-primary' 
+            : 'text-neutral-500 cursor-not-allowed'
         }`}
         onClick={onPrevious}
         disabled={!canGoPrevious}
@@ -47,7 +47,7 @@ export default function PlayerControls({
       </button>
       {/* Play/Pause Button */}
       <button
-        className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 ${
+        className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-200 ${
           isPlaying 
             ? 'bg-white text-black' 
             : 'bg-primary hover:bg-primary/90 text-white'
@@ -57,22 +57,22 @@ export default function PlayerControls({
         aria-label={isPlaying ? 'Pause' : 'Play'}
       >
         {isPlaying ? (
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <rect x="6" y="4" width="4" height="16"></rect>
             <rect x="14" y="4" width="4" height="16"></rect>
           </svg>
         ) : (
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <polygon points="5 3 19 12 5 21 5 3"></polygon>
           </svg>
         )}
       </button>
       {/* Next Button */}
       <button
-        className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-200 ${
+        className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-200 border-none bg-transparent p-0 ${
           canGoNext 
-            ? 'bg-neutral-700 hover:bg-neutral-600 text-white' 
-            : 'bg-neutral-800 text-neutral-500 cursor-not-allowed'
+            ? 'text-white hover:text-primary' 
+            : 'text-neutral-500 cursor-not-allowed'
         }`}
         onClick={onNext}
         disabled={!canGoNext}

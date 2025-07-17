@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState, useRef } from 'react';
+import React, { useCallback, useMemo, useState, useRef, useEffect } from 'react';
 import { MusicIcon, RemoveIcon } from './Icons';
 
 // Helper to format duration (e.g., 90 -> 1:30)
@@ -25,12 +25,28 @@ const TrackRow = React.memo(function TrackRow({
   loading,
   isController,
   disableRemove,
-  pendingRemoveIdx,
+  pendingRemoveId,
   confirmRemove,
 }) {
+  const trackId = item.url || item.id || item.title;
   const isSelected = selectedTrackIdx === idx;
   const animationClass = queueAnimations[idx]?.animationClass || '';
   const durationStr = formatDuration(item.duration);
+
+  // Only animate on first appearance
+  const hasAnimatedRef = useRef(new Set());
+  const [shouldAnimate, setShouldAnimate] = useState(false);
+
+  useEffect(() => {
+    if (!hasAnimatedRef.current.has(trackId)) {
+      setShouldAnimate(true);
+      hasAnimatedRef.current.add(trackId);
+    } else {
+      setShouldAnimate(false);
+    }
+  }, [trackId]);
+
+  const appliedAnimationClass = shouldAnimate ? animationClass : '';
 
   // --- Swipe-to-remove state and handlers (mobile only) ---
   const [touchStartX, setTouchStartX] = useState(null);
@@ -95,7 +111,7 @@ const TrackRow = React.memo(function TrackRow({
       setRemoving(true);
       setRemovalKey(k => k + 1); // <--- force re-render
       setTimeout(() => {
-        handleRemove(idx);
+        handleRemove(item.url || item.id || item.title);
         setRemoving(false);
         setSwipeDirection(null);
         setRemovalDirection(null);
@@ -157,7 +173,10 @@ const TrackRow = React.memo(function TrackRow({
     : swipeDirection;
 
   React.useEffect(() => {
-    if (pendingRemoveIdx === idx) {
+    const trackId = item.url || item.id || item.title;
+    if (pendingRemoveId) {
+    }
+    if (trackId === pendingRemoveId) {
       setRemoving(true);
       const direction = iconDirection;
       setRemovalDirection(direction);
@@ -166,7 +185,7 @@ const TrackRow = React.memo(function TrackRow({
       removalSwipeX.current = removalPositionRef.current;
       setRemovalKey(k => k + 1); // Force re-render to trigger animation
       setTimeout(() => {
-        confirmRemove(idx);
+        confirmRemove(trackId);
         setRemoving(false);
         setSwipeDirection(null);
         setRemovalDirection(null);
@@ -176,7 +195,7 @@ const TrackRow = React.memo(function TrackRow({
         setRemovalKey(k => k + 1); // Force re-render
       }, 200); // Allow animation
     }
-  }, [pendingRemoveIdx, idx, iconDirection, confirmRemove]);
+  }, [pendingRemoveId, item, iconDirection, confirmRemove]);
 
   return (
     <div
@@ -201,13 +220,13 @@ const TrackRow = React.memo(function TrackRow({
       )}
       {/* Swipable item */}
       <div
-        className={`p-3 sm:p-4 h-20 sm:h-20 border-l-4 border-transparent hover:bg-primary/20 focus:bg-primary/30 transition-all duration-300 group cursor-pointer outline-none ${animationClass} ${isSelected ? 'border-primary bg-primary/20' : ''} ${isMobile && (swiping || removing) ? 'hide-scrollbar' : ''}`}
+        className={`p-3 sm:p-4 h-20 sm:h-20 border-l-4 border-transparent hover:bg-primary/20 focus:bg-primary/30 transition-all duration-300 group cursor-pointer outline-none ${appliedAnimationClass} ${isSelected ? '' : ''} ${isMobile && (swiping || removing) ? 'hide-scrollbar' : ''}`}
         style={swipeStyle}
-        onClick={() => onSelectTrack && onSelectTrack(idx)}
+        onClick={() => isController && onSelectTrack && onSelectTrack(idx)}
         onKeyDown={e => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
-            onSelectTrack && onSelectTrack(idx);
+            isController && onSelectTrack && onSelectTrack(idx);
           }
         }}
         title={isSelected ? 'Currently Playing' : 'Click to play'}
@@ -290,13 +309,43 @@ const TrackRow = React.memo(function TrackRow({
               </h4>
             </div>
             <div className="text-[10px] sm:text-xs text-neutral-400 truncate flex flex-col sm:flex-row flex-wrap gap-x-2 gap-y-0.5 items-start sm:items-center">
-              {item.artist && <span className="truncate max-w-[90vw] sm:max-w-xs" title={item.artist}>{item.artist}</span>}
-              {item.album && <span className="hidden sm:inline">•</span>}
-              {item.album && <span className="truncate max-w-[90vw] sm:max-w-xs" title={item.album}>{item.album}</span>}
-              {durationStr && <span className="hidden sm:inline">•</span>}
-              {durationStr && <span>{durationStr}</span>}
+              {/* Mobile: single row, flex, with separators */}
+              <div className="flex flex-row flex-wrap gap-x-1 gap-y-0.5 items-center sm:hidden">
+                {(() => {
+                  let artists = item.artist;
+                  if (Array.isArray(artists)) artists = artists.filter(Boolean);
+                  else if (typeof artists === 'string') artists = artists.split(',').map(a => a.trim()).filter(Boolean);
+                  else artists = [];
+                  const shown = artists.slice(0, 2);
+                  return shown.map((a, i) => (
+                    <span key={i} className="truncate max-w-[40vw]" title={a}>{a}</span>
+                  )).concat(artists.length > 2 ? <span key="more">...</span> : []);
+                })()}
+                {item.artist && item.album && <span>•</span>}
+                {item.album && (
+                  <span className="truncate max-w-[40vw]" title={item.album}>{item.album}</span>
+                )}
+                {(item.artist || item.album) && durationStr && <span>•</span>}
+                {durationStr && <span>{durationStr}</span>}
+              </div>
+              {/* Desktop: keep previous layout */}
+              <span className="hidden sm:flex flex-row flex-wrap gap-x-2 gap-y-0.5 items-center">
+                {(() => {
+                  let artists = item.artist;
+                  if (Array.isArray(artists)) artists = artists.filter(Boolean);
+                  else if (typeof artists === 'string') artists = artists.split(',').map(a => a.trim()).filter(Boolean);
+                  else artists = [];
+                  const shown = artists.slice(0, 2);
+                  return shown.map((a, i) => (
+                    <span key={i} className="truncate max-w-xs" title={a}>{a}</span>
+                  )).concat(artists.length > 2 ? <span key="more">...</span> : []);
+                })()}
+                {item.album && <span>•</span>}
+                {item.album && <span className="truncate max-w-xs" title={item.album}>{item.album}</span>}
+                {durationStr && <span>•</span>}
+                {durationStr && <span>{durationStr}</span>}
+              </span>
             </div>
-            <p className="text-neutral-400 text-[10px] sm:text-xs truncate max-w-[90vw] sm:max-w-sm" title={item.url}>{item.url}</p>
           </div>
           {isSelected && (
             <EqualizerBars />
@@ -305,7 +354,7 @@ const TrackRow = React.memo(function TrackRow({
           {isController && !isMobile && (
             <button
               className="opacity-100 sm:opacity-0 group-hover:opacity-100 focus:opacity-100 p-2 sm:p-2.5 text-neutral-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all duration-200 ml-1 sm:ml-0 min-w-[36px] min-h-[36px]"
-              onClick={e => { e.stopPropagation(); handleRemove(idx); }}
+              onClick={e => { e.stopPropagation(); handleRemove(item.url || item.id || item.title); }}
               disabled={loading || disableRemove}
               title="Remove track"
               aria-label={`Remove track ${item.title || 'Unknown Track'}`}
@@ -379,7 +428,7 @@ function QueueList({
   List,
   queueListRef,
   queueScrollRef,
-  pendingRemoveIdx,
+  pendingRemoveId,
   confirmRemove,
 }) {
   // All hooks must be called before any early return
@@ -393,26 +442,6 @@ function QueueList({
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
-
-  // Memoize queue rendering for performance
-  const renderedQueue = useMemo(() => (
-    queue.map((item, idx) => (
-      <TrackRow
-        key={item.url ? item.url : `queue-track-${idx}`}
-        item={item}
-        idx={idx}
-        selectedTrackIdx={selectedTrackIdx}
-        queueAnimations={queueAnimations}
-        onSelectTrack={onSelectTrack}
-        handleRemove={handleRemove}
-        loading={loading}
-        isController={isController}
-        disableRemove={false}
-        pendingRemoveIdx={pendingRemoveIdx}
-        confirmRemove={confirmRemove}
-      />
-    ))
-  ), [queue, queueAnimations, selectedTrackIdx, onSelectTrack, handleRemove, loading, isController, pendingRemoveIdx, confirmRemove]);
 
   // Now do early return
   if (!queue || queue.length === 0) {
@@ -455,7 +484,7 @@ function QueueList({
           loading={loading}
           isController={isController}
           disableRemove={false}
-          pendingRemoveIdx={pendingRemoveIdx}
+          pendingRemoveId={pendingRemoveId}
           confirmRemove={confirmRemove}
         />
       ))}

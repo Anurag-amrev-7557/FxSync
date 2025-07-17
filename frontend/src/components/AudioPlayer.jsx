@@ -15,8 +15,6 @@ import ErrorBanner from './AudioPlayer/ErrorBanner';
 import TrackInfo from './AudioPlayer/TrackInfo';
 import SyncStatusBanner from './AudioPlayer/SyncStatusBanner';
 import DiagnosticsPanel from './AudioPlayer/DiagnosticsPanel';
-import LatencyCalBanner from './AudioPlayer/LatencyCalBanner';
-import LatencyWizardModal from './AudioPlayer/LatencyWizardModal';
 
 // Add global error handlers
 if (typeof window !== 'undefined' && !window._audioPlayerErrorHandlerAdded) {
@@ -122,10 +120,7 @@ function setCurrentTimeSafely(audio, value, setCurrentTime) {
         setCurrentTime(value);
         // Optionally, fire a custom event for debugging
         // audio.dispatchEvent(new CustomEvent('currentTimeSetSafely', { detail: { value, eventType } }));
-        // Enhanced: log only in dev
-        if (import.meta.env.MODE === 'development') {
-          console.log(`[setCurrentTimeSafely] Set currentTime (${eventType})`, { ...context, actual: audio.currentTime });
-        }
+
       }
     } catch (e) {
       console.warn(`[setCurrentTimeSafely] Failed to set currentTime (${eventType}):`, context, e);
@@ -147,10 +142,6 @@ function setCurrentTimeSafely(audio, value, setCurrentTime) {
     if (value === 0 && audio.src && !audio.src.includes('forceReload')) {
       // Append a dummy query param to force reload
       audio.src = audio.src + (audio.src.includes('?') ? '&' : '?') + 'forceReload=' + Date.now();
-      // Optionally, log
-      if (import.meta.env.MODE === 'development') {
-        console.log('[setCurrentTimeSafely] Forcing reload due to NaN duration', logContext);
-      }
     }
   }
 
@@ -311,10 +302,11 @@ export default function AudioPlayer({
 
   // Check if previous/next buttons should be enabled
   const canNavigate = isController && queue && queue.length > 1;
-  const canGoPrevious = canNavigate && selectedTrackIdx > 0;
-  const canGoNext = canNavigate && selectedTrackIdx < queue.length - 1;
+  const canGoPrevious = isController && canNavigate && selectedTrackIdx > 0;
+  const canGoNext = isController && canNavigate && selectedTrackIdx < queue.length - 1;
   // Remove: audioUrl, loading, audioError, isPlaying, duration, displayedCurrentTime, audioRef, and their setters
   // Instead, use:
+  const lastSeekTime = useRef(0); // Track last user seek time
   const {
     audioRef,
     audioUrl,
@@ -329,7 +321,7 @@ export default function AudioPlayer({
     setAudioUrl,
     handleSeek,
     isSeeking,
-  } = useAudioElement({ currentTrack, isController, getServerTime })
+  } = useAudioElement({ currentTrack, isController, getServerTime, setLastSeekTime: (t) => { lastSeekTime.current = t; } })
   const [syncStatus, setSyncStatus] = useState('In Sync');
   const [shouldAnimate, setShouldAnimate] = useState(false);
   const [audioLatency, setAudioLatency] = useState(0.08); // measured latency in seconds
@@ -339,15 +331,14 @@ export default function AudioPlayer({
   const [microCorrectionActive, setMicroCorrectionActive] = useState(false); // Visual feedback for micro-corrections
   const [displayedTitle, setDisplayedTitle] = useState(currentTrack?.title || '');
   const [errorBanner, setErrorBanner] = useState(null);
-  const [showLatencyWizard, setShowLatencyWizard] = useState(false);
-  const [latencyWizardStep, setLatencyWizardStep] = useState(0);
-  const [latencyTestStart, setLatencyTestStart] = useState(null);
-  const [latencyTestResult, setLatencyTestResult] = useState(null);
+  // Remove all state, handlers, and UI for latency calibration, LatencyCalBanner, and LatencyWizardModal
   // Restore edgeCaseBanner and related state at the top level
   const [showDriftDebug, setShowDriftDebug] = useState(false);
   const [showLatencyCal, setShowLatencyCal] = useState(false);
   const [edgeCaseBanner, setEdgeCaseBanner] = useState(null);
   const [showCalibrateBanner, setShowCalibrateBanner] = useState(false);
+  const [firstSyncAttempted, setFirstSyncAttempted] = useState(false);
+  const [firstSyncFailed, setFirstSyncFailed] = useState(false);
 
   // --- Dynamic Drift Correction Parameters ---
   const driftParams = getDriftCorrectionParams({ rtt, jitter });
@@ -479,7 +470,6 @@ export default function AudioPlayer({
         // Remove trailing slash if present
         url = backendUrl.replace(/\/$/, '') + url;
       }
-      console.log('AudioPlayer: Setting audioUrl to', url);
       setAudioUrl(url);
       // --- Ensure playback starts from beginning when track changes ---
       const audio = audioRef.current;
@@ -490,6 +480,16 @@ export default function AudioPlayer({
       }
     }
   }, [currentTrack]);
+
+  // --- Ensure playback starts from beginning when selectedTrackIdx changes (even if currentTrack does not) ---
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (audio) {
+      setCurrentTimeSafely(audio, 0, setDisplayedCurrentTime);
+    } else {
+      setDisplayedCurrentTime(0);
+    }
+  }, [selectedTrackIdx]);
 
   // Auto-play audio for listeners when audioUrl changes and should be playing
   useEffect(() => {
@@ -506,20 +506,7 @@ export default function AudioPlayer({
     if (currentTrack && currentTrack.url) return;
     const backendUrl = import.meta.env.VITE_BACKEND_URL;
     if (!backendUrl) {
-      setAudioError(
-        <>
-          <span className="inline-flex items-center gap-2">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-red-500" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
-              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v4.5a.75.75 0 001.5 0v-4.5zm-.75 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
-            </svg>
-            <span>
-              Audio backend URL is not configured.
-              <br />
-              Please set <span className="font-mono bg-neutral-800 px-1 rounded">VITE_BACKEND_URL</span> in your environment.
-            </span>
-          </span>
-        </>
-      );
+      setAudioError('Audio backend URL is not configured. Please set VITE_BACKEND_URL in your environment.');
       // setLoading(false); // Removed
       return;
     }
@@ -575,7 +562,6 @@ export default function AudioPlayer({
     
     // If we're not the controller and audio is playing but shouldn't be, pause it
     if (!isController && !isPlaying && !audio.paused) {
-      console.log('Pausing audio: listener detected audio playing when it should be paused');
       audio.pause();
     }
   }, [isController, isPlaying]);
@@ -634,14 +620,12 @@ export default function AudioPlayer({
         !isFinite(timestamp) ||
         !isFinite(lastUpdated)
       ) {
-        log('warn', 'SYNC_STATE: invalid state received', { isPlaying, timestamp, lastUpdated, ctrlId, trackId, meta });
         showSyncStatus('Sync failed');
         setErrorBanner('Sync failed: Invalid state received from server.');
         return;
       }
       const audio = audioRef.current;
       if (!audio) {
-        log('warn', 'SYNC_STATE: audio element not available');
         return;
       }
       // Use serverTime if present, else fallback
@@ -656,7 +640,6 @@ export default function AudioPlayer({
       const rttComp = rtt ? rtt / 2000 : 0; // ms to s, one-way
       const expected = timestamp + (now - lastUpdated) / 1000 - audioLatency + rttComp + smoothedOffset;
       if (!isFiniteNumber(expected)) {
-        log('warn', 'SYNC_STATE: expected is not finite', { expected, timestamp, lastUpdated, now });
         showSyncStatus('Sync failed');
         setErrorBanner('Sync failed: Invalid expected time.');
         return;
@@ -675,16 +658,6 @@ export default function AudioPlayer({
         trackId,
       });
       if (window._audioDriftHistory.length > 10) window._audioDriftHistory.shift();
-
-      // Log drift for debugging (dev only)
-      log('log', '[DriftCheck] SYNC_STATE drift:', drift, {
-        current: audio.currentTime,
-        expected,
-        isPlaying,
-        ctrlId,
-        trackId,
-        meta,
-      });
 
       // Enhanced: show drift in UI if large
       if (drift > SYNC_CONFIG.DRIFT_THRESHOLD) {
@@ -756,6 +729,14 @@ export default function AudioPlayer({
         return;
       }
       socket.emit('sync_request', { sessionId: socket.sessionId }, (state) => {
+        // Handle server error
+        if (state && state.error) {
+          if (import.meta.env.MODE === 'development') {
+            console.warn('[DriftCheck] Server error received', state.error);
+          }
+          // Optionally, show a user-facing error or attempt to rejoin
+          return;
+        }
         // Validate state
         if (
           !state ||
@@ -788,22 +769,9 @@ export default function AudioPlayer({
         const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000 + rttComp + smoothedOffset;
         const drift = Math.abs(audio.currentTime - expectedSynced);
 
-        // Enhanced: log drift only if significant or in dev
-        if (drift > SYNC_CONFIG.DRIFT_THRESHOLD || import.meta.env.MODE === 'development') {
-          console.log(
-            '[DriftCheck] PERIODIC drift:',
-            drift.toFixed(3),
-            'current:',
-            audio.currentTime.toFixed(3),
-            'expected:',
-            expectedSynced.toFixed(3),
-            'isPlaying:', audio.paused ? 'paused' : 'playing'
-          );
-        }
-
-        // Only correct if not in cooldown
+        // Only correct if not in cooldown and not right after a seek
         const nowMs = Date.now();
-        const canCorrect = nowMs - lastCorrection > correctionCooldown;
+        const canCorrect = nowMs - lastCorrection > correctionCooldown && nowMs - lastSeekTime.current > 500;
 
         if (drift > SYNC_CONFIG.DRIFT_THRESHOLD) {
           driftCountRef.current += 1;
@@ -831,9 +799,7 @@ export default function AudioPlayer({
             lastCorrection = nowMs;
           }
         } else {
-          if (driftCountRef.current > 0 && import.meta.env.MODE === 'development') {
-            console.log('[DriftCheck] Drift back in threshold, resetting counter');
-          }
+         
           driftCountRef.current = 0;
           setSyncStatus('In Sync');
         }
@@ -866,10 +832,29 @@ export default function AudioPlayer({
 
     // Defensive: wrap in try/catch for callback
     socket.emit('sync_request', { sessionId: socket.sessionId }, (state) => {
+      setFirstSyncAttempted(true); // Mark that we've attempted the first sync
       try {
         const audio = audioRef.current;
         if (!audio) {
           warn('Audio element not available on sync_request');
+          return;
+        }
+
+        // Handle server error
+        if (state && state.error) {
+          warn('Server error received in sync_request', state.error);
+          audio.pause();
+          setCurrentTimeSafely(audio, 0, setDisplayedCurrentTime);
+          setIsPlaying(false);
+          // Only show error banner if not the first sync failure
+          if (!firstSyncFailed) {
+            setFirstSyncFailed(true);
+            setTimeout(() => {
+              if (firstSyncFailed) setErrorBanner('Sync failed: ' + state.error);
+            }, 1000);
+          } else {
+            setErrorBanner('Sync failed: ' + state.error);
+          }
           return;
         }
 
@@ -885,7 +870,15 @@ export default function AudioPlayer({
           audio.pause();
           setCurrentTimeSafely(audio, 0, setDisplayedCurrentTime);
           setIsPlaying(false);
-          setErrorBanner('Sync failed: No valid state received from server.');
+          // Only show error banner if not the first sync failure
+          if (!firstSyncFailed) {
+            setFirstSyncFailed(true);
+            setTimeout(() => {
+              if (firstSyncFailed) setErrorBanner('Sync failed: No valid state received from server.');
+            }, 1000);
+          } else {
+            setErrorBanner('Sync failed: No valid state received from server.');
+          }
           return;
         }
 
@@ -895,9 +888,21 @@ export default function AudioPlayer({
           audio.pause();
           setCurrentTimeSafely(audio, 0, setDisplayedCurrentTime);
           setIsPlaying(false);
-          setErrorBanner('Sync failed: Invalid sync state timestamp.');
+          // Only show error banner if not the first sync failure
+          if (!firstSyncFailed) {
+            setFirstSyncFailed(true);
+            setTimeout(() => {
+              if (firstSyncFailed) setErrorBanner('Sync failed: Invalid sync state timestamp.');
+            }, 1000);
+          } else {
+            setErrorBanner('Sync failed: Invalid sync state timestamp.');
+          }
           return;
         }
+
+        // If we get here, sync succeeded, so clear firstSyncFailed
+        setFirstSyncFailed(false);
+        setErrorBanner(null);
 
         const now = getNow(getServerTime);
         // Compensate for measured audio latency and RTT (one-way delay)
@@ -907,7 +912,15 @@ export default function AudioPlayer({
           warn('Invalid expected time, pausing audio', { expected, state });
           audio.pause();
           setIsPlaying(false);
-          setErrorBanner('Sync failed: Invalid expected time.');
+          // Only show error banner if not the first sync failure
+          if (!firstSyncFailed) {
+            setFirstSyncFailed(true);
+            setTimeout(() => {
+              if (firstSyncFailed) setErrorBanner('Sync failed: Invalid expected time.');
+            }, 1000);
+          } else {
+            setErrorBanner('Sync failed: Invalid expected time.');
+          }
           return;
         }
 
@@ -922,14 +935,6 @@ export default function AudioPlayer({
         } else {
           safeExpected = Math.max(0, expectedSynced);
         }
-
-        log('Syncing audio to', {
-          expectedSynced,
-          safeExpected,
-          isPlaying: state.isPlaying,
-          duration: audio.duration,
-          src: audio.currentSrc,
-        });
 
         setCurrentTimeSafely(audio, safeExpected, setDisplayedCurrentTime);
         setIsPlaying(state.isPlaying);
@@ -964,10 +969,7 @@ export default function AudioPlayer({
         emittedAt: now,
         latency: audioLatency,
       };
-      if (import.meta.env.MODE === 'development') {
-         
-        console.log('[AudioPlayer][emitPlay]', payload);
-      }
+      
       try {
         socket.emit('play', payload);
       } catch (err) {
@@ -988,10 +990,6 @@ export default function AudioPlayer({
         clientId,
         emittedAt: getNow(getServerTime),
       };
-      if (import.meta.env.MODE === 'development') {
-         
-        console.log('[AudioPlayer][emitPause]', payload);
-      }
       try {
         socket.emit('pause', payload);
       } catch (err) {
@@ -1011,10 +1009,7 @@ export default function AudioPlayer({
         clientId,
         emittedAt: getNow(getServerTime),
       };
-      if (import.meta.env.MODE === 'development') {
-         
-        console.log('[AudioPlayer][emitSeek]', payload);
-      }
+      
       try {
         socket.emit('seek', payload);
       } catch (err) {
@@ -1045,10 +1040,7 @@ export default function AudioPlayer({
       }
       setIsPlaying(true);
       emitPlay();
-      if (import.meta.env.MODE === 'development') {
-         
-        console.log('[AudioPlayer][handlePlay] Play triggered successfully');
-      }
+     
     } catch (err) {
       setIsPlaying(false);
       if (import.meta.env.MODE === 'development') {
@@ -1071,10 +1063,7 @@ export default function AudioPlayer({
       audio.pause();
       setIsPlaying(false);
       emitPause();
-      if (import.meta.env.MODE === 'development') {
-         
-        console.log('[AudioPlayer][handlePause] Pause triggered successfully');
-      }
+     
     } catch (err) {
       if (import.meta.env.MODE === 'development') {
          
@@ -1196,73 +1185,31 @@ export default function AudioPlayer({
       if (!audio) return;
       const actual = audio.currentTime;
       setDisplayedCurrentTime(prev => {
-        // Don't animate if currently seeking
         if (isSeeking) return prev;
-        // If the difference is tiny, snap to actual
         if (Math.abs(prev - actual) < 0.015) return actual;
-        // Otherwise, ease toward actual (lerp)
         return prev + (actual - prev) * 0.22;
       });
       raf = requestAnimationFrame(animate);
     };
-    raf = requestAnimationFrame(animate);
+    if (isPlaying && !isSeeking) {
+      raf = requestAnimationFrame(animate);
+    }
     return () => cancelAnimationFrame(raf);
-  }, [audioUrl, isSeeking]);
+  }, [audioUrl, isSeeking, isPlaying]);
 
-  // Wrap handleSeek to emit seek event if controller
+  // Wrap handleSeek to emit seek event if controller and update lastSeekTime
   const handleSeekWithEmit = (time) => {
     handleSeek(time); // always update local audio
+    lastSeekTime.current = Date.now(); // Mark last seek
     if (isController) {
       emitSeek(time);
     }
   };
 
   // --- Latency Calibration Wizard Logic ---
-  function startLatencyWizard() {
-    setLatencyWizardStep(1);
-    setLatencyTestResult(null);
-    setShowLatencyWizard(true);
-  }
-  function playTestSound() {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const o = ctx.createOscillator();
-    o.type = 'sine';
-    o.frequency.value = 880;
-    o.connect(ctx.destination);
-    o.start();
-    setTimeout(() => { o.stop(); ctx.close(); }, 200);
-  }
-  function handleLatencyWizardNext() {
-    if (latencyWizardStep === 1) {
-      playTestSound();
-      setLatencyTestStart(performance.now());
-      setLatencyWizardStep(2);
-    } else if (latencyWizardStep === 2) {
-      const end = performance.now();
-      const measured = (end - latencyTestStart) / 1000;
-      setLatencyTestResult(measured);
-      setManualLatency(measured);
-      setLatencyWizardStep(3);
-    } else {
-      setShowLatencyWizard(false);
-      setLatencyWizardStep(0);
-    }
-  }
-  function handleLatencyWizardCancel() {
-    setShowLatencyWizard(false);
-    setLatencyWizardStep(0);
-  }
-
-  // --- Latency Calibration Wizard Modal ---
-  <LatencyWizardModal
-    show={showLatencyWizard}
-    step={latencyWizardStep}
-    testResult={latencyTestResult}
-    onNext={handleLatencyWizardNext}
-    onCancel={handleLatencyWizardCancel}
-    onPlayTestSound={playTestSound}
-    testStart={latencyTestStart}
-  />
+  // Remove all LatencyWizardModal JSX usage and related state/handlers
+  // Remove startLatencyWizard, playTestSound, handleLatencyWizardNext, handleLatencyWizardCancel, and all references to LatencyWizardModal
+  // Remove the calibration button in the expanded mobile view
 
   // --- MOBILE REDESIGN ---
   if (mobile) {
@@ -1271,6 +1218,14 @@ export default function AudioPlayer({
     const dragStartY = useRef(null);
     const dragDeltaY = useRef(0);
     const [dragging, setDragging] = useState(false);
+
+    // Add loop state for current track
+    const [loop, setLoop] = useState(false);
+    useEffect(() => {
+      if (audioRef.current) {
+        audioRef.current.loop = loop;
+      }
+    }, [loop, audioRef]);
 
     // Drag event handlers
     const onHandleTouchStart = (e) => {
@@ -1476,48 +1431,6 @@ export default function AudioPlayer({
                   <div className="px-4 py-3 space-y-4 pb-0" style={{ paddingBottom: 0 }}>
                     {/* Header Section */}
                     <div className="space-y-3">
-                      {/* Utility Buttons */}
-                      <div className="flex items-center justify-between">
-                        <button
-                          className="w-8 h-8 rounded-lg bg-neutral-800/80 hover:bg-neutral-700/80 transition-all duration-200 text-white flex items-center justify-center shadow-md backdrop-blur-sm border border-neutral-700/50"
-                          onClick={startLatencyWizard}
-                          title="Calibrate device audio latency"
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <circle cx="12" cy="12" r="3"></circle>
-                            <path d="M12 1v6m0 6v6"></path>
-                            <path d="M12 1a11 11 0 0 0-11 11c0 2.5 1 4.8 2.6 6.5"></path>
-                            <path d="M12 1a11 11 0 0 1 11 11c0 2.5-1 4.8-2.6 6.5"></path>
-                          </svg>
-                        </button>
-                        
-                        <button
-                          className={`w-8 h-8 rounded-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed text-white flex items-center justify-center shadow-md backdrop-blur-sm border ${
-                            resyncInProgress 
-                              ? 'bg-blue-600/90 border-blue-500/50' 
-                              : smartResyncSuggestion 
-                                ? 'bg-orange-600/90 hover:bg-orange-700/90 border-orange-500/50' 
-                                : 'bg-neutral-800/80 hover:bg-neutral-700/80 border-neutral-700/50'
-                          }`}
-                          onClick={handleResync}
-                          disabled={disabled || !audioUrl || resyncInProgress}
-                          aria-label="Re-sync"
-                        >
-                          {resyncInProgress ? (
-                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
-                              <path d="M21 12a9 9 0 11-6.219-8.56"></path>
-                            </svg>
-                          ) : (
-                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
-                              <path d="M21 3v5h-5"></path>
-                              <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
-                              <path d="M3 21v-5h5"></path>
-                            </svg>
-                          )}
-                        </button>
-                      </div>
-                      
                       {/* Track Title */}
                       <div className="text-center">
                         <TrackInfo
@@ -1525,6 +1438,23 @@ export default function AudioPlayer({
                           animating={animating}
                           direction={direction}
                         />
+                      </div>
+                      {/* Reformatted metadata row */}
+                      <div className="text-[11px] text-neutral-400 truncate flex flex-row flex-wrap gap-x-2 gap-y-0.5 items-center justify-center">
+                        {(() => {
+                          let artists = currentTrack?.artist;
+                          if (Array.isArray(artists)) artists = artists.filter(Boolean);
+                          else if (typeof artists === 'string') artists = artists.split(',').map(a => a.trim()).filter(Boolean);
+                          else artists = [];
+                          const shown = artists.slice(0, 2);
+                          return shown.map((a, i) => (
+                            <span key={i} className="truncate max-w-[40vw]" title={a}>{a}</span>
+                          )).concat(artists.length > 2 ? <span key="more">...</span> : []);
+                        })()}
+                        {currentTrack?.artist && currentTrack?.album && <span>•</span>}
+                        {currentTrack?.album && (
+                          <span className="truncate max-w-[40vw]" title={currentTrack.album}>{currentTrack.album}</span>
+                        )}
                       </div>
                     </div>
 
@@ -1546,7 +1476,23 @@ export default function AudioPlayer({
                     </div>
 
                     {/* Controls Section */}
-                    <div className="flex items-center justify-center gap-3">
+                    <div className="flex items-center justify-between gap-3">
+                      {/* Track settings: loop toggle */}
+                      <button
+                        className={`w-8 h-8 flex items-center justify-center border-none bg-transparent mr-1 p-0 ${loop ? 'text-primary' : 'text-neutral-400 hover:text-primary'}`}
+                        onClick={() => setLoop(l => !l)}
+                        aria-label={loop ? 'Disable loop' : 'Enable loop'}
+                        title={loop ? 'Disable loop' : 'Enable loop'}
+                        style={{ boxShadow: 'none' }}
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M17 1l4 4-4 4" />
+                          <path d="M3 11V9a4 4 0 014-4h14" />
+                          <path d="M7 23l-4-4 4-4" />
+                          <path d="M21 13v2a4 4 0 01-4 4H3" />
+                          {loop && <circle cx="12" cy="12" r="3" fill="currentColor" opacity="0.3" />}
+                        </svg>
+                      </button>
                       <PlayerControls
                         isPlaying={isPlaying}
                         onPlay={handlePlay}
@@ -1559,6 +1505,32 @@ export default function AudioPlayer({
                         isController={isController}
                         audioUrl={audioUrl}
                       />
+                      <button
+                        className={`w-8 h-8 flex items-center justify-center border-none bg-transparent p-0 disabled:opacity-50 disabled:cursor-not-allowed ${
+                          resyncInProgress 
+                            ? 'text-blue-500' 
+                            : smartResyncSuggestion 
+                              ? 'text-orange-400' 
+                              : 'text-neutral-400 hover:text-primary'
+                        }`}
+                        onClick={handleResync}
+                        disabled={disabled || !audioUrl || resyncInProgress}
+                        aria-label="Re-sync"
+                        style={{ boxShadow: 'none' }}
+                      >
+                        {resyncInProgress ? (
+                          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
+                            <path d="M21 12a9 9 0 11-6.219-8.56"></path>
+                          </svg>
+                        ) : (
+                          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
+                            <path d="M21 3v5h-5"></path>
+                            <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
+                            <path d="M3 21v-5h5"></path>
+                          </svg>
+                        )}
+                      </button>
                     </div>
                   </div>
                 )}
@@ -1631,27 +1603,49 @@ export default function AudioPlayer({
     resyncLabel="Re-sync now"
   />
 )}
-      {/* Track Title */}
-      <div className="mb-2 text-center min-h-[1.5em] relative flex items-center justify-center" style={{height: '1.5em'}}>
-        <TrackInfo
-          title={displayedTitle}
-          animating={animating}
-          direction={direction}
-        />
-      </div>
       {/* Now Playing Section */}
       <div className="bg-neutral-900/50 rounded-lg border border-neutral-800 p-4">
         <div className="flex items-center gap-3 mb-4">
-          <div className="w-12 h-12 bg-primary/20 rounded-lg flex items-center justify-center">
-            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
-              <path d="M9 18V5l12-2v13"></path>
-              <circle cx="6" cy="18" r="3"></circle>
-              <circle cx="18" cy="16" r="3"></circle>
-            </svg>
+          <div className="w-12 h-12 bg-primary/20 rounded-lg flex items-center justify-center overflow-hidden">
+            {currentTrack?.albumArt ? (
+              <img
+                src={currentTrack.albumArt}
+                alt="Album Art"
+                className="w-12 h-12 object-cover rounded-lg"
+                style={{ minWidth: 48, minHeight: 48 }}
+              />
+            ) : (
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
+                <path d="M9 18V5l12-2v13"></path>
+                <circle cx="6" cy="18" r="3"></circle>
+                <circle cx="18" cy="16" r="3"></circle>
+              </svg>
+            )}
           </div>
           <div className="flex-1">
-            <h3 className="text-white font-medium">Now Playing</h3>
-            <p className="text-neutral-400 text-sm">Synchronized audio stream</p>
+            <div className="mb-1 text-white text-base font-semibold min-h-[1.5em] relative flex items-center">
+              <TrackInfo
+                title={displayedTitle}
+                animating={animating}
+                direction={direction}
+              />
+            </div>
+            <div className="text-[12px] text-neutral-400 truncate flex flex-row flex-wrap gap-x-2 gap-y-0.5 items-center">
+              {(() => {
+                let artists = currentTrack?.artist;
+                if (Array.isArray(artists)) artists = artists.filter(Boolean);
+                else if (typeof artists === 'string') artists = artists.split(',').map(a => a.trim()).filter(Boolean);
+                else artists = [];
+                const shown = artists.slice(0, 2);
+                return shown.map((a, i) => (
+                  <span key={i} className="truncate max-w-xs" title={a}>{a}</span>
+                )).concat(artists.length > 2 ? <span key="more">...</span> : []);
+              })()}
+              {currentTrack?.artist && currentTrack?.album && <span>•</span>}
+              {currentTrack?.album && (
+                <span className="truncate max-w-xs" title={currentTrack.album}>{currentTrack.album}</span>
+              )}
+            </div>
           </div>
           <div className="text-right">
             <div className="text-white font-mono text-sm">
@@ -1756,7 +1750,7 @@ export default function AudioPlayer({
 )}
       {import.meta.env.MODE === 'development' && showCalibrateBanner && (
   <LatencyCalBanner
-    onCalibrate={() => { setShowCalibrateBanner(false); startLatencyWizard(); }}
+    onCalibrate={() => { setShowCalibrateBanner(false); }}
     onDismiss={() => setShowCalibrateBanner(false)}
   />
 )}

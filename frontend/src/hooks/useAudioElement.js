@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { fadeAudio } from './useDriftCorrection';
 import SYNC_CONFIG from '../utils/syncConfig';
 
-export default function useAudioElement({ currentTrack, isController, getServerTime }) {
+export default function useAudioElement({ currentTrack, isController, getServerTime, setLastSeekTime }) {
   const [audioUrl, setAudioUrl] = useState(null);
   const [loading, setLoading] = useState(true);
   const [audioError, setAudioError] = useState(null);
@@ -97,7 +97,9 @@ export default function useAudioElement({ currentTrack, isController, getServerT
     if (audio && typeof time === 'number') {
       setIsSeeking(true);
       setDisplayedCurrentTime(time);
-      
+      if (typeof setLastSeekTime === 'function') {
+        setLastSeekTime(Date.now());
+      }
       fadeAudio(audio, 0, 100);
       setTimeout(() => {
         audio.currentTime = time;
@@ -106,7 +108,7 @@ export default function useAudioElement({ currentTrack, isController, getServerT
         setTimeout(() => setIsSeeking(false), 200);
       }, 110);
     }
-  }, []);
+  }, [setLastSeekTime]);
 
   return {
     audioRef,

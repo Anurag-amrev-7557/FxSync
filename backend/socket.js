@@ -8,6 +8,7 @@ import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
+import * as mm from 'music-metadata';
 dotenv.config();
 
 // Helper to build full session sync state for advanced sync
@@ -75,11 +76,9 @@ export function setupSocket(io) {
   // --- Rate limiting state ---
   const chatRateLimit = {};
   io.on('connection', (socket) => {
-    console.log('Socket connected:', socket.id);
 
-
-
-    socket.on('join_session', ({ sessionId, displayName, deviceInfo, clientId } = {}, callback) => {
+    // Change the join_session handler to async to allow await
+    socket.on('join_session', async ({ sessionId, displayName, deviceInfo, clientId } = {}, callback) => {
       // Input validation
       if (!isValidSessionId(sessionId)) {
         log('join_session: missing or invalid sessionId');
@@ -93,7 +92,6 @@ export function setupSocket(io) {
       }
       // Sanitize displayName before storing/broadcasting
       const safeName = displayName ? safeDisplayName(displayName) : undefined;
-      console.log('join_session event received', { sessionId, clientId });
       if (!sessionId || typeof sessionId !== 'string') {
         log('join_session: missing or invalid sessionId');
         return typeof callback === "function" && callback({ error: 'No sessionId provided' });
@@ -108,16 +106,28 @@ export function setupSocket(io) {
         const samplesDir = path.join(process.cwd(), 'uploads', 'samples');
         if (fs.existsSync(samplesDir)) {
           const files = fs.readdirSync(samplesDir);
-          files.forEach(file => {
+          for (const file of files) {
             if (file.endsWith('.mp3')) {
+              // Extract metadata using music-metadata
+              let artist = '';
+              let album = '';
+              let duration = 0;
+              try {
+                const metadata = await mm.parseFile(path.join(samplesDir, file));
+                artist = metadata.common.artist || '';
+                album = metadata.common.album || '';
+                duration = metadata.format.duration || 0;
+              } catch (e) {
+                // Ignore errors, fallback to empty
+              }
               addToQueue(
                 sessionId,
                 `/audio/uploads/samples/${encodeURIComponent(file)}`,
                 file.replace(/\.mp3$/i, ''),
-                { type: 'sample' }
+                { type: 'sample', artist, album, duration }
               );
             }
-          });
+          }
         }
       }
       addClient(sessionId, socket.id, safeName, deviceInfo, clientId);
@@ -135,13 +145,7 @@ export function setupSocket(io) {
         session.controllerId = socket.id;
         becameController = true;
       }
-      // Debug log for controller assignment
-      console.log('JOIN CALLBACK:', {
-        controllerClientId: session.controllerClientId,
-        clientId,
-        sessionId,
-        controllerId: session.controllerId
-      });
+
       // Always send the correct controllerClientId in the callback
       const syncState = buildSessionSyncState(session);
       typeof callback === "function" && callback({
@@ -169,7 +173,6 @@ export function setupSocket(io) {
       if (session.controllerClientId !== clientId) return;
       updatePlayback(sessionId, { isPlaying: true, timestamp, controllerId: socket.id });
       log('Play in session', sessionId, 'at', timestamp);
-      console.log('Emitting sync_state to session', sessionId, 'clients:', Array.from(session.clients.keys()));
       io.to(sessionId).emit('sync_state', {
         isPlaying: true,
         timestamp: session.timestamp,
@@ -187,7 +190,6 @@ export function setupSocket(io) {
       if (session.controllerClientId !== clientId) return;
       updatePlayback(sessionId, { isPlaying: false, timestamp, controllerId: socket.id });
       log('Pause in session', sessionId, 'at', timestamp);
-      console.log('Emitting sync_state to session', sessionId, 'clients:', Array.from(session.clients.keys()));
       io.to(sessionId).emit('sync_state', {
         isPlaying: false,
         timestamp: session.timestamp,
@@ -205,7 +207,6 @@ export function setupSocket(io) {
       if (session.controllerClientId !== clientId) return;
       updateTimestamp(sessionId, timestamp, socket.id);
       log('Seek in session', sessionId, 'to', timestamp);
-      console.log('Emitting sync_state to session', sessionId, 'clients:', Array.from(session.clients.keys()));
       io.to(sessionId).emit('sync_state', {
         isPlaying: session.isPlaying,
         timestamp: session.timestamp,
@@ -231,16 +232,8 @@ export function setupSocket(io) {
           return;
         }
         const response = buildSessionSyncState(session);
-        if (process.env.NODE_ENV === 'development') {
-          // eslint-disable-next-line no-console
-          console.log('[socket][sync_request] Responding to sync_request for session', sessionId, response);
-        }
         if (typeof callback === "function") callback(response);
       } catch (err) {
-        if (process.env.NODE_ENV === 'development') {
-          // eslint-disable-next-line no-console
-          console.error('[socket][sync_request] Error handling sync_request:', err);
-        }
         if (typeof callback === "function") callback({ error: 'Internal server error' });
       }
     });
@@ -517,9 +510,7 @@ export function setupSocket(io) {
         return;
       }
       chatRateLimit[socket.id].push(now);
-      console.log('Backend: Received chat_message event:', { sessionId, message, sender, displayName, socketId: socket.id });
       if (!sessionId || !message || typeof message !== 'string') {
-        console.log('Backend: Invalid chat message data:', { sessionId, message, sender });
         if (typeof callback === 'function') callback({ error: 'Invalid chat message data' });
         return;
       }
@@ -537,9 +528,7 @@ export function setupSocket(io) {
       // Sanitize message to prevent XSS
       const safeMessage = escapeHtml(trimmed);
       const session = getSession(sessionId);
-      console.log('Backend: Available sessions:', Object.keys(getAllSessions()));
       if (!session) {
-        console.log('Backend: Session not found:', sessionId);
         if (typeof callback === 'function') callback({ error: 'Session not found' });
         return;
       }
@@ -612,31 +601,21 @@ export function setupSocket(io) {
       const msg = sessionMessages.find(m => m.messageId === messageId);
       if (!msg) return callback && callback({ error: 'Message not found' });
       // For now, just log the report
-      console.log('[REPORT] Message reported:', {
-        sessionId,
-        messageId,
-        reporterId,
-        reason,
-        reportedMessage: msg
-      });
+     
       callback && callback({ success: true });
     });
 
     socket.on('reaction', ({ sessionId, reaction, sender } = {}) => {
-      console.log('Backend: Received reaction event:', { sessionId, reaction, sender, socketId: socket.id });
       if (!sessionId || !reaction || typeof reaction !== 'string') {
-        console.log('Backend: Invalid reaction data:', { sessionId, reaction, sender });
         return;
       }
       const session = getSession(sessionId);
       if (!session) {
-        console.log('Backend: Session not found for reaction:', sessionId);
         return;
       }
-      console.log('Backend: Session found, broadcasting reaction to session:', sessionId);
       log('Reaction in session', sessionId, ':', reaction);
       const formattedReaction = formatReaction(sender || socket.id, reaction);
-      console.log('Backend: Formatted reaction:', formattedReaction);
+     
       io.to(sessionId).emit('reaction', formattedReaction);
     });
 
@@ -720,6 +699,37 @@ export function setupSocket(io) {
       // Remove the track
       const removed = removeFromQueue(sessionId, index);
       if (!removed) return typeof callback === "function" && callback({ error: 'Invalid index' });
+
+      // --- Delete uploaded file if it's a user upload (not a sample) ---
+      if (removedTrack && removedTrack.url && typeof removedTrack.url === 'string') {
+        // Support both absolute and relative URLs
+        let pathname = removedTrack.url;
+        try {
+          // If it's an absolute URL, extract the pathname
+          const urlObj = new URL(removedTrack.url, 'http://localhost'); // fallback base
+          pathname = urlObj.pathname;
+        } catch (e) {
+          // If it's not a valid URL, fallback to original string
+        }
+        const uploadsPrefix = '/audio/uploads/';
+        const samplesPrefix = '/audio/uploads/samples/';
+        if (
+          pathname.startsWith(uploadsPrefix) &&
+          !pathname.startsWith(samplesPrefix)
+        ) {
+          // Extract filename
+          const filename = decodeURIComponent(pathname.substring(uploadsPrefix.length));
+          const filePath = path.join(process.cwd(), 'uploads', filename);
+          log(`[remove_from_queue][DEBUG] Attempting to delete file:`, filePath, 'from url:', removedTrack.url);
+          fs.unlink(filePath, (err) => {
+            if (err) {
+              console.error(`[remove_from_queue] Failed to delete file ${filePath}:`, err);
+            } else {
+              log(`[remove_from_queue] Deleted user-uploaded file: ${filePath}`);
+            }
+          });
+        }
+      }
 
       const updatedQueue = getQueue(sessionId) || [];
       log('[DEBUG] remove_from_queue: session', sessionId, 'removed index', index, 'track:', removedTrack, 'queue now:', updatedQueue);
@@ -819,8 +829,7 @@ export function setupSocket(io) {
         track = queue[newIdx];
       }
 
-      // Debug log for queue and track BEFORE emitting events
-      console.log('[SOCKET][track_change] About to emit. sessionId:', sessionId, 'queue:', queue, 'newIdx:', newIdx, 'track:', track, 'session:', JSON.stringify(session));
+
 
       // Defensive: If idx is out of bounds, clamp to valid range or null
       if (typeof newIdx === 'number' && (newIdx < 0 || newIdx >= queue.length)) {
@@ -839,6 +848,10 @@ export function setupSocket(io) {
       } else {
         session.selectedTrackIdx = 0;
       }
+
+      // --- Reset playback timestamp when changing tracks ---
+      session.timestamp = 0;
+      session.lastUpdated = Date.now();
 
       // Optionally support autoAdvance (e.g., for next/prev track)
       let autoAdvanceInfo = {};

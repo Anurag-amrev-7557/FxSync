@@ -58,7 +58,7 @@ function UploadForm({
             {/* Input with Add button inside for mobile */}
             <div className="relative flex-1">
               <input
-                className="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50 transition-all duration-200 w-full pr-12 sm:pr-3"
+                className="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50 transition-all duration-200 w-full pr-12 sm:pr-3 h-9"
                 type="text"
                 value={input}
                 onChange={e => setInput(e.target.value)}
@@ -68,7 +68,7 @@ function UploadForm({
               {/* Add button inside input for mobile */}
               <button
                 type="submit"
-                className="absolute right-1 top-1/2 -translate-y-1/2 bg-primary hover:bg-primary/90 text-white rounded-lg text-sm font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 px-3 py-1.5 sm:hidden"
+                className="absolute right-1 top-1/2 -translate-y-1/2 bg-primary hover:bg-primary/90 text-white rounded-lg text-sm font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 px-3 py-1.5 sm:hidden h-9"
                 disabled={loading || !input.trim()}
                 aria-label="Add track by URL"
               >
@@ -82,7 +82,7 @@ function UploadForm({
             {/* Standalone Add button for desktop only */}
             <button
               type="submit"
-              className="hidden sm:flex px-4 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg text-sm font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed items-center justify-center gap-2 w-auto"
+              className="hidden sm:flex px-4 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg text-sm font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed items-center justify-center gap-2 w-auto h-9"
               disabled={loading || !input.trim()}
               aria-label="Add track by URL"
             >
@@ -109,7 +109,7 @@ function UploadForm({
               type="button"
               onClick={handleUploadClick}
               disabled={uploading}
-              className="flex items-center justify-center gap-2 px-4 py-2 bg-neutral-800 hover:bg-primary/80 text-white rounded-lg text-sm font-medium border border-neutral-700 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed w-auto"
+              className="flex items-center justify-center gap-2 px-4 py-2 bg-neutral-800 hover:bg-primary/80 text-white rounded-lg text-sm font-medium border border-neutral-700 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed w-auto h-9"
               aria-label="Upload MP3 file"
             >
               <UploadIcon />

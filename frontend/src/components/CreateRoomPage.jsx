@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import CreateRoom from './sessionpage/CreateRoom'
+import CreateRoom from './CreateRoom'
 import LoadingSpinner from './LoadingSpinner'
+import DeviceCalibrationModal from './DeviceCalibrationModal';
+import SessionPage from './SessionPage';
 
 /**
  * Enhanced CreateRoomPage:

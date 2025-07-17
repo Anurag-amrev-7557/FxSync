@@ -5,6 +5,7 @@ import fs from 'fs';
 import { addSessionFile } from '../managers/fileManager.js';
 import dotenv from 'dotenv';
 import { body, query, validationResult } from 'express-validator';
+import * as mm from 'music-metadata';
 dotenv.config();
 
 const router = express.Router();
@@ -123,30 +124,38 @@ router.use('/uploads/samples', (req, res, next) => {
 }));
 
 // List all tracks (user uploads + samples)
-router.get('/all-tracks', (req, res) => {
+router.get('/all-tracks', async (req, res) => {
   const uploadsDir = path.join(process.cwd(), 'uploads');
   const samplesDir = path.join(uploadsDir, 'samples');
   let tracks = [];
 
-  // Helper to add tracks from a directory
-  function addTracksFromDir(dir, type, urlPrefix) {
+  async function addTracksFromDir(dir, type, urlPrefix) {
     if (!fs.existsSync(dir)) return;
     const files = fs.readdirSync(dir);
-    files.forEach(file => {
+    for (const file of files) {
       if (file.endsWith('.mp3')) {
+        let albumArt = null;
+        try {
+          const metadata = await mm.parseFile(path.join(dir, file));
+          if (metadata.common.picture && metadata.common.picture.length > 0) {
+            const pic = metadata.common.picture[0];
+            albumArt = `data:${pic.format};base64,${pic.data.toString('base64')}`;
+          }
+        } catch (e) {
+          // ignore errors
+        }
         tracks.push({
           title: file.replace(/\.mp3$/i, ''),
           url: `${AUDIO_BASE_PATH}${urlPrefix}/${file}`,
-          type
+          type,
+          albumArt
         });
       }
-    });
+    }
   }
 
-  // User uploads (exclude samples subdir)
-  addTracksFromDir(uploadsDir, 'user', '/uploads');
-  // Sample tracks
-  addTracksFromDir(samplesDir, 'sample', '/uploads/samples');
+  await addTracksFromDir(uploadsDir, 'user', '/uploads');
+  await addTracksFromDir(samplesDir, 'sample', '/uploads/samples');
 
   res.json(tracks);
 });

@@ -32,10 +32,7 @@ function BottomTabBar({ mobileTab, setMobileTab, unreadCount = 0, compact = fals
         setBgActive(true)
         setTimeout(() => setBgActive(false), 250)
       })
-      // Haptic feedback for mobile only
-      if (typeof window !== 'undefined' && 'ontouchstart' in window && window.navigator && window.navigator.vibrate) {
-        window.navigator.vibrate(10)
-      }
+      // Removed vibration from here
     }
   }, [mobileTab])
 
@@ -51,9 +48,32 @@ function BottomTabBar({ mobileTab, setMobileTab, unreadCount = 0, compact = fals
       let prev = (idx - 1 + tabRefs.length) % tabRefs.length;
       while (disabledTabs.includes(prev)) prev = (prev - 1 + tabRefs.length) % tabRefs.length;
       tabRefs[prev].current.focus();
-    } else if (e.key === 'Enter' || e.key === ' ') {
+    } else if ((e.key === 'Enter' || e.key === ' ') && !disabledTabs.includes(idx)) {
       e.preventDefault();
-      if (!disabledTabs.includes(idx)) setMobileTab(idx);
+      setMobileTab(idx);
+      if (
+        typeof window !== 'undefined' &&
+        'ontouchstart' in window &&
+        window.navigator &&
+        window.navigator.vibrate
+      ) {
+        window.navigator.vibrate(10);
+      }
+    }
+  };
+
+  // Tab click handler with vibration
+  const handleTabClick = (idx, isDisabled) => {
+    if (!isDisabled) {
+      setMobileTab(idx);
+      if (
+        typeof window !== 'undefined' &&
+        'ontouchstart' in window &&
+        window.navigator &&
+        window.navigator.vibrate
+      ) {
+        window.navigator.vibrate(10);
+      }
     }
   };
 
@@ -149,7 +169,7 @@ function BottomTabBar({ mobileTab, setMobileTab, unreadCount = 0, compact = fals
               minWidth: 44,
               minHeight: 44,
             }}
-            onClick={() => !isDisabled && setMobileTab(idx)}
+            onClick={() => handleTabClick(idx, isDisabled)}
             onKeyDown={e => handleKeyDown(e, idx)}
             role="tab"
             aria-selected={isActive}

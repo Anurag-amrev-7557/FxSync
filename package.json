@@ -5,6 +5,7 @@
     "express-rate-limit": "^8.0.0",
     "helmet": "^8.1.0",
     "joi": "^17.13.3",
+    "music-metadata": "^11.7.0",
     "node-cron": "^4.2.1"
   }
 }

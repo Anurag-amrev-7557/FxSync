@@ -7,10 +7,10 @@ function safeTitle(title) {
   return title.replace(/<[^>]*>/g, '').slice(0, 128);
 }
 
-export function addToQueue(sessionId, url, title) {
+export function addToQueue(sessionId, url, title, meta = {}) {
   const session = getSession(sessionId);
   if (!session) return false;
-  session.queue.push({ url, title: safeTitle(title || url) });
+  session.queue.push({ url, title: safeTitle(title || url), ...meta });
   return true;
 }
 

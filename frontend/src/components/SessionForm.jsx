@@ -1,4 +1,4 @@
-import React, { useReducer, useEffect, useRef, useCallback } from 'react';
+import React, { useReducer, useEffect, useRef, useCallback, useState } from 'react';
 import QRCodeDisplay from './QRCodeDisplay';
 import CreateRoom from './CreateRoom';
 import { throttle } from '../utils/throttle';
@@ -8,6 +8,7 @@ import RecentRoomsList from './RecentRoomsList';
 import SessionHero from './SessionHero';
 import SessionFormContainer from './SessionFormContainer';
 import SessionFooter from './SessionFooter';
+import SessionPage from './SessionPage';
 
 // --- State management with useReducer ---
 // Refactored: Use useState for form state, refs for animation state
@@ -324,6 +325,7 @@ export default function SessionForm({ onJoin, currentSessionId }) {
     }
   };
 
+  // Replace handleCreateRoomConfirm to trigger calibration modal
   const handleCreateRoomConfirm = () => {
     onJoin(formState.createRoomSessionId, formState.displayName);
   };
@@ -931,6 +933,8 @@ export default function SessionForm({ onJoin, currentSessionId }) {
         style={{ position: 'fixed', left: 0, top: 0, width: '100vw', height: '100vh', pointerEvents: 'none', zIndex: 40 }}
         aria-hidden="true"
       />
+      {/* Mount SessionPage in background if calibration is running */}
+      {/* Removed calibration modal JSX */}
     </div>
   );
 } 

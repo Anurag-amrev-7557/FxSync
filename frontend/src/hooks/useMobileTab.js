@@ -2,21 +2,19 @@ import { useState, useEffect } from 'react';
 import { saveMobileTab, loadMobileTab } from '../utils/persistence';
 
 export default function useMobileTab(initial = 0, sessionId = null) {
-  const [mobileTab, setMobileTab] = useState(initial);
+  // On mount, load from localStorage (global or session-specific)
+  const [mobileTab, setMobileTab] = useState(() => {
+    return loadMobileTab(sessionId);
+  });
 
-  // Load saved mobile tab when sessionId changes
+  // If sessionId changes, reload the tab (for session-specific persistence)
   useEffect(() => {
-    if (sessionId) {
-      const savedTab = loadMobileTab(sessionId);
-      setMobileTab(savedTab);
-    }
+    setMobileTab(loadMobileTab(sessionId));
   }, [sessionId]);
 
   // Save mobile tab whenever it changes
   useEffect(() => {
-    if (sessionId) {
-      saveMobileTab(sessionId, mobileTab);
-    }
+    saveMobileTab(sessionId, mobileTab);
   }, [mobileTab, sessionId]);
 
   return [mobileTab, setMobileTab];

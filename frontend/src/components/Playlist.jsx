@@ -68,7 +68,7 @@ const SAMPLE_TRACKS = [
   },
 ];
 
-const Playlist = React.memo(function Playlist({ queue = [], isController, socket, sessionId, onSelectTrack, selectedTrackIdx, mobile = false, pendingRemoveIdx, handleRemove, confirmRemove }) {
+const Playlist = React.memo(function Playlist({ queue = [], isController, socket, sessionId, onSelectTrack, selectedTrackIdx, mobile = false, pendingRemoveId, handleRemove, confirmRemove }) {
   const reducedMotion = useContext(ReducedMotionContext);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -269,6 +269,18 @@ const Playlist = React.memo(function Playlist({ queue = [], isController, socket
           let artist = tag.tags.artist || '';
           let album = tag.tags.album || '';
           let duration = 0;
+          let albumArt = null;
+          // Extract album art if available
+          if (tag.tags.picture) {
+            const { data, format } = tag.tags.picture;
+            let base64String = '';
+            if (Array.isArray(data)) {
+              base64String = btoa(String.fromCharCode.apply(null, data));
+            } else if (data instanceof Uint8Array) {
+              base64String = btoa(String.fromCharCode.apply(null, Array.from(data)));
+            }
+            albumArt = `data:${format};base64,${base64String}`;
+          }
           if (!title || typeof title !== 'string' || !title.trim()) {
             title = file.name.replace(/\.[^/.]+$/, "");
           }
@@ -276,10 +288,10 @@ const Playlist = React.memo(function Playlist({ queue = [], isController, socket
           audio.preload = 'metadata';
           audio.onloadedmetadata = () => {
             duration = audio.duration;
-              sendUploadToBackend({ title, artist, album, duration }, file).then(resolve).catch(resolve);
+              sendUploadToBackend({ title, artist, album, duration, albumArt }, file).then(resolve).catch(resolve);
           };
           audio.onerror = () => {
-              sendUploadToBackend({ title, artist, album, duration: 0 }, file).then(resolve).catch(resolve);
+              sendUploadToBackend({ title, artist, album, duration: 0, albumArt }, file).then(resolve).catch(resolve);
           };
           audio.src = URL.createObjectURL(file);
         },
@@ -288,14 +300,15 @@ const Playlist = React.memo(function Playlist({ queue = [], isController, socket
           let artist = '';
           let album = '';
           let duration = 0;
+          let albumArt = null;
           const audio = document.createElement('audio');
           audio.preload = 'metadata';
           audio.onloadedmetadata = () => {
             duration = audio.duration;
-              sendUploadToBackend({ title, artist, album, duration }, file).then(resolve).catch(resolve);
+              sendUploadToBackend({ title, artist, album, duration, albumArt }, file).then(resolve).catch(resolve);
           };
           audio.onerror = () => {
-              sendUploadToBackend({ title, artist, album, duration: 0 }, file).then(resolve).catch(resolve);
+              sendUploadToBackend({ title, artist, album, duration: 0, albumArt }, file).then(resolve).catch(resolve);
           };
           audio.src = URL.createObjectURL(file);
         }
@@ -339,9 +352,7 @@ const Playlist = React.memo(function Playlist({ queue = [], isController, socket
   
   // Use reducedMotion to skip or minimize animations
   // Smooth staggered animation for queue items
-  const queueAnimations = useMemo(() => {
-    return reducedMotion ? useStaggeredAnimation(queue, 60, 'animate-slide-in-left') : [];
-  }, [reducedMotion, queue]);
+  const { animationStates: queueAnimations } = useStaggeredAnimation(queue, { staggerDelay: 120, animationClass: 'animate-slide-in-up' });
 
   // For queue and all-tracks, use VariableSizeList and add scroll position memory logic:
   const queueListRef = useRef();
@@ -839,7 +850,7 @@ const Playlist = React.memo(function Playlist({ queue = [], isController, socket
           List={List}
           queueListRef={queueListRef}
           queueScrollRef={queueScrollRef}
-          pendingRemoveIdx={pendingRemoveIdx}
+          pendingRemoveId={pendingRemoveId}
           confirmRemove={confirmRemove}
         />
       </div>

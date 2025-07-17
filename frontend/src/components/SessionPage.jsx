@@ -159,12 +159,19 @@ function SessionPage({
   const [queue, setQueue, selectedTrackIdx, setSelectedTrackIdx, currentTrackOverride, setCurrentTrackOverride] = useQueue(socket, savedQueue, pendingTrackIdx)
 
   // Delayed removal state for swipe-to-remove animation
-  const [pendingRemoveIdx, setPendingRemoveIdx] = useState(null);
-  const handleRemove = useCallback((idx) => setPendingRemoveIdx(idx), []);
-  const confirmRemove = useCallback((idx) => {
-    setQueue(q => q.filter((_, i) => i !== idx));
-    setPendingRemoveIdx(null);
-  }, [setQueue]);
+  const [pendingRemoveId, setPendingRemoveId] = useState(null);
+  const handleRemove = useCallback((trackId) => {
+    setPendingRemoveId(trackId);
+  }, []);
+  const confirmRemove = useCallback((trackId) => {
+    if (pendingRemoveId === null) return; // Prevent double remove
+    // Find the index of the track in the queue
+    const idx = queue.findIndex(item => (item.url || item.id || item.title) === trackId);
+    if (isController && socket && idx !== -1) {
+      socket.emit('remove_from_queue', { sessionId: currentSessionId, index: idx });
+    }
+    setPendingRemoveId(null);
+  }, [setQueue, pendingRemoveId, isController, socket, currentSessionId, queue]);
 
   // Remove the useEffects that handle queue_update, track_change, and related queue/track state, as this is now in the hook
 
@@ -371,6 +378,13 @@ function SessionPage({
   // Ensure showExitModal is always defined before use
   const [showExitModal, openExitModal, closeExitModal] = useModalState(false);
 
+  // Ensure socket.sessionId is always set for AudioPlayer and related consumers
+  useEffect(() => {
+    if (socket && currentSessionId) {
+      socket.sessionId = currentSessionId;
+    }
+  }, [socket, currentSessionId]);
+
   const [copied, setCopied] = useState(false);
   const copyTimeoutRef = useRef();
   const handleCopyRoomCode = useCallback(() => {
@@ -539,7 +553,7 @@ function SessionPage({
                     sessionId={currentSessionId}
                     onSelectTrack={handleSelectTrack}
                     selectedTrackIdx={selectedTrackIdx}
-                    pendingRemoveIdx={pendingRemoveIdx}
+                    pendingRemoveId={pendingRemoveId}
                     handleRemove={handleRemove}
                     confirmRemove={confirmRemove}
                   />
@@ -686,7 +700,7 @@ function SessionPage({
                     sessionId={currentSessionId}
                     onSelectTrack={handleSelectTrack}
                     selectedTrackIdx={selectedTrackIdx}
-                    pendingRemoveIdx={pendingRemoveIdx}
+                    pendingRemoveId={pendingRemoveId}
                     handleRemove={handleRemove}
                     confirmRemove={confirmRemove}
                     mobile={true}
