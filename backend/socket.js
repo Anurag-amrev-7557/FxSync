@@ -1,5 +1,5 @@
 import { getSession, createSession, deleteSession, addClient, removeClient, setController, getAllSessions, getClients, updatePlayback, updateTimestamp, getClientIdBySocket, getSocketIdByClientId, addControllerRequest, removeControllerRequest, getPendingControllerRequests, clearExpiredControllerRequests } from './managers/sessionManager.js';
-import { addToQueue, removeFromQueue, getQueue, reorderQueue } from './managers/queueManager.js';
+import { addToQueue, removeFromQueue, getQueue } from './managers/queueManager.js';
 import { formatChatMessage, formatReaction } from './managers/chatManager.js';
 import { log } from './utils/utils.js';
 import { getSessionFiles, removeSessionFiles } from './managers/fileManager.js';
@@ -76,31 +76,7 @@ export function setupSocket(io) {
   io.on('connection', (socket) => {
     console.log('Socket connected:', socket.id);
 
-      /**
-   * reorder_queue event:
-   * - Only controller can reorder.
-   * - Updates the session queue order and broadcasts to all clients.
-   * - Returns error if not allowed or invalid.
-   */
-  socket.on('reorder_queue', ({ sessionId, newQueue } = {}, callback) => {
-    if (!sessionId || !Array.isArray(newQueue)) {
-      return typeof callback === 'function' && callback({ error: 'Invalid input' });
-    }
-    const session = getSession(sessionId);
-    if (!session) return typeof callback === 'function' && callback({ error: 'Session not found' });
-    const clientId = getClientIdBySocket(sessionId, socket.id);
-    if (session.controllerClientId !== clientId) return typeof callback === 'function' && callback({ error: 'Not allowed' });
-    // Defensive: Only reorder tracks that exist in the current queue (by url)
-    const currentQueue = getQueue(sessionId) || [];
-    const currentUrls = new Set(currentQueue.map(t => t.url));
-    const filteredNewQueue = newQueue.filter(t => t && currentUrls.has(t.url));
-    if (filteredNewQueue.length !== currentQueue.length) {
-      return typeof callback === 'function' && callback({ error: 'Invalid queue reorder' });
-    }
-    reorderQueue(sessionId, filteredNewQueue);
-    io.to(sessionId).emit('queue_update', filteredNewQueue);
-    if (typeof callback === 'function') callback({ success: true, queue: filteredNewQueue });
-  });
+
 
     socket.on('join_session', ({ sessionId, displayName, deviceInfo, clientId } = {}, callback) => {
       // Input validation

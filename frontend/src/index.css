@@ -59,6 +59,119 @@ html, body {
   background: #525252;
 }
 
+/* Horizontal scrollbar styles */
+::-webkit-scrollbar:horizontal {
+  height: 6px;
+}
+
+::-webkit-scrollbar-track:horizontal {
+  background: #262626;
+}
+
+::-webkit-scrollbar-thumb:horizontal {
+  background: #404040;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:horizontal:hover {
+  background: #525252;
+}
+
+/* Theme selector horizontal scroll improvements */
+.theme-scroll-container {
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: #525252 #262626;
+}
+
+.theme-scroll-container::-webkit-scrollbar {
+  height: 4px;
+}
+
+.theme-scroll-container::-webkit-scrollbar-track {
+  background: #262626;
+  border-radius: 2px;
+}
+
+.theme-scroll-container::-webkit-scrollbar-thumb {
+  background: #525252;
+  border-radius: 2px;
+}
+
+.theme-scroll-container::-webkit-scrollbar-thumb:hover {
+  background: #737373;
+}
+
+/* Mobile-specific improvements */
+@media (max-width: 640px) {
+  /* Better touch targets */
+  .touch-manipulation {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  
+  /* Improved modal scrolling */
+  .modal-content {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+  
+  /* Better button sizing for mobile */
+  button {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  
+  /* Improved input sizing */
+  input[type="color"] {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  
+  /* Better range slider for mobile */
+  input[type="range"] {
+    min-height: 44px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: transparent;
+    cursor: pointer;
+  }
+  
+  input[type="range"]::-webkit-slider-track {
+    background: #262626;
+    height: 8px;
+    border-radius: 4px;
+  }
+  
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 20px;
+    width: 20px;
+    border-radius: 50%;
+    background: #525252;
+    cursor: pointer;
+    border: none;
+  }
+  
+  input[type="range"]::-webkit-slider-thumb:hover {
+    background: #737373;
+  }
+  
+  /* Better file input styling for mobile */
+  input[type="file"] {
+    min-height: 44px;
+  }
+  
+  /* Improved select dropdown for mobile */
+  select {
+    min-height: 44px;
+    padding: 12px;
+  }
+}
+
 /* Selection styles */
 ::selection {
   background-color: #075985;

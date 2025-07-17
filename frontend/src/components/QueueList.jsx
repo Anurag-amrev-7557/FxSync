@@ -1,5 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
-import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
+import React, { useCallback, useMemo, useState, useRef } from 'react';
 import { MusicIcon, RemoveIcon } from './Icons';
 
 // Helper to format duration (e.g., 90 -> 1:30)
@@ -13,10 +12,7 @@ function formatDuration(duration) {
   return `${min}:${sec.toString().padStart(2, '0')}`;
 }
 
-// Helper to get padding class based on dragging state
-function getPaddingClass(isDragging) {
-  return isDragging ? 'p-2' : 'p-4';
-}
+
 
 // Memoized Track Row for performance
 const TrackRow = React.memo(function TrackRow({
@@ -28,11 +24,9 @@ const TrackRow = React.memo(function TrackRow({
   handleRemove,
   loading,
   isController,
-  draggableProps,
-  dragHandleProps,
-  innerRef,
-  isDragging,
   disableRemove,
+  pendingRemoveIdx,
+  confirmRemove,
 }) {
   const isSelected = selectedTrackIdx === idx;
   const animationClass = queueAnimations[idx]?.animationClass || '';
@@ -44,7 +38,13 @@ const TrackRow = React.memo(function TrackRow({
   const [swiping, setSwiping] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [shouldAnimateBack, setShouldAnimateBack] = useState(false);
+  const [swipeDirection, setSwipeDirection] = useState(null); // Store direction for removal animation
+  const [removalDirection, setRemovalDirection] = useState(null); // Separate state for removal direction
+  const removalPositionRef = useRef(null); // Direct ref for removal position
   const swipeThreshold = 80; // px
+  const removalSwipeX = useRef(null);
+  const [removalKey, setRemovalKey] = useState(0);
+  const lockedRemovalDirection = useRef(null);
 
   // Only enable swipe on mobile
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 640;
@@ -54,6 +54,9 @@ const TrackRow = React.memo(function TrackRow({
     if (e.touches && e.touches.length === 1) {
       setTouchStartX(e.touches[0].clientX);
       setSwiping(true);
+      setSwipeDirection(null); // Reset direction
+      setRemovalDirection(null); // Reset removal direction
+      removalPositionRef.current = null; // Reset removal position
     }
   };
 
@@ -62,6 +65,10 @@ const TrackRow = React.memo(function TrackRow({
     if (e.touches && e.touches.length === 1 && touchStartX !== null) {
       const deltaX = e.touches[0].clientX - touchStartX;
       setTouchDeltaX(deltaX);
+      // Set direction as soon as there is any movement
+      if (deltaX !== 0) {
+        setSwipeDirection(deltaX > 0 ? 'right' : 'left');
+      }
     }
   };
 
@@ -71,13 +78,31 @@ const TrackRow = React.memo(function TrackRow({
       setTouchDeltaX(0);
       setSwiping(false);
       setShouldAnimateBack(false);
+      setSwipeDirection(null);
+      setRemovalDirection(null);
+      removalPositionRef.current = null;
+      removalSwipeX.current = null;
       return;
     }
     if (Math.abs(touchDeltaX) > swipeThreshold) {
+      // Store direction before clearing touchDeltaX
+      const finalDirection = touchDeltaX > 0 ? 'right' : 'left';
+      setSwipeDirection(finalDirection);
+      setRemovalDirection(finalDirection); // Set removal direction
+      // Set removal position directly in ref to avoid state timing issues
+      removalPositionRef.current = finalDirection === 'right' ? 500 : -500;
+      removalSwipeX.current = removalPositionRef.current; // <--- set local ref
       setRemoving(true);
+      setRemovalKey(k => k + 1); // <--- force re-render
       setTimeout(() => {
         handleRemove(idx);
         setRemoving(false);
+        setSwipeDirection(null);
+        setRemovalDirection(null);
+        removalPositionRef.current = null;
+        removalSwipeX.current = null; // <--- clear after animation
+        setTouchDeltaX(0);
+        setRemovalKey(k => k + 1); // <--- force re-render
       }, 200); // allow animation
     } else {
       // Animate back to position
@@ -85,16 +110,28 @@ const TrackRow = React.memo(function TrackRow({
       setTimeout(() => {
         setShouldAnimateBack(false);
         setTouchDeltaX(0);
+        setSwipeDirection(null);
+        setRemovalDirection(null);
+        removalPositionRef.current = null;
+        removalSwipeX.current = null;
+        setRemovalKey(k => k + 1); // <--- force re-render
       }, 250);
     }
     setTouchStartX(null);
     setSwiping(false);
   };
 
-  // Style for swipe translation
-  let swipeX = touchDeltaX;
-  if (removing) swipeX = touchDeltaX > 0 ? 500 : -500;
-  if (shouldAnimateBack) swipeX = 0;
+  // Style for swipe translation - completely isolate removal animation
+  let swipeX = 0;
+  if (removing && removalSwipeX.current !== null) {
+    swipeX = removalSwipeX.current;
+  } else if (removing && removalPositionRef.current !== null) {
+    swipeX = removalPositionRef.current;
+  } else if (shouldAnimateBack) {
+    swipeX = 0;
+  } else if (swiping) {
+    swipeX = touchDeltaX;
+  }
 
   const swipeStyle = isMobile && (swiping || removing || shouldAnimateBack)
     ? {
@@ -115,8 +152,31 @@ const TrackRow = React.memo(function TrackRow({
   // Only show red background if user has actually swiped (not just tapped)
   const hasSwiped = Math.abs(touchDeltaX) > 10;
 
-  // Direction for icon/text
-  const swipeDirection = touchDeltaX > 0 ? 'right' : 'left';
+  const iconDirection = (removing && lockedRemovalDirection.current)
+    ? lockedRemovalDirection.current
+    : swipeDirection;
+
+  React.useEffect(() => {
+    if (pendingRemoveIdx === idx) {
+      setRemoving(true);
+      const direction = iconDirection;
+      setRemovalDirection(direction);
+      lockedRemovalDirection.current = direction; // lock the direction
+      removalPositionRef.current = direction === 'right' ? 500 : -500;
+      removalSwipeX.current = removalPositionRef.current;
+      setRemovalKey(k => k + 1); // Force re-render to trigger animation
+      setTimeout(() => {
+        confirmRemove(idx);
+        setRemoving(false);
+        setSwipeDirection(null);
+        setRemovalDirection(null);
+        removalPositionRef.current = null;
+        removalSwipeX.current = null;
+        lockedRemovalDirection.current = null;
+        setRemovalKey(k => k + 1); // Force re-render
+      }, 200); // Allow animation
+    }
+  }, [pendingRemoveIdx, idx, iconDirection, confirmRemove]);
 
   return (
     <div
@@ -130,22 +190,19 @@ const TrackRow = React.memo(function TrackRow({
           style={{ background: 'rgba(239, 68, 68, 0.15)', zIndex: 1 }}
         >
           {/* Left side icon/text */}
-          <span style={{ opacity: swipeDirection === 'left' ? 0 : 1, transition: 'opacity 0.2s' }}>
+          <span style={{ opacity: iconDirection === 'right' ? 1 : 0, transition: 'opacity 0.2s' }}>
             <svg width="24" height="24" fill="none" viewBox="0 0 24 24"><path d="M7 18c0 1.104.896 2 2 2h6c1.104 0 2-.896 2-2V8H7v10zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" fill="#ef4444"/></svg>
           </span>
           {/* Right side icon/text */}
-          <span style={{ opacity: swipeDirection === 'right' ? 0 : 1, transition: 'opacity 0.2s' }}>
+          <span style={{ opacity: iconDirection === 'left' ? 1 : 0, transition: 'opacity 0.2s' }}>
             <svg width="24" height="24" fill="none" viewBox="0 0 24 24"><path d="M7 18c0 1.104.896 2 2 2h6c1.104 0 2-.896 2-2V8H7v10zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" fill="#ef4444"/></svg>
           </span>
         </div>
       )}
       {/* Swipable item */}
       <div
-        ref={innerRef}
-        {...draggableProps}
-        {...dragHandleProps}
-        className={`p-3 sm:p-4 h-20 sm:h-20 border-l-4 border-transparent hover:bg-primary/20 focus:bg-primary/30 transition-all duration-300 group cursor-pointer outline-none ${animationClass} ${isSelected ? 'border-primary bg-primary/20' : ''} ${isDragging ? 'bg-primary/30' : ''} ${isMobile && (swiping || removing) ? 'hide-scrollbar' : ''}`}
-        style={swipeStyle || (draggableProps && draggableProps.style ? draggableProps.style : undefined)}
+        className={`p-3 sm:p-4 h-20 sm:h-20 border-l-4 border-transparent hover:bg-primary/20 focus:bg-primary/30 transition-all duration-300 group cursor-pointer outline-none ${animationClass} ${isSelected ? 'border-primary bg-primary/20' : ''} ${isMobile && (swiping || removing) ? 'hide-scrollbar' : ''}`}
+        style={swipeStyle}
         onClick={() => onSelectTrack && onSelectTrack(idx)}
         onKeyDown={e => {
           if (e.key === 'Enter' || e.key === ' ') {
@@ -170,6 +227,7 @@ const TrackRow = React.memo(function TrackRow({
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1 sm:gap-2 mb-0.5 sm:mb-1">
+              
               <h4
                 className={`truncate transition-all duration-300 ${
                   isSelected
@@ -288,7 +346,7 @@ const EqualizerBars = React.memo(function EqualizerBars() {
           width: 2.5px;
           margin: 0 1px;
           background: #fff;
-          border-radius: 2px;
+          border-radius: 5rem;
           opacity: 0.97;
           height: 60%;
           animation: eq-bar-bounce-bw 1.1s infinite cubic-bezier(0.4,0,0.2,1);
@@ -321,10 +379,10 @@ function QueueList({
   List,
   queueListRef,
   queueScrollRef,
-  onReorder,
+  pendingRemoveIdx,
+  confirmRemove,
 }) {
   // All hooks must be called before any early return
-  const [isDragging, setIsDragging] = useState(false);
   const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' ? window.innerWidth < 640 : false);
 
   // Update isMobile on resize
@@ -334,35 +392,6 @@ function QueueList({
     }
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, []);
-
-  const onDragEnd = useCallback((result) => {
-    setIsDragging(false);
-    if (!result || !result.destination) return;
-    const { source, destination } = result;
-    if (source.index === destination.index) return;
-    if (
-      source.index < 0 ||
-      source.index >= queue.length ||
-      destination.index < 0 ||
-      destination.index > queue.length
-    ) {
-      return;
-    }
-    // Defensive: avoid mutating original queue
-    const newQueue = queue.slice();
-    const [movedTrack] = newQueue.splice(source.index, 1);
-    newQueue.splice(destination.index, 0, movedTrack);
-    if (onReorder && typeof onReorder === 'function') {
-      // Only call if the queue actually changed
-      if (JSON.stringify(newQueue.map(t => t.url)) !== JSON.stringify(queue.map(t => t.url))) {
-        onReorder(newQueue);
-      }
-    }
-  }, [queue, onReorder]);
-
-  const onDragStart = useCallback(() => {
-    setIsDragging(true);
   }, []);
 
   // Memoize queue rendering for performance
@@ -378,10 +407,12 @@ function QueueList({
         handleRemove={handleRemove}
         loading={loading}
         isController={isController}
-        disableRemove={isDragging}
+        disableRemove={false}
+        pendingRemoveIdx={pendingRemoveIdx}
+        confirmRemove={confirmRemove}
       />
     ))
-  ), [queue, queueAnimations, selectedTrackIdx, onSelectTrack, handleRemove, loading, isController, isDragging]);
+  ), [queue, queueAnimations, selectedTrackIdx, onSelectTrack, handleRemove, loading, isController, pendingRemoveIdx, confirmRemove]);
 
   // Now do early return
   if (!queue || queue.length === 0) {
@@ -398,50 +429,7 @@ function QueueList({
     );
   }
 
-  // Controller: drag-and-drop enabled only on desktop
-  if (isController && !isMobile) {
-    return (
-      <DragDropContext onDragEnd={onDragEnd} onDragStart={onDragStart}>
-        <Droppable droppableId="queue-list-droppable">
-          {(provided) => (
-            <div
-              ref={provided.innerRef}
-              {...provided.droppableProps}
-              className="divide-y divide-neutral-800 scrollable-container max-h-[60vh] sm:max-h-[70vh] overflow-y-auto"
-              tabIndex={0}
-              aria-label="Queue list"
-              data-testid="queue-list"
-            >
-              {queue.map((item, idx) => (
-                <Draggable key={item.url ? item.url : `queue-track-${idx}`} draggableId={item.url ? String(item.url) : `queue-track-${idx}`} index={idx}>
-                  {(draggableProvided, snapshot) => (
-                    <TrackRow
-                      item={item}
-                      idx={idx}
-                      selectedTrackIdx={selectedTrackIdx}
-                      queueAnimations={queueAnimations}
-                      onSelectTrack={onSelectTrack}
-                      handleRemove={handleRemove}
-                      loading={loading}
-                      isController={isController}
-                      draggableProps={draggableProvided.draggableProps}
-                      dragHandleProps={draggableProvided.dragHandleProps}
-                      innerRef={draggableProvided.innerRef}
-                      isDragging={snapshot.isDragging}
-                      disableRemove={isDragging}
-                    />
-                  )}
-                </Draggable>
-              ))}
-              {provided.placeholder}
-            </div>
-          )}
-        </Droppable>
-      </DragDropContext>
-    );
-  }
-
-  // Non-controller: no drag-and-drop, but still memoized
+  // Single non-drag version for all users
   return (
     <div
       ref={el => {
@@ -466,7 +454,9 @@ function QueueList({
           handleRemove={handleRemove}
           loading={loading}
           isController={isController}
-          disableRemove={isDragging}
+          disableRemove={false}
+          pendingRemoveIdx={pendingRemoveIdx}
+          confirmRemove={confirmRemove}
         />
       ))}
     </div>

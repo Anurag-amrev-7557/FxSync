@@ -83,7 +83,7 @@ function ExitRoomModal({ isOpen, onClose, onConfirm, roomName }) {
     <div
       ref={modalRef}
       tabIndex={-1}
-      className={`fixed inset-0 bg-black/70 backdrop-blur-[3px] flex items-center justify-center z-50
+      className={`fixed inset-0 bg-black/80 flex items-center justify-center z-50 transition-all duration-300
         ${exiting ? 'animate-fade-out-fast' : 'animate-fade-in-fast'}`}
       aria-modal="true"
       role="dialog"
@@ -93,14 +93,14 @@ function ExitRoomModal({ isOpen, onClose, onConfirm, roomName }) {
       <div
         className={`
           relative
-          bg-gradient-to-br from-neutral-900/95 to-neutral-950/95
-          border border-neutral-700/60
-          rounded-2xl
+          bg-neutral-950
+          border border-neutral-800
+          rounded-xl
           p-4 sm:p-6 md:p-8
           w-full
           max-w-[95vw] sm:max-w-md md:max-w-lg
           mx-2 sm:mx-4
-          shadow-2xl
+          shadow-none
           overflow-hidden
           ${exiting
             ? 'animate-[modal-pop-out_0.4s_cubic-bezier(0.22,1,0.36,1)_forwards]'
@@ -113,306 +113,57 @@ function ExitRoomModal({ isOpen, onClose, onConfirm, roomName }) {
           animationFillMode: exiting ? 'forwards' : undefined,
         }}
       >
-        {/* Decorative Glow */}
-        <div className={`
-          absolute
-          -top-10 -right-10
-          w-32 h-32 sm:w-40 sm:h-40
-          bg-red-600/10 rounded-full blur-3xl pointer-events-none
-          ${exiting ? 'animate-[fade-out-glow_0.4s_ease_forwards]' : 'animate-[fade-in-glow_0.7s_ease]'}
-        `} />
         {/* Header */}
-        <div className={`
-          flex flex-col sm:flex-row items-center gap-4 sm:gap-5 mb-5 sm:mb-7
-          ${exiting ? 'animate-[slide-up-fade-out_0.35s_0.05s_forwards]' : 'animate-[slide-down-fade_0.5s_0.08s_both]'}
-        `}>
-          <div className={`
-            w-12 h-12 sm:w-14 sm:h-14
-            bg-gradient-to-br from-red-500/30 to-red-700/30
-            rounded-2xl flex items-center justify-center border-2 border-red-500/40 shadow-lg
-            ${exiting ? 'animate-[pop-out_0.35s_0.13s_forwards]' : 'animate-[pop-in_0.5s_0.13s_both]'}
-          `}>
-            <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-red-400 drop-shadow-glow">
+        <div className="flex items-center gap-3 mb-5 sm:mb-7">
+          <div className="w-10 h-10 flex items-center justify-center bg-neutral-900 border border-neutral-800 rounded-lg">
+            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="text-white">
               <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
               <polyline points="16,17 21,12 16,7"></polyline>
               <line x1="21" y1="12" x2="9" y2="12"></line>
             </svg>
           </div>
-          <div className="flex-1 w-full">
-            <h3 id="exit-room-title" className="text-xl sm:text-2xl font-extrabold text-white mb-1 tracking-tight flex items-center gap-2">
-              Exit Room
-              <span className="inline-block w-2 h-2 bg-red-500 rounded-full animate-pulse" />
-            </h3>
-            <p className="text-sm sm:text-base text-neutral-400 font-medium">Are you sure you want to leave this session?</p>
+          <div className="flex-1">
+            <h3 id="exit-room-title" className="text-lg sm:text-xl font-bold text-white mb-0 tracking-tight">Exit Room</h3>
+            <p className="text-xs sm:text-sm text-neutral-400 font-normal mt-1">Are you sure you want to leave this session?</p>
           </div>
         </div>
-        
         {/* Room Info */}
-        <div className={`
-          bg-gradient-to-r from-neutral-800/70 to-neutral-700/40
-          rounded-xl
-          p-3 sm:p-5
-          mb-5 sm:mb-7
-          border border-neutral-600/40 shadow-inner
-          flex flex-col gap-2
-          ${exiting ? 'animate-[slide-down-fade-out_0.35s_0.18s_forwards]' : 'animate-[slide-up-fade_0.5s_0.18s_both]'}
-        `}>
-          <div className="flex items-center gap-2 sm:gap-3 mb-1">
-            <div className={`
-              w-8 h-8 sm:w-9 sm:h-9
-              bg-primary/30 rounded-lg flex items-center justify-center shadow
-              ${exiting ? 'animate-[pop-out_0.35s_0.22s_forwards]' : 'animate-[pop-in_0.5s_0.22s_both]'}
-            `}>
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
-                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
-                <circle cx="9" cy="7" r="4"></circle>
-                <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
-                <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
-              </svg>
-            </div>
-            <div>
-              <p className="text-sm sm:text-base font-semibold text-neutral-200">
-                <span className="text-neutral-400 font-normal">Room:</span> <span className="text-primary">{roomName}</span>
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 text-xs text-neutral-500 mt-1">
-            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="opacity-80">
-              <circle cx="12" cy="12" r="10"></circle>
-              <polyline points="12,6 12,12 16,14"></polyline>
-            </svg>
-            <span>You'll be taken back to the <span className="text-white font-semibold">home page</span></span>
-          </div>
+        <div className="bg-neutral-900 rounded-lg p-3 sm:p-4 mb-5 sm:mb-7 border border-neutral-800 flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-400">
+            <circle cx="9" cy="7" r="4"></circle>
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+          </svg>
+          <span className="text-xs sm:text-sm text-neutral-300"><span className="text-neutral-500">Room:</span> <span className="text-white font-mono">{roomName}</span></span>
         </div>
-        
         {/* Action Buttons */}
-        <div className={`
-          flex flex-row gap-3 sm:gap-4 mt-2
-          ${exiting ? 'animate-[fade-out_0.3s_0.32s_forwards]' : 'animate-[fade-in_0.5s_0.32s_both]'}
-        `}>
+        <div className="flex flex-row gap-2 mt-2">
           <button
             onClick={handleClose}
-            className="flex-1 flex items-center justify-center gap-2 px-4 py-3 sm:px-5 sm:py-3 bg-neutral-800/90 hover:bg-neutral-700/90 text-white rounded-xl transition-all duration-200 hover:shadow-lg hover:scale-[1.03] font-semibold border border-neutral-700/60 focus:outline-none focus:ring-2 focus:ring-primary/40"
+            className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-white rounded-lg transition-all duration-150 border border-neutral-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30 text-sm font-medium"
             autoFocus
             disabled={exiting}
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18"></line>
-              <line x1="6" y1="6" x2="18" y2="18"></line>
-            </svg>
-            <span>Cancel</span>
+            Cancel
           </button>
           <button
             onClick={handleConfirm}
-            className="flex-1 flex items-center justify-center gap-2 px-4 py-3 sm:px-5 sm:py-3 bg-gradient-to-r from-red-600 via-red-700 to-red-800 hover:from-red-700 hover:to-red-900 text-white rounded-xl transition-all duration-200 hover:shadow-xl hover:scale-[1.04] font-semibold shadow-md border border-red-700/60 focus:outline-none focus:ring-2 focus:ring-red-500/40"
+            className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-white text-black rounded-lg transition-all duration-150 border border-neutral-800 hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30 text-sm font-semibold"
             disabled={exiting}
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
-              <polyline points="16,17 21,12 16,7"></polyline>
-              <line x1="21" y1="12" x2="9" y2="12"></line>
-            </svg>
-            <span>Exit Room</span>
+            Exit Room
           </button>
         </div>
-        {/* Subtle bottom fade */}
-        <div className={`
-          absolute left-0 right-0 bottom-0 h-6 sm:h-8
-          bg-gradient-to-t from-black/40 to-transparent pointer-events-none rounded-b-2xl
-          ${exiting ? 'animate-[fade-out_0.3s_0.4s_forwards]' : 'animate-[fade-in_0.7s_0.4s_both]'}
-        `} />
       </div>
-      {/* Custom keyframes for entrance and exit animations, plus responsive tweaks */}
-      <style>
-        {`
+      <style>{`
         @keyframes modal-pop {
-          0% {
-            opacity: 0;
-            transform: scale(0.85) translateY(40px);
-            filter: blur(6px);
-          }
-          60% {
-            opacity: 1;
-            transform: scale(1.04) translateY(-6px);
-            filter: blur(0.5px);
-          }
-          100% {
-            opacity: 1;
-            transform: scale(1) translateY(0);
-            filter: blur(0);
-          }
+          0% { opacity: 0; transform: scale(0.92) translateY(30px); }
+          100% { opacity: 1; transform: scale(1) translateY(0); }
         }
         @keyframes modal-pop-out {
-          0% {
-            opacity: 1;
-            transform: scale(1) translateY(0);
-            filter: blur(0);
-          }
-          60% {
-            opacity: 1;
-            transform: scale(1.04) translateY(-6px);
-            filter: blur(0.5px);
-          }
-          100% {
-            opacity: 0;
-            transform: scale(0.85) translateY(40px);
-            filter: blur(6px);
-          }
+          0% { opacity: 1; transform: scale(1) translateY(0); }
+          100% { opacity: 0; transform: scale(0.92) translateY(30px); }
         }
-        @keyframes pop-in {
-          0% {
-            opacity: 0;
-            transform: scale(0.7) rotate(-8deg);
-            filter: blur(4px);
-          }
-          80% {
-            opacity: 1;
-            transform: scale(1.08) rotate(2deg);
-            filter: blur(0.5px);
-          }
-          100% {
-            opacity: 1;
-            transform: scale(1) rotate(0deg);
-            filter: blur(0);
-          }
-        }
-        @keyframes pop-out {
-          0% {
-            opacity: 1;
-            transform: scale(1) rotate(0deg);
-            filter: blur(0);
-          }
-          80% {
-            opacity: 1;
-            transform: scale(1.08) rotate(2deg);
-            filter: blur(0.5px);
-          }
-          100% {
-            opacity: 0;
-            transform: scale(0.7) rotate(-8deg);
-            filter: blur(4px);
-          }
-        }
-        @keyframes slide-down-fade {
-          0% {
-            opacity: 0;
-            transform: translateY(-32px) scale(0.98);
-            filter: blur(4px);
-          }
-          80% {
-            opacity: 1;
-            transform: translateY(4px) scale(1.01);
-            filter: blur(0.5px);
-          }
-          100% {
-            opacity: 1;
-            transform: translateY(0) scale(1);
-            filter: blur(0);
-          }
-        }
-        @keyframes slide-up-fade {
-          0% {
-            opacity: 0;
-            transform: translateY(32px) scale(0.98);
-            filter: blur(4px);
-          }
-          80% {
-            opacity: 1;
-            transform: translateY(-4px) scale(1.01);
-            filter: blur(0.5px);
-          }
-          100% {
-            opacity: 1;
-            transform: translateY(0) scale(1);
-            filter: blur(0);
-          }
-        }
-        @keyframes slide-down-fade-out {
-          0% {
-            opacity: 1;
-            transform: translateY(0) scale(1);
-            filter: blur(0);
-          }
-          80% {
-            opacity: 1;
-            transform: translateY(4px) scale(1.01);
-            filter: blur(0.5px);
-          }
-          100% {
-            opacity: 0;
-            transform: translateY(-32px) scale(0.98);
-            filter: blur(4px);
-          }
-        }
-        @keyframes slide-up-fade-out {
-          0% {
-            opacity: 1;
-            transform: translateY(0) scale(1);
-            filter: blur(0);
-          }
-          80% {
-            opacity: 1;
-            transform: translateY(-4px) scale(1.01);
-            filter: blur(0.5px);
-          }
-          100% {
-            opacity: 0;
-            transform: translateY(32px) scale(0.98);
-            filter: blur(4px);
-          }
-        }
-        @keyframes fade-in {
-          0% {
-            opacity: 0;
-            filter: blur(4px);
-          }
-          100% {
-            opacity: 1;
-            filter: blur(0);
-          }
-        }
-        @keyframes fade-out {
-          0% {
-            opacity: 1;
-            filter: blur(0);
-          }
-          100% {
-            opacity: 0;
-            filter: blur(4px);
-          }
-        }
-        @keyframes fade-in-glow {
-          0% {
-            opacity: 0;
-            transform: scale(0.8);
-            filter: blur(12px);
-          }
-          100% {
-            opacity: 1;
-            transform: scale(1);
-            filter: blur(0);
-          }
-        }
-        @keyframes fade-out-glow {
-          0% {
-            opacity: 1;
-            transform: scale(1);
-            filter: blur(0);
-          }
-          100% {
-            opacity: 0;
-            transform: scale(0.8);
-            filter: blur(12px);
-          }
-        }
-        /* Responsive font and layout tweaks for mobile */
-        @media (max-width: 640px) {
-          #exit-room-title {
-            font-size: 1.15rem !important;
-          }
-        }
-        `}
-      </style>
+      `}</style>
     </div>
   )
 }

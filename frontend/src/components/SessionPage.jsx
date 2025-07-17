@@ -158,6 +158,14 @@ function SessionPage({
   // After loading savedQueue:
   const [queue, setQueue, selectedTrackIdx, setSelectedTrackIdx, currentTrackOverride, setCurrentTrackOverride] = useQueue(socket, savedQueue, pendingTrackIdx)
 
+  // Delayed removal state for swipe-to-remove animation
+  const [pendingRemoveIdx, setPendingRemoveIdx] = useState(null);
+  const handleRemove = useCallback((idx) => setPendingRemoveIdx(idx), []);
+  const confirmRemove = useCallback((idx) => {
+    setQueue(q => q.filter((_, i) => i !== idx));
+    setPendingRemoveIdx(null);
+  }, [setQueue]);
+
   // Remove the useEffects that handle queue_update, track_change, and related queue/track state, as this is now in the hook
 
   // When queue changes, reset selected track if needed
@@ -363,6 +371,21 @@ function SessionPage({
   // Ensure showExitModal is always defined before use
   const [showExitModal, openExitModal, closeExitModal] = useModalState(false);
 
+  const [copied, setCopied] = useState(false);
+  const copyTimeoutRef = useRef();
+  const handleCopyRoomCode = useCallback(() => {
+    if (!currentSessionId) return;
+    navigator.clipboard.writeText(currentSessionId);
+    setCopied(true);
+    if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
+    copyTimeoutRef.current = setTimeout(() => setCopied(false), 1200);
+  }, [currentSessionId]);
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
+    };
+  }, []);
+
   return (
     <div className="min-h-screen bg-neutral-950 text-white">
       {!currentSessionId ? (
@@ -512,6 +535,9 @@ function SessionPage({
                     sessionId={currentSessionId}
                     onSelectTrack={handleSelectTrack}
                     selectedTrackIdx={selectedTrackIdx}
+                    pendingRemoveIdx={pendingRemoveIdx}
+                    handleRemove={handleRemove}
+                    confirmRemove={confirmRemove}
                   />
                 }
                 rightPanel={
@@ -543,27 +569,50 @@ function SessionPage({
 
           {/* Mobile Layout */}
           <div className="flex flex-col h-screen md:hidden">
-            {/* Header (reuse, but smaller padding) */}
-            <header className="flex items-center justify-between p-2 border-b border-neutral-800 bg-neutral-900/50 backdrop-blur-sm">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            {/* Header (compact for mobile) */}
+            <header className="flex items-center justify-between p-1 border-b border-neutral-800 bg-neutral-900/70 backdrop-blur-sm min-h-[38px]">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 bg-primary rounded flex items-center justify-center">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M9 18V5l12-2v13"></path>
                     <circle cx="6" cy="18" r="3"></circle>
                     <circle cx="18" cy="16" r="3"></circle>
                   </svg>
                 </div>
-                <div>
-                  <h1 className="text-lg font-semibold text-white">FxSync</h1>
-                  <p className="text-xs text-neutral-400">Room: {currentSessionId}</p>
+                <div className='flex items-center gap-1'>
+                  <h1 className="text-base font-semibold text-white leading-none">FxSync</h1>
                 </div>
               </div>
               <button
+                type="button"
+                onClick={handleCopyRoomCode}
+                className={`relative text-[11px] leading-none transition-all duration-300 px-2 py-1 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-primary
+                  ${copied ? 'text-green-600' : 'text-neutral-400 hover:text-primary hover:bg-primary/5 active:scale-97'}`}
+                title="Copy room code"
+                aria-label="Copy room code"
+                style={{
+                  background: copied ? 'linear-gradient(90deg, rgba(34,197,94,0.08) 0%, rgba(34,197,94,0.13) 100%)' : undefined,
+                  borderBottom: copied ? '2px solid #22c55e' : '2px solid transparent',
+                  transition: 'background 0.3s, border-bottom 0.3s, color 0.3s, transform 0.2s',
+                }}
+              >
+                <span className={`inline-flex items-center gap-1 transition-all duration-300 ${copied ? 'scale-105 opacity-100' : 'opacity-90'}`}>
+                  {copied ? (
+                    <>
+                      <svg className="inline-block" width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="#22c55e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 10l4 4 6-6"/></svg>
+                      Copied!
+                    </>
+                  ) : (
+                    <>Room: {currentSessionId}</>
+                  )}
+                </span>
+              </button>
+              <button
                 onClick={handleExitRoom}
-                className="flex items-center gap-2 px-3 py-1.5 text-xs text-red-400 hover:text-red-300 hover:bg-red-500/10 border border-red-500/30 hover:border-red-500/50 rounded-lg transition-all duration-200 hover:shadow-md"
+                className="flex items-center gap-1 px-2 py-1 text-[11px] text-red-400 hover:text-red-300 hover:bg-red-500/10 border border-red-500/30 hover:border-red-500/50 rounded transition-all duration-200"
                 title="Exit room"
               >
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
                   <polyline points="16,17 21,12 16,7"></polyline>
                   <line x1="21" y1="12" x2="9" y2="12"></line>
@@ -629,6 +678,10 @@ function SessionPage({
                     sessionId={currentSessionId}
                     onSelectTrack={handleSelectTrack}
                     selectedTrackIdx={selectedTrackIdx}
+                    pendingRemoveIdx={pendingRemoveIdx}
+                    handleRemove={handleRemove}
+                    confirmRemove={confirmRemove}
+                    mobile={true}
                   />
                   {/* Floating AudioPlayer at bottom for Playlist tab */}
                   <div className="fixed left-0 right-0 bottom-20 z-30 flex justify-center pointer-events-none">

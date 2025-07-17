@@ -115,11 +115,7 @@ function UploadForm({
               <UploadIcon />
               {uploading ? 'Uploading...' : 'Upload'}
             </button>
-            {selectedFiles.length > 0 && !uploading && (
-              <span className="text-xs text-neutral-400 truncate max-w-full sm:max-w-[180px] text-center mt-1">
-                {selectedFiles.map(f => f.name).join(', ')}
-              </span>
-            )}
+
             {uploading && (
               <div className="w-full sm:w-40 mt-2">
                 <div className="h-2 bg-neutral-700 rounded-full overflow-hidden">

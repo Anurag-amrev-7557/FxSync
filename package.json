@@ -1,6 +1,5 @@
 {
   "dependencies": {
-    "@hello-pangea/dnd": "^18.0.1",
     "axios": "^1.10.0",
     "clamscan": "^2.4.0",
     "express-rate-limit": "^8.0.0",

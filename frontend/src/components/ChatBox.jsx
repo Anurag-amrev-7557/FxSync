@@ -31,6 +31,10 @@ const EMOJIS = [
   '💩', '🤑', '🤠', '🥸', '🤡', '👾', '🫶', '💯'
 ];
 
+// Constants for image upload validation
+const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif'];
+const MAX_IMAGE_SIZE_MB = 3;
+
 const predefinedThemes = [
   {
     name: "Classic Dark",
@@ -211,6 +215,24 @@ const predefinedThemes = [
     text: "#e0e0e0",
     bubbleText: "#fff", // White text for dark bubble
     bgImage: "",
+    font: "Inter, sans-serif"
+  },
+  {
+    name: "WhatsApp Doodle",
+    bg: "#e5ddd5",
+    bubble: "#ffffff",
+    text: "#000000",
+    bubbleText: "#000000", // Dark text for light bubble
+    bgImage: "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZGVmcz48cGF0dGVybiBpZD0iZG9vZGxlIiB4PSIwIiB5PSIwIiB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHBhdHRlcm5Vbml0cz0idXNlclNwYWNlT25Vc2UiPjxnIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2M4YzhjOCIgc3Ryb2tlLXdpZHRoPSIwLjUiIG9wYWNpdHk9IjAuMyI+PHBhdGggZD0iTTEwIDE1IFEyMCAxMCAyMCAxNSBUMzAgMTUiLz48cGF0aCBkPSJNMzUgMjUgUTQ1IDIwIDQ1IDI1IFQ1NSAyNSIvPjxwYXRoIGQ9Ik01IDM1IFEyMCAzMCAyMCAzNSBUMzAgMzUiLz48cGF0aCBkPSJNMzAgNDUgUTQwIDQwIDQwIDQ1IFQ1MCA0NSIvPjxwYXRoIGQ9Ik0xNSA1IFEyMCAwIDIwIDUgVDMwIDUiLz48cGF0aCBkPSJNNDAgNTUgUTUwIDUwIDUwIDU1IFQ2MCA1NSIvPjxjaXJjbGUgY3g9IjEyIiBjeT0iMjIiIHI9IjEiLz48Y2lyY2xlIGN4PSI0MiIgY3k9IjMyIiByPSIxIi8+PGNpcmNsZSBjeD0iMTgiIGN5PSI0OCIgcj0iMSIvPjxjaXJjbGUgY3g9IjQ4IiBjeT0iOCIgcj0iMSIvPjxjaXJjbGUgY3g9IjgiIGN5PSIzOCIgcj0iMSIvPjwvZz48L3BhdHRlcm4+PC9kZWZzPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9InVybCgjZG9vZGxlKSIvPjwvc3ZnPg==",
+    font: "Inter, sans-serif"
+  },
+  {
+    name: "Simple Doodle",
+    bg: "#f0f0f0",
+    bubble: "#ffffff",
+    text: "#000000",
+    bubbleText: "#000000",
+    bgImage: "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZGVmcz48cGF0dGVybiBpZD0iZG90cyIgeD0iMCIgeT0iMCIgd2lkdGg9IjQwIiBoZWlnaHQ9IjQwIiBwYXR0ZXJuVW5pdHM9InVzZXJTcGFjZU9uVXNlIj48Y2lyY2xlIGN4PSIxMCIgY3k9IjEwIiByPSIxIiBmaWxsPSIjZGRkIi8+PGNpcmNsZSBjeD0iMzAiIGN5PSIxNSIgcj0iMSIgZmlsbD0iI2RkZCIvPjxjaXJjbGUgY3g9IjUiIGN5PSIzMCIgcj0iMSIgZmlsbD0iI2RkZCIvPjxjaXJjbGUgY3g9IjM1IiBjeT0iMzUiIHI9IjEiIGZpbGw9IiNkZGQiLz48Y2lyY2xlIGN4PSIyMCIgY3k9IjUiIHI9IjEiIGZpbGw9IiNkZGQiLz48Y2lyY2xlIGN4PSIxNSIgY3k9IjI1IiByPSIxIiBmaWxsPSIjZGRkIi8+PC9wYXR0ZXJuPjwvZGVmcz48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSJ1cmwoI2RvdHMpIi8+PC9zdmc+",
     font: "Inter, sans-serif"
   }
 ];
@@ -780,6 +802,11 @@ function isHexColor(str) {
     dispatch({ type: 'SET', payload: { editingId: msg.messageId } });
     dispatch({ type: 'SET', payload: { input: msg.message } });
     dispatch({ type: 'SET', payload: { editValue: msg.message } });
+    // Focus the chat input after setting the editing state
+    // Use a longer timeout to ensure the context menu has fully closed
+    setTimeout(() => {
+      chatInputRef.current?.focus();
+    }, 200);
   };
   const handleEditChange = (e) => dispatch({ type: 'SET', payload: { editValue: e.target.value } });
   const handleEditCancel = () => {
@@ -968,7 +995,21 @@ function isHexColor(str) {
   // --- MOBILE LAYOUT ---
   if (mobile) {
     return (
-      <div className="h-full flex flex-col relative bg-neutral-950" ref={chatContainerRef}>
+      <div 
+        className="h-full flex flex-col relative" 
+        ref={chatContainerRef}
+        style={{
+          background: state.chatBgImage
+            ? `${state.chatBgColor}${state.chatBgColor ? ',' : ''} url(${state.chatBgImage})`
+            : state.selectedTheme.bgImage
+              ? `${state.chatBgColor}${state.chatBgColor ? ',' : ''} url(${state.selectedTheme.bgImage})`
+              : state.chatBgColor,
+          backgroundSize: state.chatBgImage || state.selectedTheme.bgImage ? (state.chatBgImage || state.selectedTheme.bgImage).includes('data:image/svg') ? 'auto' : 'cover' : undefined,
+          backgroundPosition: state.chatBgImage || state.selectedTheme.bgImage ? 'center' : undefined,
+          backgroundRepeat: state.chatBgImage || state.selectedTheme.bgImage ? (state.chatBgImage || state.selectedTheme.bgImage).includes('data:image/svg') ? 'repeat' : 'no-repeat' : undefined,
+          fontFamily: state.fontFamily,
+        }}
+      >
         {/* Header */}
         <div className="h-20 flex items-center px-6 border-b border-neutral-800 bg-neutral-950/95">
           <div className="flex items-center gap-2">
@@ -1331,7 +1372,16 @@ function isHexColor(str) {
               {state.contextMenu.msg.sender === clientId && !state.contextMenu.msg.reaction && isDeletable(state.contextMenu.msg) && (
                 <button
                   className="block w-full text-left px-4 py-2 font-medium hover:bg-neutral-800/80 focus:bg-neutral-800/90 focus:outline-none transition-colors duration-150 rounded-md flex items-center justify-between gap-2"
-                  onClick={() => { dispatch({ type: 'SET', payload: { menuExiting: true } }); setTimeout(() => memoizedHandleEdit(state.contextMenu.msg), 160); }}
+                  onClick={() => { 
+                    dispatch({ type: 'SET', payload: { menuExiting: true } }); 
+                    setTimeout(() => {
+                      memoizedHandleEdit(state.contextMenu.msg);
+                      // Focus the input after the edit state is set
+                      setTimeout(() => {
+                        chatInputRef.current?.focus();
+                      }, 50);
+                    }, 160); 
+                  }}
                 >
                   <span>Edit</span>
                   <FiEdit size={16} />
@@ -1369,6 +1419,216 @@ function isHexColor(str) {
             </div>
           </>
         )}
+        
+        {/* Chat Settings Modal for Mobile */}
+        {state.showChatSettings && (
+          <div className={`z-40 flex items-center justify-center bg-black/70 animate-fade-scale-in ${
+            mobile 
+              ? 'fixed inset-0 p-2' 
+              : 'absolute inset-0'
+          }`}>
+            <div className={`bg-neutral-950 rounded-xl shadow-none flex flex-col gap-0 backdrop-blur-md transition-all duration-200 overflow-hidden relative border border-neutral-800 ${
+              mobile
+                ? 'w-full max-w-sm h-[90vh] max-h-[600px]'
+                : 'w-full max-w-sm sm:max-w-md md:max-w-lg lg:max-w-xl mx-2 sm:mx-4 md:mx-8'
+            }`} style={{ maxHeight: mobile ? '90vh' : '90vh' }}>
+              {/* Header */}
+              <div className="flex items-center justify-between px-4 sm:px-5 py-4 sm:py-4 border-b border-neutral-800 bg-neutral-950 flex-shrink-0">
+                <span className="text-base sm:text-lg font-semibold text-white">Chat Appearance</span>
+                <button 
+                  className="p-2 rounded-full hover:bg-neutral-800 focus:bg-neutral-800 transition-colors touch-manipulation" 
+                  onClick={() => dispatch({ type: 'SET', payload: { showChatSettings: false } })} 
+                  title="Close"
+                  aria-label="Close settings"
+                >
+                  <FiX size={20} />
+                </button>
+              </div>
+              {/* Live Preview */}
+              <div className="px-4 sm:px-5 pt-4 sm:pt-5 pb-3 border-b border-neutral-800 flex-shrink-0">
+                <div className="mb-2 text-xs text-neutral-400 font-medium">Live Preview</div>
+                <div className="flex items-end gap-2 min-h-[44px] sm:min-h-[48px]" style={{ fontFamily: state.fontFamily }}>
+                  <div className="rounded-full w-7 h-7 sm:w-7 sm:h-7 bg-neutral-800 flex items-center justify-center text-white font-bold text-sm sm:text-base border border-neutral-700 flex-shrink-0">A</div>
+                  <div
+                    className="px-3 sm:px-3 py-2 sm:py-2 text-white flex items-center gap-2"
+                    style={{
+                      backgroundColor: state.bubbleColor,
+                      borderRadius: state.bubbleRadius,
+                      fontFamily: state.fontFamily,
+                      maxWidth: mobile ? 120 : 140,
+                      minWidth: 0,
+                    }}
+                  >
+                    <span className="text-xs sm:text-sm truncate">Sample message</span>
+                    <span className="text-[10px] sm:text-xs text-neutral-400 ml-2 flex-shrink-0">12:34</span>
+                  </div>
+                </div>
+                {/* --- CONTRAST WARNINGS --- */}
+                {(bgBubbleContrast < 4.5 || bubbleTextContrast < 4.5) && (
+                  <div className="mt-3 text-xs text-yellow-400 font-semibold flex items-start gap-2">
+                    <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" className="inline align-top mt-0.5 flex-shrink-0">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01M21 12c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9 9 4.03 9 9z"/>
+                    </svg>
+                    <span className="leading-relaxed">
+                      Warning: Your color choices may not be accessible. 
+                      {bgBubbleContrast < 4.5 && 'Background and bubble contrast is too low. '}
+                      {bubbleTextContrast < 4.5 && 'Bubble and text contrast is too low.'}
+                    </span>
+                  </div>
+                )}
+              </div>
+              {/* Settings Sections */}
+              <div className="flex flex-col gap-4 sm:gap-6 px-4 sm:px-5 py-4 sm:py-5 bg-neutral-950 overflow-y-auto flex-1 modal-content" style={{ maxHeight: mobile ? 'calc(90vh - 200px)' : 'calc(80vh - 120px)' }}>
+                {/* Themes */}
+                <div>
+                  <div className="text-xs font-semibold text-white mb-2">Themes</div>
+                  <div className="text-xs text-neutral-400 mb-3">Quickly switch between preset color themes for chat background and bubbles.</div>
+                  <div className="w-full theme-scroll-container">
+                    <div className="flex gap-3 sm:gap-3 mb-2 flex-nowrap pb-2" style={{ WebkitOverflowScrolling: 'touch', minWidth: 'max-content' }}>
+                      {predefinedThemes.map((theme) => (
+                        <div key={theme.name} className="flex flex-col items-center gap-1.5 mb-2 flex-shrink-0" style={{ minWidth: mobile ? '52px' : '48px' }}>
+                          <button
+                            className={`w-8 h-8 sm:w-7 sm:h-7 rounded-lg border-2 transition-all duration-150 focus:outline-none touch-manipulation ${state.chatBgColor === theme.bg && state.bubbleColor === theme.bubble ? 'border-white' : 'border-neutral-800'}`}
+                            style={{ background: theme.bubble }}
+                            onClick={() => applyTheme(theme)}
+                            title={theme.name}
+                            aria-label={theme.name}
+                          />
+                          <span className="text-[9px] sm:text-[10px] text-neutral-400 text-center w-12 sm:w-12 truncate leading-tight">{theme.name}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                {/* Background */}
+                <div>
+                  <div className="text-xs font-semibold text-white mb-2">Background</div>
+                  <div className="text-xs text-neutral-400 mb-3">Customize the chat background color or add an image (JPG, PNG, GIF).</div>
+                  <div className="flex items-center gap-3 sm:gap-3 mb-2 flex-wrap">
+                    <div className="flex flex-col items-center gap-1.5">
+                      <input 
+                        type="color" 
+                        value={state.chatBgColor} 
+                        onChange={e => dispatch({ type: 'SET', payload: { chatBgColor: e.target.value } })} 
+                        className="w-8 h-8 sm:w-8 sm:h-8 p-0 border-none rounded-full bg-transparent cursor-pointer touch-manipulation" 
+                        aria-label="Chat background color" 
+                      />
+                      <span className="text-[9px] sm:text-[10px] text-neutral-400">Color</span>
+                    </div>
+                    <div className="flex flex-col items-center gap-1.5">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={e => {
+                          dispatch({ type: 'SET', payload: { fileUploadError: '' } });
+                          const file = e.target.files[0];
+                          if (file) {
+                            if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+                              dispatch({ type: 'SET', payload: { fileUploadError: 'Only JPG, PNG, or GIF images are allowed.' } });
+                              return;
+                            }
+                            if (file.size > MAX_IMAGE_SIZE_MB * 1024 * 1024) {
+                              dispatch({ type: 'SET', payload: { fileUploadError: 'Image is too large (max 3MB).' } });
+                              return;
+                            }
+                            const reader = new FileReader();
+                            reader.onload = (ev) => dispatch({ type: 'SET', payload: { chatBgImage: ev.target.result } });
+                            reader.readAsDataURL(file);
+                          }
+                        }}
+                        className="block text-[10px] sm:text-xs text-neutral-400 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:bg-neutral-800 file:text-white hover:file:bg-neutral-700 touch-manipulation"
+                        aria-label="Upload chat background image"
+                      />
+                      <span className="text-[9px] sm:text-[10px] text-neutral-400">Image</span>
+                    </div>
+                    {state.fileUploadError && <div className="text-xs text-red-500 mt-2 w-full">{state.fileUploadError}</div>}
+                    {state.chatBgImage && (
+                      <button 
+                        className="ml-1 p-2 rounded-full bg-neutral-800 hover:bg-neutral-700 transition touch-manipulation" 
+                        onClick={() => dispatch({ type: 'SET', payload: { chatBgImage: '' } })} 
+                        title="Remove image"
+                        aria-label="Remove background image"
+                      >
+                        <FiX size={14} />
+                      </button>
+                    )}
+                  </div>
+                  {state.chatBgImage && (
+                    <div className="relative mt-2">
+                      <img src={state.chatBgImage} alt="Chat background preview" className="rounded-lg max-h-14 sm:max-h-16 w-full object-cover border border-neutral-800" />
+                      <span className="absolute top-1 right-2 bg-black/70 text-[9px] sm:text-[10px] text-white px-2 py-0.5 rounded-full">Preview</span>
+                    </div>
+                  )}
+                </div>
+                {/* Bubble Style */}
+                <div>
+                  <div className="text-xs font-semibold text-white mb-2">Bubble Style</div>
+                  <div className="text-xs text-neutral-400 mb-3">Adjust the color and roundness of chat bubbles for better readability.</div>
+                  <div className="flex items-center gap-3 sm:gap-3 flex-wrap">
+                    <div className="flex flex-col items-center gap-1.5">
+                      <input 
+                        type="color" 
+                        value={state.bubbleColor} 
+                        onChange={e => dispatch({ type: 'SET', payload: { bubbleColor: e.target.value } })} 
+                        className="w-8 h-8 sm:w-8 sm:h-8 p-0 border-none rounded-full bg-transparent cursor-pointer touch-manipulation" 
+                        aria-label="Bubble color" 
+                      />
+                      <span className="text-[9px] sm:text-[10px] text-neutral-400">Color</span>
+                    </div>
+                    <div className="flex flex-col items-center gap-1.5">
+                      <input 
+                        type="range" 
+                        min={8} 
+                        max={32} 
+                        value={state.bubbleRadius} 
+                        onChange={e => dispatch({ type: 'SET', payload: { bubbleRadius: Number(e.target.value) } })} 
+                        className="w-24 sm:w-24 accent-neutral-700 touch-manipulation" 
+                        aria-label="Bubble border radius" 
+                      />
+                      <span className="text-[9px] sm:text-[10px] text-neutral-400">{state.bubbleRadius}px</span>
+                    </div>
+                  </div>
+                </div>
+                {/* Font */}
+                <div>
+                  <div className="text-xs font-semibold text-white mb-2">Font</div>
+                  <div className="text-xs text-neutral-400 mb-3">Choose a font for chat messages. Affects readability and style.</div>
+                  <select
+                    value={state.fontFamily}
+                    onChange={e => dispatch({ type: 'SET', payload: { fontFamily: e.target.value } })}
+                    className="w-full bg-neutral-900 border border-neutral-800 rounded-lg p-3 sm:p-2 text-xs sm:text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/10 transition-all touch-manipulation"
+                    aria-label="Chat font"
+                  >
+                    <option value="Inter, sans-serif">Inter</option>
+                    <option value="Roboto, sans-serif">Roboto</option>
+                    <option value="Arial, sans-serif">Arial</option>
+                    <option value="Georgia, serif">Georgia</option>
+                    <option value="Courier New, monospace">Courier New</option>
+                    <option value="system-ui, sans-serif">System UI</option>
+                  </select>
+                </div>
+              </div>
+              {/* Footer */}
+              <div className="flex gap-3 justify-end px-4 sm:px-5 py-4 sm:py-4 border-t border-neutral-800 bg-neutral-950 flex-shrink-0">
+                <button
+                  className="px-4 sm:px-3 py-2 sm:py-1 text-sm sm:text-xs font-medium rounded-lg sm:rounded bg-neutral-800 text-white hover:bg-neutral-700 focus:bg-neutral-700 focus:outline-none transition-all touch-manipulation"
+                  onClick={clearChatSettings}
+                  title="Reset all chat appearance settings"
+                >
+                  Reset
+                </button>
+                <button
+                  className="px-4 sm:px-3 py-2 sm:py-1 text-sm sm:text-xs font-medium rounded-lg sm:rounded bg-white text-black hover:bg-neutral-200 focus:bg-neutral-300 focus:outline-none transition-all touch-manipulation"
+                  onClick={() => dispatch({ type: 'SET', payload: { showChatSettings: false } })}
+                  title="Close settings"
+                >
+                  Close
+                </button>
+              </div>
+              <span tabIndex={-1} aria-hidden="true" />
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -1384,10 +1644,9 @@ function isHexColor(str) {
           : state.selectedTheme.bgImage
             ? `${state.chatBgColor}${state.chatBgColor ? ',' : ''} url(${state.selectedTheme.bgImage})`
             : state.chatBgColor,
-        backgroundSize: state.chatBgImage || state.selectedTheme.bgImage ? 'cover' : undefined,
+        backgroundSize: state.chatBgImage || state.selectedTheme.bgImage ? (state.chatBgImage || state.selectedTheme.bgImage).includes('data:image/svg') ? 'auto' : 'cover' : undefined,
         backgroundPosition: state.chatBgImage || state.selectedTheme.bgImage ? 'center' : undefined,
-        backgroundRepeat: state.chatBgImage || state.selectedTheme.bgImage ? 'no-repeat' : undefined,
-        color: state.selectedTheme.text || '#fff',
+        backgroundRepeat: state.chatBgImage || state.selectedTheme.bgImage ? (state.chatBgImage || state.selectedTheme.bgImage).includes('data:image/svg') ? 'repeat' : 'no-repeat' : undefined,
         fontFamily: state.fontFamily,
       }}
     >
@@ -1730,7 +1989,16 @@ function isHexColor(str) {
             {state.contextMenu.msg.sender === clientId && !state.contextMenu.msg.reaction && isDeletable(state.contextMenu.msg) && (
               <button
                 className="block w-full text-left px-4 py-2 font-medium hover:bg-neutral-800/80 focus:bg-neutral-800/90 focus:outline-none transition-colors duration-150 rounded-md flex items-center justify-between gap-2"
-                onClick={() => { dispatch({ type: 'SET', payload: { menuExiting: true } }); setTimeout(() => memoizedHandleEdit(state.contextMenu.msg), 160); }}
+                onClick={() => { 
+                  dispatch({ type: 'SET', payload: { menuExiting: true } }); 
+                  setTimeout(() => {
+                    memoizedHandleEdit(state.contextMenu.msg);
+                    // Focus the input after the edit state is set
+                    setTimeout(() => {
+                      chatInputRef.current?.focus();
+                    }, 50);
+                  }, 160); 
+                }}
               >
                 <span>Edit</span>
                 <FiEdit size={16} />
@@ -1801,40 +2069,54 @@ function isHexColor(str) {
         </div>
       )}
       {state.showChatSettings && (
-        <div className={`inset-0 z-40 flex items-center justify-center bg-black/70 animate-fade-scale-in ${mobile ? 'fixed' : 'absolute'}`}>
-          <div className="bg-neutral-950 rounded-xl w-full max-w-sm sm:max-w-md md:max-w-lg lg:max-w-xl shadow-none flex flex-col gap-0 backdrop-blur-md transition-all duration-200 overflow-hidden relative border border-neutral-800
-            mx-2 sm:mx-4 md:mx-8" style={{ maxHeight: '90vh' }}>
+        <div className={`z-40 flex items-center justify-center bg-black/70 animate-fade-scale-in ${
+          mobile 
+            ? 'fixed inset-0 p-2' 
+            : 'absolute inset-0'
+        }`}>
+          <div className={`bg-neutral-950 rounded-xl shadow-none flex flex-col gap-0 backdrop-blur-md transition-all duration-200 overflow-hidden relative border border-neutral-800 ${
+            mobile
+              ? 'w-full max-w-sm h-[90vh] max-h-[600px]'
+              : 'w-full max-w-sm sm:max-w-md md:max-w-lg lg:max-w-xl mx-2 sm:mx-4 md:mx-8'
+          }`} style={{ maxHeight: mobile ? '90vh' : '90vh' }}>
             {/* Header */}
-            <div className="flex items-center justify-between px-3 sm:px-5 py-3 sm:py-4 border-b border-neutral-800 bg-neutral-950">
-              <span className="text-base sm:text-lg font-semibold text-white">Chat Appearance Settings</span>
-              <button className="p-2 rounded-full hover:bg-neutral-800 focus:bg-neutral-800 transition-colors" onClick={() => dispatch({ type: 'SET', payload: { showChatSettings: false } })} title="Close">
+            <div className="flex items-center justify-between px-4 sm:px-5 py-4 sm:py-4 border-b border-neutral-800 bg-neutral-950 flex-shrink-0">
+              <span className="text-base sm:text-lg font-semibold text-white">Chat Appearance</span>
+              <button 
+                className="p-2 rounded-full hover:bg-neutral-800 focus:bg-neutral-800 transition-colors touch-manipulation" 
+                onClick={() => dispatch({ type: 'SET', payload: { showChatSettings: false } })} 
+                title="Close"
+                aria-label="Close settings"
+              >
                 <FiX size={20} />
               </button>
             </div>
             {/* Live Preview */}
-            <div className="px-3 sm:px-5 pt-4 sm:pt-5 pb-2 border-b border-neutral-800">
-              <div className="mb-1 text-xs text-neutral-400 font-medium">Live Preview</div>
-              <div className="flex items-end gap-2 min-h-[40px] sm:min-h-[48px]" style={{ fontFamily: state.fontFamily }}>
-                <div className="rounded-full w-6 h-6 sm:w-7 sm:h-7 bg-neutral-800 flex items-center justify-center text-white font-bold text-sm sm:text-base border border-neutral-700">A</div>
+            <div className="px-4 sm:px-5 pt-4 sm:pt-5 pb-3 border-b border-neutral-800 flex-shrink-0">
+              <div className="mb-2 text-xs text-neutral-400 font-medium">Live Preview</div>
+              <div className="flex items-end gap-2 min-h-[44px] sm:min-h-[48px]" style={{ fontFamily: state.fontFamily }}>
+                <div className="rounded-full w-7 h-7 sm:w-7 sm:h-7 bg-neutral-800 flex items-center justify-center text-white font-bold text-sm sm:text-base border border-neutral-700 flex-shrink-0">A</div>
                 <div
-                  className="px-2 sm:px-3 py-1.5 sm:py-2 text-white flex items-center gap-2"
+                  className="px-3 sm:px-3 py-2 sm:py-2 text-white flex items-center gap-2"
                   style={{
                     backgroundColor: state.bubbleColor,
                     borderRadius: state.bubbleRadius,
                     fontFamily: state.fontFamily,
-                    maxWidth: 140,
+                    maxWidth: mobile ? 120 : 140,
                     minWidth: 0,
                   }}
                 >
                   <span className="text-xs sm:text-sm truncate">Sample message</span>
-                  <span className="text-[10px] sm:text-xs text-neutral-400 ml-2">12:34</span>
+                  <span className="text-[10px] sm:text-xs text-neutral-400 ml-2 flex-shrink-0">12:34</span>
                 </div>
               </div>
               {/* --- CONTRAST WARNINGS --- */}
               {(bgBubbleContrast < 4.5 || bubbleTextContrast < 4.5) && (
-                <div className="mt-2 text-xs text-yellow-400 font-semibold flex items-center gap-2">
-                  <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" className="inline align-bottom"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01M21 12c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9 9 4.03 9 9z"/></svg>
-                  <span>
+                <div className="mt-3 text-xs text-yellow-400 font-semibold flex items-start gap-2">
+                  <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" className="inline align-top mt-0.5 flex-shrink-0">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01M21 12c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9 9 4.03 9 9z"/>
+                  </svg>
+                  <span className="leading-relaxed">
                     Warning: Your color choices may not be accessible. 
                     {bgBubbleContrast < 4.5 && 'Background and bubble contrast is too low. '}
                     {bubbleTextContrast < 4.5 && 'Bubble and text contrast is too low.'}
@@ -1843,23 +2125,23 @@ function isHexColor(str) {
               )}
             </div>
             {/* Settings Sections */}
-            <div className="flex flex-col gap-5 sm:gap-6 px-3 sm:px-5 py-4 sm:py-5 bg-neutral-950 overflow-y-auto" style={{ maxHeight: 'calc(80vh - 120px)' }}>
+            <div className="flex flex-col gap-4 sm:gap-6 px-4 sm:px-5 py-4 sm:py-5 bg-neutral-950 overflow-y-auto flex-1 modal-content" style={{ maxHeight: mobile ? 'calc(90vh - 200px)' : 'calc(80vh - 120px)' }}>
               {/* Themes */}
               <div>
-                <div className="text-xs font-semibold text-white mb-1">Themes</div>
-                <div className="text-xs text-neutral-400 mb-2">Quickly switch between preset color themes for chat background and bubbles.</div>
-                <div className="w-full overflow-x-auto">
-                  <div className="flex gap-2 sm:gap-3 mb-1 flex-nowrap min-w-fit pb-1" style={{ WebkitOverflowScrolling: 'touch' }}>
+                <div className="text-xs font-semibold text-white mb-2">Themes</div>
+                <div className="text-xs text-neutral-400 mb-3">Quickly switch between preset color themes for chat background and bubbles.</div>
+                <div className="w-full theme-scroll-container">
+                  <div className="flex gap-3 sm:gap-3 mb-2 flex-nowrap pb-2" style={{ WebkitOverflowScrolling: 'touch', minWidth: 'max-content' }}>
                     {predefinedThemes.map((theme) => (
-                      <div key={theme.name} className="flex flex-col items-center gap-1 mb-2 min-w-[48px]">
+                      <div key={theme.name} className="flex flex-col items-center gap-1.5 mb-2 flex-shrink-0" style={{ minWidth: mobile ? '52px' : '48px' }}>
                         <button
-                          className={`w-6 h-6 sm:w-7 sm:h-7 rounded-lg border-2 transition-all duration-150 focus:outline-none ${state.chatBgColor === theme.bg && state.bubbleColor === theme.bubble ? 'border-white' : 'border-neutral-800'}`}
+                          className={`w-8 h-8 sm:w-7 sm:h-7 rounded-lg border-2 transition-all duration-150 focus:outline-none touch-manipulation ${state.chatBgColor === theme.bg && state.bubbleColor === theme.bubble ? 'border-white' : 'border-neutral-800'}`}
                           style={{ background: theme.bubble }}
                           onClick={() => applyTheme(theme)}
                           title={theme.name}
                           aria-label={theme.name}
                         />
-                        <span className="text-[9px] sm:text-[10px] text-neutral-400 text-center w-10 sm:w-12 truncate">{theme.name}</span>
+                        <span className="text-[9px] sm:text-[10px] text-neutral-400 text-center w-12 sm:w-12 truncate leading-tight">{theme.name}</span>
                       </div>
                     ))}
                   </div>
@@ -1867,16 +2149,20 @@ function isHexColor(str) {
               </div>
               {/* Background */}
               <div>
-                <div className="text-xs font-semibold text-white mb-1">Background</div>
-                <div className="text-xs text-neutral-400 mb-2">Customize the chat background color or add an image (JPG, PNG, GIF).</div>
-                <div className="flex items-center gap-2 sm:gap-3 mb-1 flex-wrap">
-                  <div className="flex flex-col items-center gap-1">
-                    <input type="color" value={state.chatBgColor} onChange={e => dispatch({ type: 'SET', payload: { chatBgColor: e.target.value } })} className="w-7 h-7 sm:w-8 sm:h-8 p-0 border-none rounded-full bg-transparent cursor-pointer" aria-label="Chat background color" />
+                <div className="text-xs font-semibold text-white mb-2">Background</div>
+                <div className="text-xs text-neutral-400 mb-3">Customize the chat background color or add an image (JPG, PNG, GIF).</div>
+                <div className="flex items-center gap-3 sm:gap-3 mb-2 flex-wrap">
+                  <div className="flex flex-col items-center gap-1.5">
+                    <input 
+                      type="color" 
+                      value={state.chatBgColor} 
+                      onChange={e => dispatch({ type: 'SET', payload: { chatBgColor: e.target.value } })} 
+                      className="w-8 h-8 sm:w-8 sm:h-8 p-0 border-none rounded-full bg-transparent cursor-pointer touch-manipulation" 
+                      aria-label="Chat background color" 
+                    />
                     <span className="text-[9px] sm:text-[10px] text-neutral-400">Color</span>
                   </div>
-                  {/* Disable custom image upload if a theme with a bgImage is selected */}
-                  {/* In the chat settings modal, always show the custom image upload input, regardless of selectedTheme.bgImage */}
-                  <div className="flex flex-col items-center gap-1">
+                  <div className="flex flex-col items-center gap-1.5">
                     <input
                       type="file"
                       accept="image/*"
@@ -1897,48 +2183,67 @@ function isHexColor(str) {
                           reader.readAsDataURL(file);
                         }
                       }}
-                      className="block text-[10px] sm:text-xs text-neutral-400 file:py-1 file:px-2 file:rounded-full file:border-0 file:bg-neutral-800 file:text-white hover:file:bg-neutral-700"
+                      className="block text-[10px] sm:text-xs text-neutral-400 file:py-1.5 file:px-3 file:rounded-full file:border-0 file:bg-neutral-800 file:text-white hover:file:bg-neutral-700 touch-manipulation"
                       aria-label="Upload chat background image"
                     />
                     <span className="text-[9px] sm:text-[10px] text-neutral-400">Image</span>
                   </div>
-                  {state.fileUploadError && <div className="text-xs text-red-500 mt-1">{state.fileUploadError}</div>}
+                  {state.fileUploadError && <div className="text-xs text-red-500 mt-2 w-full">{state.fileUploadError}</div>}
                   {state.chatBgImage && (
-                    <button className="ml-1 p-1 rounded-full bg-neutral-800 hover:bg-neutral-700 transition" onClick={() => dispatch({ type: 'SET', payload: { chatBgImage: '' } })} title="Remove image">
-                      <FiX size={13} />
+                    <button 
+                      className="ml-1 p-2 rounded-full bg-neutral-800 hover:bg-neutral-700 transition touch-manipulation" 
+                      onClick={() => dispatch({ type: 'SET', payload: { chatBgImage: '' } })} 
+                      title="Remove image"
+                      aria-label="Remove background image"
+                    >
+                      <FiX size={14} />
                     </button>
                   )}
                 </div>
                 {state.chatBgImage && (
-                  <div className="relative mt-1">
-                    <img src={state.chatBgImage} alt="Chat background preview" className="rounded-lg max-h-12 sm:max-h-16 w-full object-cover border border-neutral-800" />
+                  <div className="relative mt-2">
+                    <img src={state.chatBgImage} alt="Chat background preview" className="rounded-lg max-h-14 sm:max-h-16 w-full object-cover border border-neutral-800" />
                     <span className="absolute top-1 right-2 bg-black/70 text-[9px] sm:text-[10px] text-white px-2 py-0.5 rounded-full">Preview</span>
                   </div>
                 )}
               </div>
               {/* Bubble Style */}
               <div>
-                <div className="text-xs font-semibold text-white mb-1">Bubble Style</div>
-                <div className="text-xs text-neutral-400 mb-2">Adjust the color and roundness of chat bubbles for better readability.</div>
-                <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-                  <div className="flex flex-col items-center gap-1">
-                    <input type="color" value={state.bubbleColor} onChange={e => dispatch({ type: 'SET', payload: { bubbleColor: e.target.value } })} className="w-7 h-7 sm:w-8 sm:h-8 p-0 border-none rounded-full bg-transparent cursor-pointer" aria-label="Bubble color" />
+                <div className="text-xs font-semibold text-white mb-2">Bubble Style</div>
+                <div className="text-xs text-neutral-400 mb-3">Adjust the color and roundness of chat bubbles for better readability.</div>
+                <div className="flex items-center gap-3 sm:gap-3 flex-wrap">
+                  <div className="flex flex-col items-center gap-1.5">
+                    <input 
+                      type="color" 
+                      value={state.bubbleColor} 
+                      onChange={e => dispatch({ type: 'SET', payload: { bubbleColor: e.target.value } })} 
+                      className="w-8 h-8 sm:w-8 sm:h-8 p-0 border-none rounded-full bg-transparent cursor-pointer touch-manipulation" 
+                      aria-label="Bubble color" 
+                    />
                     <span className="text-[9px] sm:text-[10px] text-neutral-400">Color</span>
                   </div>
-                  <div className="flex flex-col items-center gap-1">
-                    <input type="range" min={8} max={32} value={state.bubbleRadius} onChange={e => dispatch({ type: 'SET', payload: { bubbleRadius: Number(e.target.value) } })} className="w-20 sm:w-24 accent-neutral-700" aria-label="Bubble border radius" />
+                  <div className="flex flex-col items-center gap-1.5">
+                    <input 
+                      type="range" 
+                      min={8} 
+                      max={32} 
+                      value={state.bubbleRadius} 
+                      onChange={e => dispatch({ type: 'SET', payload: { bubbleRadius: Number(e.target.value) } })} 
+                      className="w-24 sm:w-24 accent-neutral-700 touch-manipulation" 
+                      aria-label="Bubble border radius" 
+                    />
                     <span className="text-[9px] sm:text-[10px] text-neutral-400">{state.bubbleRadius}px</span>
                   </div>
                 </div>
               </div>
               {/* Font */}
               <div>
-                <div className="text-xs font-semibold text-white mb-1">Font</div>
-                <div className="text-xs text-neutral-400 mb-2">Choose a font for chat messages. Affects readability and style.</div>
+                <div className="text-xs font-semibold text-white mb-2">Font</div>
+                <div className="text-xs text-neutral-400 mb-3">Choose a font for chat messages. Affects readability and style.</div>
                 <select
                   value={state.fontFamily}
                   onChange={e => dispatch({ type: 'SET', payload: { fontFamily: e.target.value } })}
-                  className="w-full bg-neutral-900 border border-neutral-800 rounded-lg p-2 text-xs sm:text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/10 transition-all"
+                  className="w-full bg-neutral-900 border border-neutral-800 rounded-lg p-3 sm:p-2 text-xs sm:text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/10 transition-all touch-manipulation"
                   aria-label="Chat font"
                 >
                   <option value="Inter, sans-serif">Inter</option>
@@ -1951,16 +2256,16 @@ function isHexColor(str) {
               </div>
             </div>
             {/* Footer */}
-            <div className="flex gap-2 justify-end px-3 sm:px-5 py-3 sm:py-4 border-t border-neutral-800 bg-neutral-950">
+            <div className="flex gap-3 justify-end px-4 sm:px-5 py-4 sm:py-4 border-t border-neutral-800 bg-neutral-950 flex-shrink-0">
               <button
-                className="px-2.5 sm:px-3 py-1 text-xs font-medium rounded bg-neutral-800 text-white hover:bg-neutral-700 focus:bg-neutral-700 focus:outline-none transition-all"
+                className="px-4 sm:px-3 py-2 sm:py-1 text-sm sm:text-xs font-medium rounded-lg sm:rounded bg-neutral-800 text-white hover:bg-neutral-700 focus:bg-neutral-700 focus:outline-none transition-all touch-manipulation"
                 onClick={clearChatSettings}
                 title="Reset all chat appearance settings"
               >
                 Reset
               </button>
               <button
-                className="px-2.5 sm:px-3 py-1 text-xs font-medium rounded bg-white text-black hover:bg-neutral-200 focus:bg-neutral-300 focus:outline-none transition-all"
+                className="px-4 sm:px-3 py-2 sm:py-1 text-sm sm:text-xs font-medium rounded-lg sm:rounded bg-white text-black hover:bg-neutral-200 focus:bg-neutral-300 focus:outline-none transition-all touch-manipulation"
                 onClick={() => dispatch({ type: 'SET', payload: { showChatSettings: false } })}
                 title="Close settings"
               >

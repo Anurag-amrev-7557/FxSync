@@ -303,6 +303,11 @@ export default function AudioPlayer({
   const [latencyWizardStep, setLatencyWizardStep] = useState(0);
   const [latencyTestStart, setLatencyTestStart] = useState(null);
   const [latencyTestResult, setLatencyTestResult] = useState(null);
+  // Restore edgeCaseBanner and related state at the top level
+  const [showDriftDebug, setShowDriftDebug] = useState(false);
+  const [showLatencyCal, setShowLatencyCal] = useState(false);
+  const [edgeCaseBanner, setEdgeCaseBanner] = useState(null);
+  const [showCalibrateBanner, setShowCalibrateBanner] = useState(false);
 
   // --- Dynamic Drift Correction Parameters ---
   const driftParams = getDriftCorrectionParams({ rtt, jitter });
@@ -436,8 +441,13 @@ export default function AudioPlayer({
       }
       console.log('AudioPlayer: Setting audioUrl to', url);
       setAudioUrl(url);
-      // setLoading(false); // Removed
-      // setAudioError(null); // Removed
+      // --- Ensure playback starts from beginning when track changes ---
+      const audio = audioRef.current;
+      if (audio) {
+        setCurrentTimeSafely(audio, 0, setDisplayedCurrentTime);
+      } else {
+        setDisplayedCurrentTime(0);
+      }
     }
   }, [currentTrack]);
 
@@ -1233,6 +1243,83 @@ export default function AudioPlayer({
 
   // --- MOBILE REDESIGN ---
   if (mobile) {
+    const [expanded, setExpanded] = useState(false);
+    // Drag state for handle
+    const dragStartY = useRef(null);
+    const dragDeltaY = useRef(0);
+    const [dragging, setDragging] = useState(false);
+
+    // Drag event handlers
+    const onHandleTouchStart = (e) => {
+      if (e.touches && e.touches.length === 1) {
+        dragStartY.current = e.touches[0].clientY;
+        dragDeltaY.current = 0;
+        setDragging(true);
+      }
+    };
+    const onHandleTouchMove = (e) => {
+      if (!dragging || !dragStartY.current) return;
+      const y = e.touches[0].clientY;
+      dragDeltaY.current = y - dragStartY.current;
+    };
+    const onHandleTouchEnd = () => {
+      if (dragging) {
+        if (!expanded && dragDeltaY.current < -40) {
+          setExpanded(true);
+        } else if (expanded && dragDeltaY.current > 40) {
+          setExpanded(false);
+        }
+      }
+      setDragging(false);
+      dragStartY.current = null;
+      dragDeltaY.current = 0;
+    };
+    // Mouse drag for desktop/mobile emu
+    const onHandleMouseDown = (e) => {
+      dragStartY.current = e.clientY;
+      dragDeltaY.current = 0;
+      setDragging(true);
+      window.addEventListener('mousemove', onHandleMouseMove);
+      window.addEventListener('mouseup', onHandleMouseUp);
+    };
+    const onHandleMouseMove = (e) => {
+      if (!dragging || !dragStartY.current) return;
+      dragDeltaY.current = e.clientY - dragStartY.current;
+    };
+    const onHandleMouseUp = () => {
+      if (dragging) {
+        if (!expanded && dragDeltaY.current < -40) {
+          setExpanded(true);
+        } else if (expanded && dragDeltaY.current > 40) {
+          setExpanded(false);
+        }
+      }
+      setDragging(false);
+      dragStartY.current = null;
+      dragDeltaY.current = 0;
+      window.removeEventListener('mousemove', onHandleMouseMove);
+      window.removeEventListener('mouseup', onHandleMouseUp);
+    };
+    // Handler for toggling expanded/compact state (tap fallback)
+    const toggleExpanded = () => setExpanded((prev) => !prev);
+
+    // --- Smooth drag expansion ---
+    // Calculate drag progress (0 = compact, 1 = expanded)
+    let dragProgress = 0;
+    if (dragging && dragStartY.current !== null) {
+      if (!expanded) {
+        dragProgress = Math.max(0, Math.min(1, -dragDeltaY.current / 120));
+      } else {
+        dragProgress = Math.max(0, Math.min(1, 1 - dragDeltaY.current / 120));
+      }
+    } else {
+      dragProgress = expanded ? 1 : 0;
+    }
+    // Interpolated values
+    const minHeight = 68, maxHeight = 340;
+    const interpHeight = minHeight + (maxHeight - minHeight) * dragProgress;
+    const interpPadding = 8 + (20 * dragProgress);
+
     if (loading) {
       return (
         <div className="fixed bottom-20 left-1/2 -translate-x-1/2 w-[95vw] max-w-sm z-40 pointer-events-auto">
@@ -1257,206 +1344,221 @@ export default function AudioPlayer({
     }
     return (
       <div className="fixed bottom-20 left-1/2 w-[95vw] max-w-sm z-40 pointer-events-auto -translate-x-1/2">
+        {/* Only one audio element for mobile, outside compact/expanded content */}
+        {audioUrl && (
+          <audio
+            ref={audioRef}
+            src={audioUrl}
+            preload="auto"
+            style={{ display: 'none' }}
+            onLoadedMetadata={() => {
+              const audio = audioRef.current;
+              if (audio && !isController && !isPlaying) {
+                audio.pause();
+                setDisplayedCurrentTime(0);
+              }
+            }}
+          />
+        )}
         <div className={`${shouldAnimate ? 'animate-slide-up-from-bottom' : 'opacity-0 translate-y-full'}`}>
-          <div className="bg-neutral-900/90 backdrop-blur-lg rounded-2xl shadow-2xl p-3 flex flex-col gap-2 border border-neutral-800">
-          {/* Audio element (hidden) */}
-          {audioUrl && (
-            <audio
-              ref={audioRef}
-              src={audioUrl}
-              preload="auto"
-              style={{ display: 'none' }}
-              onLoadedMetadata={() => {
-                const audio = audioRef.current;
-                if (audio && !isController && !isPlaying) {
-                  audio.pause();
-                  setDisplayedCurrentTime(0);
-                }
-              }}
-            />
-          )}
-          {/* Top: Track info and sync status */}
-          <div className="flex items-center justify-between mb-1">
-            <div className="text-xs text-white font-semibold truncate max-w-[60%]">
-              Now Playing
+          <div
+            className={
+              `bg-neutral-900/90 backdrop-blur-lg rounded-2xl shadow-2xl flex flex-col gap-2 border border-neutral-800 overflow-hidden` +
+              (dragging ? '' : ' transition-all duration-300')
+            }
+            style={{
+              minHeight: interpHeight,
+              maxHeight: interpHeight + 60,
+              paddingTop: interpPadding,
+              paddingBottom: interpPadding,
+            }}
+          >
+            {/* Drag handle / tap area */}
+            <div
+              className="flex justify-center items-center cursor-pointer select-none mb-1"
+              onClick={toggleExpanded}
+              onTouchStart={onHandleTouchStart}
+              onTouchMove={onHandleTouchMove}
+              onTouchEnd={onHandleTouchEnd}
+              onMouseDown={onHandleMouseDown}
+              style={{ height: 18, touchAction: 'none' }}
+            >
+              <div className={`w-8 h-1.5 rounded-full transition-colors duration-200 ${dragging ? 'bg-primary' : 'bg-neutral-700'}`} />
             </div>
-            <div className="flex items-center gap-1">
-              <SyncStatus status={syncStatus} />
-              {microCorrectionActive && (
-                <span title="Fine-tuning playback for micro-drift" className="ml-1 animate-pulse text-blue-400" style={{fontSize: 16, verticalAlign: 'middle'}}>
-                  <svg width="16" height="16" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="10" cy="10" r="7" stroke="currentColor" strokeWidth="2" fill="none"/><path d="M10 5v5l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                </span>
-              )}
-              <button
-                className="ml-2 px-2 py-0.5 bg-neutral-700 text-xs rounded hover:bg-neutral-600 transition"
-                onClick={startLatencyWizard}
-                title="Calibrate device audio latency"
-                style={{fontSize: 11, fontWeight: 500}}
+            {/* Interpolated content: fade/slide between compact and expanded */}
+            <div style={{ position: 'relative', flex: 1 }}>
+              {/* Compact content */}
+              <div
+                style={{
+                  opacity: 1 - dragProgress,
+                  pointerEvents: dragProgress < 0.5 ? 'auto' : 'none',
+                  position: dragProgress > 0 ? 'absolute' : 'relative',
+                  width: '100%',
+                  top: 0,
+                  left: 0,
+                  transition: dragging ? 'none' : 'opacity 0.25s',
+                }}
               >
-                Calibrate Latency
-              </button>
-              {isController && (
-                <span className="ml-1 px-2 py-0.5 bg-primary/20 text-primary text-[10px] rounded font-bold">Controller</span>
-              )}
+                {/* ...compact view code... */}
+                {!expanded && (
+                  <div className="flex items-center gap-2 w-full">
+                    <button
+                      className="w-12 h-12 rounded-full flex items-center justify-center bg-primary shadow-lg text-white text-2xl active:scale-95 transition-all duration-200"
+                      onClick={isPlaying ? handlePause : handlePlay}
+                      disabled={disabled || !isController || !audioUrl}
+                      aria-label={isPlaying ? 'Pause' : 'Play'}
+                    >
+                      {isPlaying ? (
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
+                      ) : (
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                      )}
+                    </button>
+                    <div className="flex-1 flex flex-col min-w-0">
+                      <div className="text-xs text-white font-semibold truncate max-w-full">{displayedTitle || 'Unknown Track'}</div>
+                      <div className="flex items-center gap-2 w-full mt-1 pr-4">
+                        <span className="text-[11px] text-neutral-400 w-8 text-left font-mono">{formatTime(displayedCurrentTime)}</span>
+                        <input
+                          type="range"
+                          min={0}
+                          max={isFinite(duration) ? duration : 0}
+                          step={0.01}
+                          value={isFinite(displayedCurrentTime) ? displayedCurrentTime : 0}
+                          onChange={e => handleSeekWithEmit(Number(e.target.value))}
+                          className="flex-1 h-2 bg-neutral-800 rounded-full appearance-none cursor-pointer accent-primary"
+                          style={{ WebkitAppearance: 'none', appearance: 'none' }}
+                          disabled={disabled || !isController || !audioUrl}
+                        />
+                        <span className="text-[11px] text-neutral-400 w-8 text-right font-mono">{formatTime(duration)}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+              {/* Expanded content */}
+              <div
+                style={{
+                  opacity: dragProgress,
+                  pointerEvents: dragProgress > 0.5 ? 'auto' : 'none',
+                  position: dragProgress < 1 ? 'absolute' : 'relative',
+                  width: '100%',
+                  top: 0,
+                  left: 0,
+                  transition: dragging ? 'none' : 'opacity 0.25s',
+                }}
+              >
+                {/* ...expanded view code... */}
+                {expanded && (
+                  <>
+                    {/* Track Title */}
+                    <div className="mb-2 text-center min-h-[1.5em] relative flex items-center justify-center" style={{height: '1.5em'}}>
+                      <span
+                        className={`inline-block mt-6 text-md font-semibold text-white transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]
+                          ${animating && direction === 'up' ? 'opacity-0 translate-x-6 scale-95' : ''}
+                          ${animating && direction === 'down' ? 'opacity-0 -translate-x-6 scale-95' : ''}
+                          ${!animating ? 'opacity-100 translate-x-0 scale-100' : ''}
+                        `}
+                        style={{
+                          willChange: 'opacity, transform',
+                          transitionProperty: 'opacity, transform',
+                        }}
+                      >
+                        {displayedTitle || 'Unknown Track'}
+                      </span>
+                    </div>
+                    {/* Progress bar */}
+                    <div className="flex items-center gap-2 w-full">
+                      <span className="text-[11px] text-neutral-400 w-8 text-left font-mono">{formatTime(displayedCurrentTime)}</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={isFinite(duration) ? duration : 0}
+                        step={0.01}
+                        value={isFinite(displayedCurrentTime) ? displayedCurrentTime : 0}
+                        onChange={e => handleSeekWithEmit(Number(e.target.value))}
+                        className="flex-1 h-3 bg-neutral-800 rounded-full appearance-none cursor-pointer accent-primary"
+                        style={{ WebkitAppearance: 'none', appearance: 'none' }}
+                        disabled={disabled || !isController || !audioUrl}
+                      />
+                      <span className="text-[11px] text-neutral-400 w-8 text-right font-mono">{formatTime(duration)}</span>
+                    </div>
+                    {/* Controls row */}
+                    <div className="flex items-center justify-between mt-1">
+                      <button
+                        className="w-12 h-12 rounded-full flex items-center justify-center bg-primary shadow-lg text-white text-2xl active:scale-95 transition-all duration-200"
+                        onClick={isPlaying ? handlePause : handlePlay}
+                        disabled={disabled || !isController || !audioUrl}
+                        aria-label={isPlaying ? 'Pause' : 'Play'}
+                      >
+                        {isPlaying ? (
+                          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
+                        ) : (
+                          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                        )}
+                      </button>
+                      <button
+                        className={`ml-2 px-3 py-2 rounded-lg text-xs font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 shadow ${
+                          resyncInProgress 
+                            ? 'bg-blue-600 text-white' 
+                            : smartResyncSuggestion 
+                              ? 'bg-orange-600 hover:bg-orange-700 text-white' 
+                              : 'bg-neutral-800 hover:bg-neutral-700 text-white'
+                        }`}
+                        onClick={handleResync}
+                        disabled={disabled || !audioUrl || resyncInProgress}
+                        aria-label="Re-sync"
+                      >
+                        {resyncInProgress ? (
+                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
+                            <path d="M21 12a9 9 0 11-6.219-8.56"></path>
+                          </svg>
+                        ) : (
+                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
+                            <path d="M21 3v5h-5"></path>
+                            <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
+                            <path d="M3 21v-5h5"></path>
+                          </svg>
+                        )}
+                        <span className="hidden sm:inline">
+                          {resyncInProgress ? 'Syncing...' : smartResyncSuggestion ? 'Sync*' : 'Sync'}
+                        </span>
+                      </button>
+                    </div>
+                                        {/* Top: Track info and sync status */}
+                                        <div className="flex items-center justify-between mb-1">
+                      <div className="text-xs text-white font-semibold truncate max-w-[60%]">
+                        Now Playing
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <SyncStatus status={syncStatus} />
+                        {microCorrectionActive && (
+                          <span title="Fine-tuning playback for micro-drift" className="ml-1 animate-pulse text-blue-400" style={{fontSize: 16, verticalAlign: 'middle'}}>
+                            <svg width="16" height="16" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="10" cy="10" r="7" stroke="currentColor" strokeWidth="2" fill="none"/><path d="M10 5v5l3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                          </span>
+                        )}
+                        <button
+                          className="ml-2 px-2 py-0.5 bg-neutral-700 text-xs rounded hover:bg-neutral-600 transition"
+                          onClick={startLatencyWizard}
+                          title="Calibrate device audio latency"
+                          style={{fontSize: 11, fontWeight: 500}}
+                        >
+                          Calibrate Latency
+                        </button>
+                        {isController && (
+                          <span className="ml-1 px-2 py-0.5 bg-primary/20 text-primary text-[10px] rounded font-bold">Controller</span>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
           </div>
-          {/* Track Title */}
-          <div className="mb-2 text-center min-h-[1.5em] relative flex items-center justify-center" style={{height: '1.5em'}}>
-            <span
-              className={`inline-block mt-6 text-md font-semibold text-white transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]
-                ${animating && direction === 'up' ? 'opacity-0 translate-x-6 scale-95' : ''}
-                ${animating && direction === 'down' ? 'opacity-0 -translate-x-6 scale-95' : ''}
-                ${!animating ? 'opacity-100 translate-x-0 scale-100' : ''}
-              `}
-              style={{
-                willChange: 'opacity, transform',
-                transitionProperty: 'opacity, transform',
-              }}
-            >
-              {displayedTitle || 'Unknown Track'}
-            </span>
-          </div>
-          {/* Progress bar */}
-          <div className="flex items-center gap-2 w-full">
-            <span className="text-[11px] text-neutral-400 w-8 text-left font-mono">{formatTime(displayedCurrentTime)}</span>
-            <input
-              type="range"
-              min={0}
-              max={isFinite(duration) ? duration : 0}
-              step={0.01}
-              value={isFinite(displayedCurrentTime) ? displayedCurrentTime : 0}
-              onChange={e => handleSeekWithEmit(Number(e.target.value))}
-              className="flex-1 h-3 bg-neutral-800 rounded-full appearance-none cursor-pointer accent-primary"
-              style={{ WebkitAppearance: 'none', appearance: 'none' }}
-              disabled={disabled || !isController || !audioUrl}
-            />
-            <span className="text-[11px] text-neutral-400 w-8 text-right font-mono">{formatTime(duration)}</span>
-          </div>
-          {/* Controls row */}
-          <div className="flex items-center justify-between mt-1">
-            <button
-              className="w-12 h-12 rounded-full flex items-center justify-center bg-primary shadow-lg text-white text-2xl active:scale-95 transition-all duration-200"
-              onClick={isPlaying ? handlePause : handlePlay}
-              disabled={disabled || !isController || !audioUrl}
-              aria-label={isPlaying ? 'Pause' : 'Play'}
-            >
-              {isPlaying ? (
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
-              ) : (
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-              )}
-            </button>
-            <button
-              className={`ml-2 px-3 py-2 rounded-lg text-xs font-medium transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 shadow ${
-                resyncInProgress 
-                  ? 'bg-blue-600 text-white' 
-                  : smartResyncSuggestion 
-                    ? 'bg-orange-600 hover:bg-orange-700 text-white' 
-                    : 'bg-neutral-800 hover:bg-neutral-700 text-white'
-              }`}
-              onClick={handleResync}
-              disabled={disabled || !audioUrl || resyncInProgress}
-              aria-label="Re-sync"
-            >
-              {resyncInProgress ? (
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
-                  <path d="M21 12a9 9 0 11-6.219-8.56"></path>
-                </svg>
-              ) : (
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
-                  <path d="M21 3v5h-5"></path>
-                  <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
-                  <path d="M3 21v-5h5"></path>
-                </svg>
-              )}
-              <span className="hidden sm:inline">
-                {resyncInProgress ? 'Syncing...' : smartResyncSuggestion ? 'Sync*' : 'Sync'}
-              </span>
-            </button>
-          </div>
-        </div>
         </div>
       </div>
     );
   }
-
-  // Add at the top level of the component (after hooks):
-  const [showDriftDebug, setShowDriftDebug] = useState(false);
-  const [showLatencyCal, setShowLatencyCal] = useState(false);
-  const [edgeCaseBanner, setEdgeCaseBanner] = useState(null);
-  const [showCalibrateBanner, setShowCalibrateBanner] = useState(false);
-
-  // Show calibration banner if repeated drift or poor sync quality
-  useEffect(() => {
-    if ((resyncStats.lastDrift > 0.3 || syncQuality.label === 'Poor') && !showLatencyWizard) {
-      setShowCalibrateBanner(true);
-    } else {
-      setShowCalibrateBanner(false);
-    }
-  }, [resyncStats.lastDrift, syncQuality.label, showLatencyWizard]);
-
-  // Keyboard shortcut: D to toggle debug overlay (dev mode only)
-  useEffect(() => {
-    if (import.meta.env.MODE !== 'development') return;
-    const handler = (e) => {
-      if (e.key === 'd' || e.key === 'D') setShowDriftDebug(v => !v);
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, []);
-
-  // Keyboard shortcut: L to toggle latency calibration UI (dev mode only)
-  useEffect(() => {
-    if (import.meta.env.MODE !== 'development') return;
-    const handler = (e) => {
-      if (e.key === 'l' || e.key === 'L') setShowLatencyCal(v => !v);
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, []);
-
-  // Listen for tab visibility, network, and resume events
-  useEffect(() => {
-    function handleVisibility() {
-      if (document.visibilityState === 'visible') {
-        setEdgeCaseBanner('Tab became active. Auto-resyncing...');
-        handleResync();
-        setTimeout(() => setEdgeCaseBanner(null), 4000);
-      }
-    }
-    function handleOnline() {
-      setEdgeCaseBanner('Network reconnected. Auto-resyncing...');
-      handleResync();
-      setTimeout(() => setEdgeCaseBanner(null), 4000);
-    }
-    function handleOffline() {
-      setEdgeCaseBanner('Network connection lost. Waiting for reconnection...');
-    }
-    window.addEventListener('visibilitychange', handleVisibility);
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-    return () => {
-      window.removeEventListener('visibilitychange', handleVisibility);
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, [handleResync]);
-
-  // Detect unexpected audio pause (not by user)
-  useEffect(() => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    function onPause() {
-      if (!audio.paused || !isPlaying) return;
-      // If not controller and not paused by user, show warning
-      if (!isController && !audioError) {
-        setEdgeCaseBanner('Audio was paused (tab/device sleep?). Click to re-sync.');
-      }
-    }
-    audio.addEventListener('pause', onPause);
-    return () => audio.removeEventListener('pause', onPause);
-  }, [audioRef, isController, isPlaying, audioError]);
 
   // --- DESKTOP/DEFAULT LAYOUT (unchanged) ---
   if (loading) {
@@ -1484,6 +1586,22 @@ export default function AudioPlayer({
 
   return (
     <div className={`audio-player transition-all duration-500 ${audioLoaded.animationClass}`}>
+      {/* Only one audio element for desktop, and only if not mobile */}
+      {audioUrl && (
+        <audio 
+          ref={audioRef} 
+          src={audioUrl} 
+          preload="auto"
+          onLoadedMetadata={() => {
+            // Ensure audio is paused when metadata loads (especially for listeners)
+            const audio = audioRef.current;
+            if (audio && !isController && !isPlaying) {
+              audio.pause();
+              setDisplayedCurrentTime(0);
+            }
+          }}
+        />
+      )}
       {errorBanner && (
   <div style={{
     position: 'fixed',
@@ -1570,23 +1688,6 @@ export default function AudioPlayer({
           {displayedTitle || 'Unknown Track'}
         </span>
       </div>
-      {/* Audio Element */}
-      {audioUrl ? (
-        <audio 
-          ref={audioRef} 
-          src={audioUrl} 
-          preload="auto"
-          onLoadedMetadata={() => {
-            // Ensure audio is paused when metadata loads (especially for listeners)
-            const audio = audioRef.current;
-            if (audio && !isController && !isPlaying) {
-              audio.pause();
-              setDisplayedCurrentTime(0);
-            }
-          }}
-        />
-      ) : null}
-
       {/* Now Playing Section */}
       <div className="bg-neutral-900/50 rounded-lg border border-neutral-800 p-4">
         <div className="flex items-center gap-3 mb-4">

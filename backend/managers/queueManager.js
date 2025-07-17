@@ -26,18 +26,4 @@ export function getQueue(sessionId) {
   return session ? session.queue : [];
 }
 
-// Reorder the queue for a session
-export function reorderQueue(sessionId, newQueue) {
-  const session = getSession(sessionId);
-  if (!session || !Array.isArray(newQueue)) return false;
-  // Only keep valid tracks (with url and title)
-  session.queue = newQueue.map(track => ({
-    url: track.url,
-    title: typeof track.title === 'string' ? track.title : '',
-    artist: track.artist || '',
-    album: track.album || '',
-    duration: track.duration || 0,
-    type: track.type || undefined
-  }));
-  return true;
-} 
+ 

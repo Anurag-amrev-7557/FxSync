@@ -3,7 +3,8 @@
 const STORAGE_KEYS = {
   MESSAGES: 'fxsync_messages',
   QUEUE: 'fxsync_queue',
-  SESSION_DATA: 'fxsync_session_data'
+  SESSION_DATA: 'fxsync_session_data',
+  MOBILE_TAB: 'fxsync_mobile_tab'
 };
 
 // Get storage key for a specific session
@@ -75,13 +76,38 @@ export const loadSessionData = (sessionId) => {
   }
 };
 
+const GLOBAL_MOBILE_TAB_KEY = 'fxsync_mobile_tab_global';
+
+// Save mobile tab for a session or globally
+export const saveMobileTab = (sessionId, mobileTab) => {
+  try {
+    const key = sessionId ? getSessionKey(STORAGE_KEYS.MOBILE_TAB, sessionId) : GLOBAL_MOBILE_TAB_KEY;
+    localStorage.setItem(key, JSON.stringify(mobileTab));
+  } catch (error) {
+    console.warn('Failed to save mobile tab to localStorage:', error);
+  }
+};
+
+// Load mobile tab for a session or globally
+export const loadMobileTab = (sessionId) => {
+  try {
+    const key = sessionId ? getSessionKey(STORAGE_KEYS.MOBILE_TAB, sessionId) : GLOBAL_MOBILE_TAB_KEY;
+    const stored = localStorage.getItem(key);
+    return stored ? JSON.parse(stored) : 0; // Default to 0 (audio tab)
+  } catch (error) {
+    console.warn('Failed to load mobile tab from localStorage:', error);
+    return 0;
+  }
+};
+
 // Clear all data for a session
 export const clearSessionData = (sessionId) => {
   try {
     const keys = [
       getSessionKey(STORAGE_KEYS.MESSAGES, sessionId),
       getSessionKey(STORAGE_KEYS.QUEUE, sessionId),
-      getSessionKey(STORAGE_KEYS.SESSION_DATA, sessionId)
+      getSessionKey(STORAGE_KEYS.SESSION_DATA, sessionId),
+      getSessionKey(STORAGE_KEYS.MOBILE_TAB, sessionId)
     ];
     keys.forEach(key => localStorage.removeItem(key));
   } catch (error) {
