@@ -35,11 +35,7 @@ export default function useAudioElement({
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
-    audio.preload = 'auto';
     if (!isController && isPlaying && audioUrl) {
-      if (audio.readyState < 2) {
-        console.warn('[AudioElement] Audio not ready to play, readyState:', audio.readyState);
-      }
       audio.play().catch(() => {});
     }
   }, [audioUrl, isPlaying, isController]);
