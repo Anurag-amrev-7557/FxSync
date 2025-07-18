@@ -152,6 +152,17 @@ function incrementSyncVersion(sessionId) {
   return syncVersionMap[sessionId];
 }
 
+// --- Add timestamp smoothing for each session ---
+const sessionTimestampHistory = {};
+function getSmoothedTimestamp(sessionId, newTimestamp) {
+  if (!sessionTimestampHistory[sessionId]) sessionTimestampHistory[sessionId] = [];
+  const history = sessionTimestampHistory[sessionId];
+  history.push(newTimestamp);
+  if (history.length > 5) history.shift();
+  // Simple moving average
+  return history.reduce((a, b) => a + b, 0) / history.length;
+}
+
 export function setupSocket(io) {
   // --- Rate limiting state ---
   // Use a fixed-size ring buffer for each socket to track timestamps efficiently
@@ -304,7 +315,7 @@ export function setupSocket(io) {
       log('Play in session', sessionId, 'at', timestamp);
       io.to(sessionId).emit('sync_state', {
         isPlaying: true,
-        timestamp: session.timestamp,
+        timestamp: getSmoothedTimestamp(sessionId, session.timestamp),
         lastUpdated: session.lastUpdated,
         controllerId: socket.id,
         serverTime: Date.now(),
@@ -322,7 +333,7 @@ export function setupSocket(io) {
       log('Pause in session', sessionId, 'at', timestamp);
       io.to(sessionId).emit('sync_state', {
         isPlaying: false,
-        timestamp: session.timestamp,
+        timestamp: getSmoothedTimestamp(sessionId, session.timestamp),
         lastUpdated: session.lastUpdated,
         controllerId: socket.id,
         serverTime: Date.now(),
@@ -340,7 +351,7 @@ export function setupSocket(io) {
       log('Seek in session', sessionId, 'to', timestamp);
       io.to(sessionId).emit('sync_state', {
         isPlaying: session.isPlaying,
-        timestamp: session.timestamp,
+        timestamp: getSmoothedTimestamp(sessionId, session.timestamp),
         lastUpdated: session.lastUpdated,
         controllerId: socket.id,
         serverTime: Date.now(),
@@ -476,7 +487,7 @@ export function setupSocket(io) {
         );
         io.to(sessionId).emit('sync_state', {
           isPlaying: session.isPlaying,
-          timestamp: session.timestamp,
+          timestamp: getSmoothedTimestamp(sessionId, session.timestamp),
           lastUpdated: session.lastUpdated,
           controllerId: getSocketIdByClientId(sessionId, requesterClientId),
           serverTime: Date.now(),
@@ -670,7 +681,7 @@ export function setupSocket(io) {
       io.to(sessionId).emit('controller_client_change', accepterClientId);
       io.to(sessionId).emit('sync_state', {
         isPlaying: session.isPlaying,
-        timestamp: session.timestamp,
+        timestamp: getSmoothedTimestamp(sessionId, session.timestamp),
         lastUpdated: session.lastUpdated,
         controllerId: getSocketIdByClientId(sessionId, accepterClientId),
         serverTime: Date.now(),
@@ -1302,7 +1313,7 @@ export function setupSocket(io) {
       // Emit sync_state after track change so all clients get the latest play state and timestamp
       io.to(sessionId).emit('sync_state', {
         isPlaying: session.isPlaying,
-        timestamp: session.timestamp,
+        timestamp: getSmoothedTimestamp(sessionId, session.timestamp),
         lastUpdated: session.lastUpdated,
         controllerId: session.controllerId,
         serverTime: Date.now(),
@@ -1466,7 +1477,7 @@ export function setupSocket(io) {
           // Immediately broadcast full sync_state to all clients
           io.to(sessionId).emit('sync_state', {
             isPlaying: session.isPlaying,
-            timestamp: session.timestamp,
+            timestamp: getSmoothedTimestamp(sessionId, session.timestamp),
             lastUpdated: session.lastUpdated,
             controllerId: newSocketId,
             serverTime: Date.now(),
@@ -1710,7 +1721,7 @@ export function setupSocket(io) {
       if (!highDrift) {
         io.to(sessionId).emit('sync_state', {
           isPlaying: session.isPlaying,
-          timestamp: session.timestamp,
+          timestamp: getSmoothedTimestamp(sessionId, session.timestamp),
           lastUpdated: session.lastUpdated,
           controllerId: session.controllerId,
           serverTime: Date.now(),
@@ -1749,7 +1760,7 @@ export function setupSocket(io) {
       if (highDrift) {
         io.to(sessionId).emit('sync_state', {
           isPlaying: session.isPlaying,
-          timestamp: session.timestamp,
+          timestamp: getSmoothedTimestamp(sessionId, session.timestamp),
           lastUpdated: session.lastUpdated,
           controllerId: session.controllerId,
           serverTime: Date.now(),
@@ -1758,4 +1769,15 @@ export function setupSocket(io) {
       }
     }
   }, HIGH_DRIFT_SYNC_INTERVAL);
+
+  // Add laggy controller warning
+  setInterval(() => {
+    const sessions = getAllSessions();
+    const now = Date.now();
+    for (const [sessionId, session] of Object.entries(sessions)) {
+      if (now - session.lastUpdated > 1000) {
+        log('[SYNC][WARNING] Controller device may be laggy for session', sessionId, 'lastUpdated:', session.lastUpdated, 'now:', now);
+      }
+    }
+  }, 1000);
 }

@@ -153,8 +153,9 @@ export default function useDriftCorrection({
         return;
       }
       const drift = audio.currentTime - expected;
-      // For drift > 10ms, nudge currentTime directly
-      if (Math.abs(drift) > 0.01) {
+      // For drift > 50ms, nudge currentTime directly
+      if (Math.abs(drift) > 0.05) {
+        console.log('[DriftCorrection] Hard seek: drift=', drift, 'current=', audio.currentTime, 'expected=', expected);
         audio.currentTime = expected;
         if (microActive && typeof onMicroCorrection === 'function') onMicroCorrection(false);
         microActive = false;
@@ -162,12 +163,13 @@ export default function useDriftCorrection({
           rampPlaybackRate(audio, 200, rampLockRef);
         }
       } else if (Math.abs(drift) > 0.0001) {
-        // For sub-10ms drift, use playbackRate micro-correction
+        // For sub-50ms drift, use playbackRate micro-correction
         if (!microActive && typeof onMicroCorrection === 'function') onMicroCorrection(true);
         microActive = true;
-        let rateAdj = 1 - Math.max(-MICRO_RATE_CAP_MICRO, Math.min(MICRO_RATE_CAP_MICRO, drift * 20));
-        rateAdj = Math.max(1 - MICRO_RATE_CAP_MICRO, Math.min(1 + MICRO_RATE_CAP_MICRO, rateAdj));
+        let rateAdj = 1 - Math.max(-0.008, Math.min(0.008, drift * 15));
+        rateAdj = Math.max(1 - 0.008, Math.min(1 + 0.008, rateAdj));
         if (Math.abs(audio.playbackRate - rateAdj) > 0.0001) {
+          console.log('[DriftCorrection] Micro-correction: drift=', drift, 'rateAdj=', rateAdj);
           audio.playbackRate = rateAdj;
           setTimeout(() => {
             if (audio && Math.abs(audio.playbackRate - 1) > 0.0001) {
