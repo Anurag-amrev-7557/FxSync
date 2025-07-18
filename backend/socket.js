@@ -364,6 +364,8 @@ export function setupSocket(io) {
           return;
         }
         const response = buildSessionSyncState(session);
+        // Add syncVersion to the response
+        response.syncVersion = getSyncVersion(sessionId);
         if (typeof callback === 'function') callback(response);
       } catch (err) {
         if (typeof callback === 'function') callback({ error: 'Internal server error' });
@@ -1657,9 +1659,9 @@ export function setupSocket(io) {
   }, 60 * 1000);
 
   // --- Adaptive sync_state broadcast ---
-  const BASE_SYNC_INTERVAL = 300; // ms (was 500)
-  const HIGH_DRIFT_SYNC_INTERVAL = 100; // ms (was 200)
-  const DRIFT_THRESHOLD = 0.2; // seconds
+  const BASE_SYNC_INTERVAL = 150; // ms (tighter sync)
+  const HIGH_DRIFT_SYNC_INTERVAL = 60; // ms (ultra-tight sync)
+  const DRIFT_THRESHOLD = 0.08; // seconds (more sensitive)
   const DRIFT_WINDOW = 10000; // ms (10s)
   const DRIFT_AVG_WINDOW = 8; // Number of drift samples for moving average
   const clientDriftMap = {}; // sessionId -> { clientId: { drift, timestamp, history: [] } }

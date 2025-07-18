@@ -115,32 +115,28 @@ export default function useDriftCorrection({
   }
 
   /**
-   * Micro-Drift Correction Effect (requestAnimationFrame version)
-   * Uses EMA-smoothed and median-filtered drift for ultra-precise, stable corrections.
-   * For sub-10ms drift, uses direct currentTime nudge (micro-nudging).
+   * Ultra-precise Micro-Millisecond Drift Correction (RAF loop)
+   * - Uses performance.now() for all local time math
+   * - For drift > 1ms, nudge currentTime directly
+   * - For drift < 1ms, use playbackRate micro-correction, then ramp back to 1.0
+   * - Runs every animation frame for ultra-smooth sync
    */
   useEffect(() => {
     if (!audioRef.current) return;
     const audio = audioRef.current;
     let running = true;
-    let lastFrameTime = performance.now();
     let microActive = false;
     let pausedByVisibility = false;
-    driftEMARef.current.reset(0); // Reset EMA on effect re-run
+    driftEMARef.current.reset(0);
     driftBufferRef.current = [];
-    // Reset worker state
     if (driftWorkerRef.current) driftWorkerRef.current.postMessage({ reset: true });
-    function correctMicroDriftRAF() {
+    function correctUltraPreciseDriftRAF() {
       if (!running || pausedByVisibility) return;
       if (!audio || isController) return;
-      const nowFrame = performance.now();
-      const frameElapsed = nowFrame - lastFrameTime;
-      lastFrameTime = nowFrame;
-      // Detect animation frame throttling (e.g., tab backgrounded)
-      if (frameElapsed > 500 && typeof onDriftDetected === 'function') {
-        onDriftDetected('raf_drift');
-      }
-      const now = getServerTime ? getServerTime() : Date.now();
+      // Use performance.now() for local time
+      const perfNow = window.performance ? performance.timeOrigin + performance.now() : Date.now();
+      // Use getServerTime if available, else fallback
+      const now = getServerTime ? getServerTime() : perfNow;
       const rttComp = rtt ? rtt / 2000 : 0;
       const expected =
         sessionSyncState &&
@@ -153,73 +149,48 @@ export default function useDriftCorrection({
             smoothedOffset
           : null;
       if (!isFiniteNumber(expected)) {
-        requestAnimationFrame(correctMicroDriftRAF);
+        requestAnimationFrame(correctUltraPreciseDriftRAF);
         return;
       }
       const drift = audio.currentTime - expected;
-      // --- Use Web Worker for smoothing drift ---
-      if (driftWorkerRef.current) {
-        driftWorkerRef.current.postMessage({ drift });
-      }
-      const medianDrift = workerDrift.median;
-      // --- Micro-nudging for sub-10ms drift ---
-      if (Math.abs(medianDrift) > 0.002 && Math.abs(medianDrift) < 0.01) {
-        // 2ms < drift < 10ms
-        audio.currentTime += -medianDrift * 0.5; // Nudge toward expected
-        if (!microActive && typeof onMicroCorrection === 'function') onMicroCorrection(true);
-        microActive = true;
-        if (import.meta.env.MODE === 'development') {
-          window._driftAnalytics = window._driftAnalytics || [];
-          window._driftAnalytics.push({
-            type: 'nudge',
-            drift: medianDrift,
-            time: Date.now(),
-            current: audio.currentTime,
-            expected,
-          });
+      // For drift > 10ms, nudge currentTime directly
+      if (Math.abs(drift) > 0.01) {
+        audio.currentTime = expected;
+        if (microActive && typeof onMicroCorrection === 'function') onMicroCorrection(false);
+        microActive = false;
+        if (audio.playbackRate !== 1) {
+          rampPlaybackRate(audio, 200, rampLockRef);
         }
-      } else if (Math.abs(medianDrift) > adaptiveMin && Math.abs(medianDrift) < adaptiveMax) {
-        // Use playbackRate micro-correction
+      } else if (Math.abs(drift) > 0.0001) {
+        // For sub-10ms drift, use playbackRate micro-correction
         if (!microActive && typeof onMicroCorrection === 'function') onMicroCorrection(true);
         microActive = true;
-        let rateAdj =
-          1 -
-          Math.max(
-            -MICRO_RATE_CAP_MICRO,
-            Math.min(MICRO_RATE_CAP_MICRO, (medianDrift / adaptiveMax) * MICRO_RATE_CAP_MICRO)
-          );
+        let rateAdj = 1 - Math.max(-MICRO_RATE_CAP_MICRO, Math.min(MICRO_RATE_CAP_MICRO, drift * 20));
         rateAdj = Math.max(1 - MICRO_RATE_CAP_MICRO, Math.min(1 + MICRO_RATE_CAP_MICRO, rateAdj));
-        if (Math.abs(audio.playbackRate - rateAdj) > 0.0005) {
+        if (Math.abs(audio.playbackRate - rateAdj) > 0.0001) {
           audio.playbackRate = rateAdj;
-          if (import.meta.env.MODE === 'development') {
-            window._driftAnalytics = window._driftAnalytics || [];
-            window._driftAnalytics.push({
-              type: 'micro',
-              drift: medianDrift,
-              rateAdj,
-              time: Date.now(),
-              current: audio.currentTime,
-              expected,
-            });
-          }
+          setTimeout(() => {
+            if (audio && Math.abs(audio.playbackRate - 1) > 0.0001) {
+              rampPlaybackRate(audio, 200, rampLockRef);
+            }
+          }, 200);
         }
       } else {
         if (microActive && typeof onMicroCorrection === 'function') onMicroCorrection(false);
         microActive = false;
         if (audio.playbackRate !== 1) {
-          rampPlaybackRate(audio, 300, rampLockRef);
+          rampPlaybackRate(audio, 200, rampLockRef);
         }
       }
-      requestAnimationFrame(correctMicroDriftRAF);
+      requestAnimationFrame(correctUltraPreciseDriftRAF);
     }
-    let rafId = requestAnimationFrame(correctMicroDriftRAF);
-    // Page Visibility API: pause/resume correction loop
+    let rafId = requestAnimationFrame(correctUltraPreciseDriftRAF);
     function handleVisibility() {
       if (document.visibilityState === 'hidden') {
         pausedByVisibility = true;
       } else {
         pausedByVisibility = false;
-        rafId = requestAnimationFrame(correctMicroDriftRAF);
+        rafId = requestAnimationFrame(correctUltraPreciseDriftRAF);
       }
     }
     document.addEventListener('visibilitychange', handleVisibility);

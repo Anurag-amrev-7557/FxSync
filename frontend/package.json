@@ -17,6 +17,7 @@
     "@tanstack/react-query": "^5.83.0",
     "@testing-library/react": "^14.3.1",
     "browser-id3-writer": "^6.2.0",
+    "clsx": "^2.1.1",
     "express-validator": "^7.2.1",
     "jsmediatags": "^3.9.7",
     "kalmanjs": "^1.1.0",

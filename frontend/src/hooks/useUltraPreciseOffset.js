@@ -35,7 +35,7 @@ export default function useUltraPreciseOffset(peerSyncs, timeOffset, rtt, jitter
     }
   }, [allPeerDisconnected, onPeerSyncFallback]);
 
-  // Outlier filter: discard peer offsets that deviate >2x stddev from the median
+  // Outlier filter: discard peer offsets that deviate >1.5x stddev from the median
   const filteredPeerOffsets = useMemo(() => {
     if (allPeerOffsets.length < 2) return allPeerOffsets;
     const offsets = allPeerOffsets.map((o) => o.offset);
@@ -45,14 +45,14 @@ export default function useUltraPreciseOffset(peerSyncs, timeOffset, rtt, jitter
       offsets.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / offsets.length
     );
     return allPeerOffsets.filter(
-      (o) => Math.abs(o.offset - median) <= SYNC_CONFIG.OUTLIER_STDDEV_MULTIPLIER * stddev
+      (o) => Math.abs(o.offset - median) <= 1.5 * stddev // More aggressive outlier removal
     );
   }, [allPeerOffsets]);
 
-  // Exclude peers with unstable RTT (>300ms or NaN)
+  // Exclude peers with unstable RTT (>80ms or NaN)
   const stablePeerOffsets = useMemo(
     () =>
-      filteredPeerOffsets.filter((o) => typeof o.rtt === 'number' && o.rtt < 300 && !isNaN(o.rtt)),
+      filteredPeerOffsets.filter((o) => typeof o.rtt === 'number' && o.rtt < 80 && !isNaN(o.rtt)),
     [filteredPeerOffsets]
   );
 
@@ -84,13 +84,15 @@ export default function useUltraPreciseOffset(peerSyncs, timeOffset, rtt, jitter
     return arr[arr.length - 1].offset;
   }
 
-  // Select the best offset (highest score)
+  // Select the best offset (prefer lowest RTT, fallback to server if peer RTT is high)
   const bestOffsetObj = useMemo(() => {
-    const candidates = [...stablePeerOffsets, { offset: timeOffset, rtt: rtt, source: 'server' }];
-    return candidates.reduce(
-      (best, o) => (scoreOffset(o) > scoreOffset(best) ? o : best),
-      candidates[0]
-    );
+    // If no stable peers, use server
+    if (!stablePeerOffsets.length) return { offset: timeOffset, rtt: rtt, source: 'server' };
+    // Otherwise, pick the lowest RTT peer
+    const bestPeer = stablePeerOffsets.reduce((best, o) => (o.rtt < best.rtt ? o : best), stablePeerOffsets[0]);
+    // If best peer RTT is still too high, fallback to server
+    if (bestPeer.rtt > 80) return { offset: timeOffset, rtt: rtt, source: 'server' };
+    return bestPeer;
   }, [stablePeerOffsets, timeOffset, rtt]);
 
   // --- NTP-like filter: rolling window, IQR outlier removal, median smoothing ---

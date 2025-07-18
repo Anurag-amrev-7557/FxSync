@@ -12,6 +12,7 @@ import {
 } from './Icons';
 import FeatureHighlight from './FeatureHighlight';
 import PropTypes from 'prop-types';
+import { animationDurations, animationEasings } from '../utils/animationTokens';
 
 // Animation and layout constants
 const ANIMATION_DELAY_REALTIME = 0;
@@ -45,25 +46,25 @@ const SessionHero = React.memo(function SessionHero({ isVisible }) {
             isVisible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'
           )}
         >
-          <span className="inline-block transition-all duration-700 delay-500 hover:scale-110 hover:text-blue-200 cursor-pointer group relative overflow-visible">
+          <span className="inline-block transition-transform transition-colors duration-700 delay-500 hover:scale-110 hover:text-blue-200 cursor-pointer group relative overflow-visible">
             <span className="relative z-10 bg-gradient-to-r from-white via-blue-100 to-neutral-200 bg-clip-text text-transparent group-hover:from-blue-200 group-hover:to-white transition-all duration-500">
               Sync Your
             </span>
             <div className="absolute inset-0 bg-gradient-to-r from-transparent via-blue-400/20 to-transparent transform -skew-x-12 transition-transform duration-700 group-hover:translate-x-full"></div>
             {/* Animated music note */}
-            <MusicIcon className="absolute -top-4 -right-8 w-8 h-8 text-blue-300 opacity-0 group-hover:opacity-100 transition-all duration-500 group-hover:animate-bounce" />
+            <MusicIcon className="absolute -top-4 -right-8 w-8 h-8 text-blue-300 opacity-0 group-hover:opacity-100 transition-opacity duration-500 group-hover:animate-bounce" />
             {/* Sparkle effect */}
-            <SparkleIcon className="absolute -top-2 left-1/2 -translate-x-1/2 w-4 h-4 text-yellow-200 opacity-0 group-hover:opacity-100 transition-all duration-700 group-hover:animate-twinkle" />
+            <SparkleIcon className="absolute -top-2 left-1/2 -translate-x-1/2 w-4 h-4 text-yellow-200 opacity-0 group-hover:opacity-100 transition-opacity duration-700 group-hover:animate-twinkle" />
           </span>
           <br />
-          <span className="text-neutral-300 inline-block transition-all duration-700 delay-700 hover:scale-110 hover:text-pink-200 cursor-pointer group relative overflow-visible">
+          <span className="text-neutral-300 inline-block transition-transform transition-colors duration-700 delay-700 hover:scale-110 hover:text-pink-200 cursor-pointer group relative overflow-visible">
             <span className="relative z-10 bg-gradient-to-r from-neutral-300 via-pink-200 to-white bg-clip-text text-transparent group-hover:from-white group-hover:to-pink-200 transition-all duration-500">
               Music
             </span>
             <div className="absolute inset-0 bg-gradient-to-r from-transparent via-pink-400/30 to-transparent transform -skew-x-12 transition-transform duration-700 group-hover:translate-x-full"></div>
             <div className="absolute -inset-1 bg-gradient-to-r from-pink-400/20 via-neutral-500/30 to-blue-400/20 rounded-lg blur opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
             {/* Animated sound waves */}
-            <div className="absolute -bottom-2 left-0 flex items-end gap-0.5 opacity-0 group-hover:opacity-100 transition-all duration-500">
+            <div className="absolute -bottom-2 left-0 flex items-end gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-500">
               {SOUND_WAVE_HEIGHTS.map((height, i) => (
                 <div
                   key={i}
@@ -77,8 +78,8 @@ const SessionHero = React.memo(function SessionHero({ isVisible }) {
               ))}
             </div>
             {/* Floating musical notes */}
-            <MusicIcon className="absolute -top-4 -left-4 w-5 h-5 text-pink-300 opacity-0 group-hover:opacity-100 transition-all duration-700 group-hover:animate-spin" />
-            <MusicIcon className="absolute -bottom-3 -right-3 w-4 h-4 text-blue-400 opacity-0 group-hover:opacity-100 transition-all duration-700 delay-200 group-hover:animate-ping" />
+            <MusicIcon className="absolute -top-4 -left-4 w-5 h-5 text-pink-300 opacity-0 group-hover:opacity-100 transition-opacity duration-700 group-hover:animate-spin" />
+            <MusicIcon className="absolute -bottom-3 -right-3 w-4 h-4 text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity duration-700 delay-200 group-hover:animate-ping" />
           </span>
         </h1>
         <p
@@ -90,7 +91,7 @@ const SessionHero = React.memo(function SessionHero({ isVisible }) {
         >
           Create <span className="font-semibold text-white">synchronized listening rooms</span>{' '}
           where everyone experiences music together.
-          <span className="inline-block ml-2 transition-all duration-300 hover:rotate-12 animate-wiggle">
+          <span className="inline-block ml-2 transition-transform duration-300 hover:rotate-12 animate-wiggle">
             🎧
           </span>
         </p>

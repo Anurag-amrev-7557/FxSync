@@ -8,6 +8,7 @@ import UploadForm from './UploadForm';
 import QueueList from './QueueList';
 import Toast from './Toast';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { animationDurations, animationEasings } from '../utils/animationTokens';
 
 // Helper to format duration in seconds to mm:ss
 function formatDuration(seconds) {
@@ -106,7 +107,7 @@ const Playlist = React.memo(function Playlist({
     staleTime: 1000 * 60 * 5, // 5 minutes
     cacheTime: 1000 * 60 * 30, // 30 minutes
     refetchOnWindowFocus: false,
-    suspense: true,
+    suspense: false,
   });
 
   // Prefetch all-tracks on mount for snappy UX
@@ -120,6 +121,7 @@ const Playlist = React.memo(function Playlist({
       },
       staleTime: 1000 * 60 * 5,
       cacheTime: 1000 * 60 * 30,
+      suspense: false,
     });
   }, [queryClient, backendUrl]);
 
@@ -787,7 +789,7 @@ const Playlist = React.memo(function Playlist({
                   {/* Upload Button */}
                   <div className="mt-4 space-y-2">
                     <button
-                      className="w-full bg-primary text-white font-semibold py-3 px-4 rounded-xl shadow-lg hover:bg-primary/90 transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
+                      className="w-full bg-primary text-white font-semibold py-3 px-4 rounded-xl shadow-lg hover:bg-primary/90 transition-colors transition-transform duration-200 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center space-x-2"
                       onClick={handleUploadAll}
                       disabled={uploading}
                     >

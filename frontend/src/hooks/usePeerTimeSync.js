@@ -16,9 +16,7 @@ export default function usePeerTimeSync(socket, localId, peerId) {
   const intervalRef = useRef(null);
 
   useEffect(() => {
-    console.log('usePeerTimeSync effect running:', { socket, localId, peerId });
     if (!socket || !localId || !peerId || localId === peerId) {
-      console.log('usePeerTimeSync effect early return:', { socket, localId, peerId });
       return;
     }
 
@@ -126,14 +124,12 @@ export default function usePeerTimeSync(socket, localId, peerId) {
           const elapsed = nowInterval - lastIntervalFired;
           lastIntervalFired = nowInterval;
           // Timer drift detection: if interval fires late, reset connection
-          if (elapsed > 4000) {
-            // 2x the normal 2000ms interval
+          if (elapsed > 1200) { // 4x the normal 300ms interval
             setConnectionState('disconnected');
             if (intervalRef.current) clearInterval(intervalRef.current);
             if (dataChannel.readyState === 'open' || dataChannel.readyState === 'connecting') {
               dataChannel.close();
             }
-            // Optionally, log or trigger a reconnect here
             if (
               typeof window !== 'undefined' &&
               window.console &&
@@ -147,7 +143,7 @@ export default function usePeerTimeSync(socket, localId, peerId) {
           }
           const now = Date.now();
           dataChannel.send(JSON.stringify({ type: 'timeSync', clientSent: now }));
-        }, 2000);
+        }, 300); // Increased frequency for tighter sync
       };
       dataChannel.onclose = () => {
         setConnectionState('disconnected');

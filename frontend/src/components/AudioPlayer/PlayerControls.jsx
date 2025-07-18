@@ -1,5 +1,6 @@
 import React from 'react';
 import PropTypes from 'prop-types';
+import { animationDurations, animationEasings } from '../../utils/animationTokens';
 
 /**
  * PlayerControls - Audio player transport controls (prev, play/pause, next)
@@ -31,7 +32,7 @@ export default function PlayerControls({
     <div className="flex items-center gap-3">
       {/* Previous Button */}
       <button
-        className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-200 border-none bg-transparent p-0 ${
+        className={`w-10 h-10 rounded-full flex items-center justify-center transition-transform transition-opacity duration-200 border-none bg-transparent p-0 ${
           canGoPrevious ? 'text-white hover:text-primary' : 'text-neutral-500 cursor-not-allowed'
         }`}
         onClick={onPrevious}
@@ -55,7 +56,7 @@ export default function PlayerControls({
       </button>
       {/* Play/Pause Button */}
       <button
-        className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-200 ${
+        className={`w-10 h-10 rounded-full flex items-center justify-center transition-transform transition-opacity duration-200 ${
           isPlaying ? 'bg-white text-black' : 'bg-primary hover:bg-primary/90 text-white'
         } disabled:opacity-50 disabled:cursor-not-allowed`}
         onClick={isPlaying ? onPause : onPlay}
@@ -95,7 +96,7 @@ export default function PlayerControls({
       </button>
       {/* Next Button */}
       <button
-        className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-200 border-none bg-transparent p-0 ${
+        className={`w-10 h-10 rounded-full flex items-center justify-center transition-transform transition-opacity duration-200 border-none bg-transparent p-0 ${
           canGoNext ? 'text-white hover:text-primary' : 'text-neutral-500 cursor-not-allowed'
         }`}
         onClick={onNext}

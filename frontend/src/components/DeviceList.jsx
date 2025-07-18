@@ -15,6 +15,7 @@ import React, { useState, useEffect, useRef, useContext, useCallback, useMemo } 
 import { VariableSizeList as List } from 'react-window';
 import { ReducedMotionContext } from '../App';
 import PropTypes from 'prop-types';
+import { animationDurations, animationEasings } from '../utils/animationTokens';
 
 // Helper: Minimalist & Modern Device avatar with status indicator (Black & White Dark Theme)
 function DeviceAvatar({ isController, isCurrentUser }) {
@@ -197,7 +198,7 @@ const DeviceListItem = React.memo(function DeviceListItem({
   return (
     <li
       key={c.clientId || c.id}
-      className={`flex items-center p-4 transition-all duration-300 group relative
+      className={`flex items-center p-4 transition-transform transition-colors duration-300 group relative
         ${isCurrentController ? 'bg-primary/10 border-l-4 border-l-primary shadow-md' : 'hover:bg-neutral-800/50'}
         ${!reducedMotion ? 'animate-slide-in-left' : ''}
         ${clientAnimations[index]?.animationClass || ''}

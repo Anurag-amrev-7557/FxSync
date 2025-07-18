@@ -15,6 +15,7 @@ import ErrorBanner from './AudioPlayer/ErrorBanner';
 import TrackInfo from './AudioPlayer/TrackInfo';
 import SyncStatusBanner from './AudioPlayer/SyncStatusBanner';
 import DiagnosticsPanel from './AudioPlayer/DiagnosticsPanel';
+import { animationDurations, animationEasings } from '../utils/animationTokens';
 
 // Add global error handlers
 if (typeof window !== 'undefined' && !window._audioPlayerErrorHandlerAdded) {
@@ -248,6 +249,15 @@ function getNow(getServerTime) {
   }
 }
 
+// --- Singleton AudioContext for ultra-stable timing ---
+let globalAudioCtx = null;
+function getAudioContext() {
+  if (!globalAudioCtx) {
+    globalAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  return globalAudioCtx;
+}
+
 /**
  * AudioPlayer: Ultra-precise, micro-millisecond-level synchronized audio player.
  * Uses EMA smoothing for offset and drift, and micro-correction for imperceptible sync.
@@ -272,6 +282,7 @@ export default function AudioPlayer({
   selectedTrackIdx = 0, // Add selectedTrackIdx prop
   onSelectTrack, // Add onSelectTrack prop
   sessionId, // Add sessionId prop
+  peerSyncs = [], // <-- Add this prop for peer syncs
 }) {
   // Fix: manualLatency must be declared before any useEffect or code that references it
   const [manualLatency, setManualLatency] = useState(() => {
@@ -305,8 +316,8 @@ export default function AudioPlayer({
 
   // Check if previous/next buttons should be enabled
   const canNavigate = isController && queue && queue.length > 1;
-  const canGoPrevious = isController && canNavigate && selectedTrackIdx > 0;
-  const canGoNext = isController && canNavigate && selectedTrackIdx < queue.length - 1;
+  const canGoPrevious = Boolean(isController && canNavigate && selectedTrackIdx > 0);
+  const canGoNext = Boolean(isController && canNavigate && selectedTrackIdx < queue.length - 1);
   // Remove: audioUrl, loading, audioError, isPlaying, duration, displayedCurrentTime, audioRef, and their setters
   // Instead, use:
   const lastSeekTime = useRef(0); // Track last user seek time
@@ -354,14 +365,14 @@ export default function AudioPlayer({
   // --- Dynamic Drift Correction Parameters ---
   const driftParams = getDriftCorrectionParams({ rtt, jitter });
 
-  // After calling useUltraPreciseOffset, destructure as:
+  // Use peerSyncs for ultra-precise offset if available
   const {
     ultraPreciseOffset: computedUltraPreciseOffset,
     syncQuality,
     allOffsets,
     selectedSource,
   } = useUltraPreciseOffset(
-    [], // Pass an empty array if no peerSyncs are available
+    peerSyncs && peerSyncs.length > 0 ? peerSyncs : [], // Use peerSyncs if provided
     timeOffset,
     rtt,
     jitter
@@ -512,6 +523,94 @@ export default function AudioPlayer({
       setDisplayedCurrentTime(0);
     }
   }, [selectedTrackIdx]);
+
+  // --- Predictive drift compensation state ---
+  const driftHistoryRef = useRef([]); // Store recent drift values
+  const [predictedDrift, setPredictedDrift] = useState(0);
+
+  // --- Enhanced: Use AudioContext.currentTime for all sync math ---
+  function getUltraStableNow() {
+    const ctx = getAudioContext();
+    // Convert AudioContext.currentTime (seconds since context creation) to epoch ms
+    return ctx ? ctx.baseLatency ? ctx.currentTime * 1000 + performance.timeOrigin : ctx.currentTime * 1000 + performance.timeOrigin : Date.now();
+  }
+
+  // --- Per-listener adaptive play scheduling ---
+  useEffect(() => {
+    if (!socket) return;
+    // Listen for sync_state events
+    const handleSyncState = ({ isPlaying, timestamp, lastUpdated, serverTime, syncVersion }) => {
+      if (!audioRef.current) return;
+      const audio = audioRef.current;
+      // Only listeners (not controller) schedule playback
+      if (isController) return;
+      // Calculate the exact scheduled start time using AudioContext
+      const ctx = getAudioContext();
+      const now = getUltraStableNow();
+      // Use the most recent offset, RTT, and predicted drift
+      const rttComp = rtt ? rtt / 2000 : 0;
+      const expectedStart =
+        timestamp + (now - lastUpdated) / 1000 - audioLatency + rttComp + smoothedOffset + predictedDrift;
+      const delay = (expectedStart - audio.currentTime) * 1000;
+      if (isPlaying && delay > 0) {
+        // Schedule playback at the exact time
+        setTimeout(() => {
+          audio.play().catch(() => {});
+        }, delay);
+      } else if (isPlaying && delay <= 0) {
+        // If already late, start immediately and seek to expected position
+        audio.currentTime = expectedStart;
+        audio.play().catch(() => {});
+      } else if (!isPlaying) {
+        audio.pause();
+      }
+    };
+    socket.on('sync_state', handleSyncState);
+    return () => socket.off('sync_state', handleSyncState);
+  }, [socket, isController, audioLatency, smoothedOffset, predictedDrift, rtt]);
+
+  // --- Predictive drift compensation logic ---
+  useEffect(() => {
+    let raf;
+    function updatePrediction() {
+      if (!audioRef.current) return;
+      const audio = audioRef.current;
+      const ctx = getAudioContext();
+      const now = getUltraStableNow();
+      // Calculate drift as usual
+      const expected = /* same as in drift correction */
+        sessionSyncState && typeof sessionSyncState.timestamp === 'number' && typeof sessionSyncState.lastUpdated === 'number'
+          ? sessionSyncState.timestamp + (now - sessionSyncState.lastUpdated) / 1000 - audioLatency + (rtt ? rtt / 2000 : 0) + smoothedOffset
+          : null;
+      if (expected !== null && isFinite(expected)) {
+        const drift = audio.currentTime - expected;
+        // Store drift history
+        driftHistoryRef.current.push(drift);
+        if (driftHistoryRef.current.length > 10) driftHistoryRef.current.shift();
+        // Predict next drift using linear regression (simple trend)
+        if (driftHistoryRef.current.length >= 3) {
+          const n = driftHistoryRef.current.length;
+          const x = Array.from({ length: n }, (_, i) => i);
+          const y = driftHistoryRef.current;
+          const xMean = x.reduce((a, b) => a + b, 0) / n;
+          const yMean = y.reduce((a, b) => a + b, 0) / n;
+          let num = 0, den = 0;
+          for (let i = 0; i < n; i++) {
+            num += (x[i] - xMean) * (y[i] - yMean);
+            den += (x[i] - xMean) ** 2;
+          }
+          const slope = den ? num / den : 0;
+          // Predict drift 1 frame ahead (16ms)
+          setPredictedDrift(slope * 0.016);
+        } else {
+          setPredictedDrift(0);
+        }
+      }
+      raf = requestAnimationFrame(updatePrediction);
+    }
+    raf = requestAnimationFrame(updatePrediction);
+    return () => cancelAnimationFrame(raf);
+  }, [sessionSyncState, audioLatency, rtt, smoothedOffset]);
 
   // Auto-play audio for listeners when audioUrl changes and should be playing
   useEffect(() => {
@@ -1022,7 +1121,12 @@ export default function AudioPlayer({
     if (isController && socket && getServerTime) {
       const now = getNow(getServerTime);
       const audio = audioRef.current;
-      const playAt = (audio ? audio.currentTime : 0) + SYNC_CONFIG.PLAY_OFFSET;
+      // Adaptive play offset: at least 250ms, or RTT + jitter + 80ms safety margin
+      const adaptiveOffset = Math.max(
+        0.25,
+        (rtt ? rtt / 1000 : 0) + (jitter ? jitter / 1000 : 0) + 0.08
+      );
+      const playAt = (audio ? audio.currentTime : 0) + adaptiveOffset;
       const payload = {
         sessionId: socket.sessionId,
         timestamp: playAt,
@@ -1408,7 +1512,7 @@ export default function AudioPlayer({
           <div
             className={
               `bg-neutral-900/95 backdrop-blur-xl rounded-3xl shadow-2xl flex flex-col gap-2 border border-neutral-700/50 overflow-hidden` +
-              (dragging ? '' : ' transition-all duration-300')
+              (dragging ? '' : ' transition-transform transition-opacity duration-300')
             }
             style={{
               minHeight: expanded ? 'auto' : interpHeight,

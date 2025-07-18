@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
+import { animationDurations, animationEasings } from '../utils/animationTokens';
 
 /**
  * BottomTabBar - Enhanced minimalist, modern, glassy tab bar for mobile
@@ -247,7 +248,7 @@ function BottomTabBar({
           <button
             key={tab.label}
             ref={tabRefs[idx]}
-            className={`flex-1 flex flex-row items-center justify-center min-w-[44px] min-h-[44px] py-1 px-2 sm:px-3 relative z-20 transition-all duration-400 ease-[cubic-bezier(0.22,1,0.36,1)] active:scale-95 active:bg-neutral-800/40 active:shadow-inner focus:outline-none hover:bg-neutral-800/20 rounded-full gap-2 ${isActive ? 'scale-105 shadow-lg' : ''} ${isActive ? 'text-black font-bold' : 'text-white hover:text-neutral-200'} ${isDisabled ? 'opacity-40 pointer-events-none' : ''}`}
+            className={`flex-1 flex flex-row items-center justify-center min-w-[44px] min-h-[44px] py-1 px-2 sm:px-3 relative z-20 transition-transform transition-colors duration-400 ease-[${animationEasings.standard}] active:scale-95 active:bg-neutral-800/40 active:shadow-inner focus:outline-none hover:bg-neutral-800/20 rounded-full gap-2 ${isActive ? '' : ''}`}
             style={{
               zIndex: 10,
               transition:

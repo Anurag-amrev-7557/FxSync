@@ -2,8 +2,8 @@ const CACHE_NAME = 'fxsync-cache-v1';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
-  '/public/manifest.json',
-  '/public/fxsync.svg',
+  '/manifest.json',
+  '/fxsync.svg',
   // Add more assets as needed
 ];
 

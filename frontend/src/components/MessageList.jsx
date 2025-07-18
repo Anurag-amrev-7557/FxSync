@@ -1,6 +1,7 @@
 import React from 'react';
 import PropTypes from 'prop-types';
 import { VariableSizeList as List } from 'react-window';
+import { animationDurations, animationEasings } from '../utils/animationTokens';
 
 const MessageList = React.memo(function MessageList({
   messages,
@@ -44,10 +45,9 @@ const MessageList = React.memo(function MessageList({
           const groupEnd = isGroupEnd(messages, index);
           return (
             <div
-              style={style}
+              style={{ ...style, animationDelay: !reducedMotion ? `${index * 60}ms` : undefined }}
               key={msg.messageId || `${msg.sender}-${msg.timestamp}-${index}`}
-              className={`flex items-end transition-all duration-300 group ${isOwn ? 'justify-end' : 'justify-start'} enhanced-bubble-appear ${mobile ? '' : 'whatsapp-bubble-entry'} ${groupStart ? 'mt-3' : ''} ${groupEnd ? 'mb-2' : ''} ${mobile ? 'no-select-mobile' : ''}`}
-              style={{ animationDelay: !reducedMotion ? `${index * 60}ms` : undefined }}
+              className={`flex items-end transition-transform transition-colors duration-300 group ${isOwn ? 'justify-end' : 'justify-start'} enhanced-bubble-appear ${mobile ? '' : 'whatsapp-bubble-entry'} ${groupStart ? 'mt-3' : ''} ${groupEnd ? 'mb-2' : ''} ${mobile ? 'no-select-mobile' : ''}`}
               onContextMenu={(e) => handleContextMenu(e, msg)}
             >
               {!isOwn && groupStart && (

@@ -437,26 +437,20 @@ function SessionPage({
   // --- Peer Discovery ---
   useEffect(() => {
     if (!clientId || !clients || clients.length === 0) {
-      console.log('Peer filtering skipped: clientId or clients not ready', clientId, clients);
       return;
     }
-    console.log('Peer filtering: clientId:', clientId, 'clients:', clients);
     const peers = clients.filter((c) => c.clientId && c.clientId !== clientId);
-    console.log('Filtered peers:', peers);
     const peerIds = peers.map((c) => c.clientId);
-    console.log('Resulting peerIds:', peerIds);
     setPeerIds(peerIds);
   }, [clients, clientId]);
 
   useEffect(() => {
-    console.log('Peer IDs:', peerIds, 'Client ID:', clientId, 'Clients:', clients);
   }, [peerIds, clientId, clients]);
 
   // --- Peer-to-Peer Time Sync (Fixed Hooks) ---
   const MAX_PEERS = 5;
   const paddedPeerIds = [...peerIds.slice(0, MAX_PEERS)];
   while (paddedPeerIds.length < MAX_PEERS) paddedPeerIds.push(null);
-  console.log('On client', clientId, 'paddedPeerIds:', paddedPeerIds);
 
   const peerSyncA = usePeerTimeSync(socket, clientId, paddedPeerIds[0]);
   const peerSyncB = usePeerTimeSync(socket, clientId, paddedPeerIds[1]);
@@ -769,7 +763,7 @@ function SessionPage({
                   {clockSkewWarning}
                 </div>
               )}
-              {peerSyncFallback && (
+              {peerSyncFallback && clients && clients.length > 1 && (
                 <div className="bg-yellow-900/80 text-yellow-200 text-xs p-2 rounded mb-2 text-center">
                   Peer-to-peer sync unavailable. Falling back to server sync. Sync quality may be reduced.
                 </div>
@@ -811,6 +805,7 @@ function SessionPage({
                         selectedTrackIdx={selectedTrackIdx}
                         onSelectTrack={handleSelectTrack}
                         sessionId={currentSessionId}
+                        peerSyncs={peerSyncs} // <-- Pass peerSyncs for accurate offset
                       />
                     </div>
                     <div className="p-4">
@@ -1039,6 +1034,7 @@ function SessionPage({
                         selectedTrackIdx={selectedTrackIdx}
                         onSelectTrack={handleSelectTrack}
                         sessionId={currentSessionId}
+                        peerSyncs={peerSyncs} // <-- Pass peerSyncs for accurate offset
                       />
                     </div>
                   </div>
@@ -1084,6 +1080,7 @@ function SessionPage({
                             selectedTrackIdx={selectedTrackIdx}
                             onSelectTrack={handleSelectTrack}
                             sessionId={currentSessionId}
+                            peerSyncs={peerSyncs} // <-- Pass peerSyncs for accurate offset
                           />
                         </Suspense>
                       </ErrorBoundary>

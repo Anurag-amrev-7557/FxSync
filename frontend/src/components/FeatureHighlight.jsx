@@ -1,12 +1,13 @@
 import React, { useId } from 'react';
 import PropTypes from 'prop-types';
 import { SparkleIcon } from './Icons';
+import { animationDurations, animationEasings } from '../utils/animationTokens';
 
 const FeatureHighlight = ({ icon, text, tooltip, accent, delay = 0, tabIndex = 0, ariaLabel, ...props }) => {
   const tooltipId = useId();
   return (
     <div
-      className={`relative flex items-center gap-2 text-xs sm:text-sm text-neutral-400 group cursor-pointer transition-all duration-300 hover:text-white hover:scale-105`}
+      className={`relative flex items-center gap-2 text-xs sm:text-sm text-neutral-400 group cursor-pointer transition-colors transition-transform duration-300 hover:text-white hover:scale-105`}
       style={{ transitionDelay: `${delay}ms` }}
       tabIndex={tabIndex}
       role="button"
@@ -15,11 +16,11 @@ const FeatureHighlight = ({ icon, text, tooltip, accent, delay = 0, tabIndex = 0
       {...props}
     >
       <div
-        className={`flex items-center justify-center w-8 h-8 rounded-full bg-gradient-to-br ${accent} transition-all duration-300 shadow-md`}
+        className={`flex items-center justify-center w-8 h-8 rounded-full bg-gradient-to-br ${accent} transition-colors transition-transform duration-300 shadow-md`}
       >
         {icon}
       </div>
-      <span className="transition-all duration-300 group-hover:translate-x-1 font-semibold">
+      <span className="transition-transform duration-300 group-hover:translate-x-1 font-semibold">
         {text}
       </span>
       {/* Tooltip on hover/focus */}
@@ -34,7 +35,7 @@ const FeatureHighlight = ({ icon, text, tooltip, accent, delay = 0, tabIndex = 0
         </span>
       </div>
       {/* Accent sparkle */}
-      <SparkleIcon className="absolute -top-2 -right-2 w-3 h-3 text-white opacity-0 group-hover:opacity-80 transition-all duration-500 group-hover:animate-twinkle" />
+      <SparkleIcon className="absolute -top-2 -right-2 w-3 h-3 text-white opacity-0 group-hover:opacity-80 transition-opacity duration-500 group-hover:animate-twinkle" />
     </div>
   );
 };

@@ -1,6 +1,7 @@
 import React from 'react';
 import { MusicIcon } from './Icons';
 import { FixedSizeList as VirtualizedList } from 'react-window';
+import { animationDurations, animationEasings } from '../utils/animationTokens';
 
 function AllTracksList({
   filteredAllTracks,
@@ -37,7 +38,7 @@ function AllTracksList({
         <div className="text-red-400 text-xs flex items-center gap-2">
           {allTracksError}
           <button
-            className="ml-2 px-2 py-1 bg-neutral-700 text-white rounded text-xs hover:bg-primary/80 transition-all border border-neutral-600"
+            className="ml-2 px-2 py-1 bg-neutral-700 text-white rounded text-xs hover:bg-primary/80 transition-colors transition-transform duration-200 border border-neutral-600"
             onClick={handleRetry}
             type="button"
             aria-label="Retry loading tracks"
@@ -65,7 +66,7 @@ function AllTracksList({
               <div
                 style={style}
                 key={track.url}
-                className="p-2 hover:bg-primary/10 transition-all duration-200 cursor-pointer flex items-center gap-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                className="p-2 hover:bg-primary/10 transition-colors transition-transform duration-200 cursor-pointer flex items-center gap-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                 role="listitem"
                 tabIndex={0}
                 onClick={() => {
@@ -138,7 +139,7 @@ function AllTracksList({
           {filteredAllTracks.map((track, idx) => (
             <div
               key={track.url}
-              className="p-2 hover:bg-primary/10 transition-all duration-200 cursor-pointer flex items-center gap-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              className="p-2 hover:bg-primary/10 transition-colors transition-transform duration-200 cursor-pointer flex items-center gap-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
               role="listitem"
               tabIndex={0}
               onClick={() => {

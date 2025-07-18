@@ -832,7 +832,7 @@ export default function SessionForm({ onJoin, currentSessionId }) {
           transition: min-height 0.7s cubic-bezier(0.4, 0, 0.2, 1);
         }
         .form-transition {
-          transition: all 0.7s cubic-bezier(0.4, 0, 0.2, 1);
+          transition: transform 0.7s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.7s cubic-bezier(0.4, 0, 0.2, 1);
         }
         *:focus, *:focus-visible {
           outline: none !important;

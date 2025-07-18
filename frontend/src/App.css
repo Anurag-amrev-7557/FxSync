@@ -126,7 +126,7 @@ body {
 /* Button hover effects */
 .btn-primary {
   background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
-  transition: all 0.2s ease;
+  transition: background-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 
 .btn-primary:hover {
@@ -137,7 +137,7 @@ body {
 
 .btn-secondary {
   background: #262626;
-  transition: all 0.2s ease;
+  transition: background-color 0.2s ease, transform 0.2s ease;
 }
 
 .btn-secondary:hover {
@@ -286,9 +286,7 @@ body {
 
 /* Hover effects */
 .hover-lift {
-  transition:
-    transform 0.3s ease,
-    box-shadow 0.3s ease;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
 }
 
 .hover-lift:hover {
@@ -370,7 +368,7 @@ body {
 
 /* Enhanced hover effects */
 .hover-lift-enhanced {
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .hover-lift-enhanced:hover {
@@ -469,7 +467,7 @@ body {
 
 /* Emoji reaction hover effects */
 .emoji-reaction-button {
-  transition: all 0.2s ease;
+  transition: transform 0.2s ease;
 }
 
 .emoji-reaction-button:hover {
@@ -644,4 +642,16 @@ button:focus-visible {
   .animate-wiggle {
     animation: none !important;
   }
+}
+
+.btn-enhanced {
+  transition: background-color 0.3s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.card-enhanced {
+  transition: background-color 0.3s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.interactive-element {
+  transition: background-color 0.3s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
