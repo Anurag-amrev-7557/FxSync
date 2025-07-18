@@ -5,4 +5,4 @@ router.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: Date.now() });
 });
 
-export default router;
+export default router; 

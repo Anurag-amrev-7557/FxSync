@@ -23,7 +23,7 @@ export default function useSmoothAppearance(shouldShow, options = {}) {
     persistent = false,
     onEnter,
     onExit,
-    resetOnShow = false,
+    resetOnShow = false
   } = options;
 
   const [isVisible, setIsVisible] = useState(false);
@@ -36,13 +36,13 @@ export default function useSmoothAppearance(shouldShow, options = {}) {
       // Reset animation state if needed
       if (resetOnShow) {
         setHasAnimated(false);
-        setAnimationKey((prev) => prev + 1);
+        setAnimationKey(prev => prev + 1);
       }
 
       const timer = setTimeout(() => {
         setIsVisible(true);
         setIsExiting(false);
-
+        
         // Trigger enter animation
         const animationTimer = setTimeout(() => {
           setHasAnimated(true);
@@ -56,7 +56,7 @@ export default function useSmoothAppearance(shouldShow, options = {}) {
     } else if (!shouldShow && isVisible) {
       // Handle exit animation
       setIsExiting(true);
-
+      
       const exitTimer = setTimeout(() => {
         setIsVisible(false);
         if (!persistent) {
@@ -72,15 +72,15 @@ export default function useSmoothAppearance(shouldShow, options = {}) {
   // Enhanced animation class logic
   const getAnimationClass = () => {
     if (!isVisible) return 'opacity-0 scale-95';
-
+    
     if (isExiting) {
       return `${exitClass} opacity-0 scale-95`;
     }
-
+    
     if (!hasAnimated) {
       return `${animationClass} ${enterClass}`;
     }
-
+    
     return persistent ? '' : 'opacity-100 scale-100';
   };
 
@@ -89,20 +89,20 @@ export default function useSmoothAppearance(shouldShow, options = {}) {
     if (!isVisible) {
       return {
         transform: 'translateY(20px) scale(0.95)',
-        opacity: 0,
+        opacity: 0
       };
     }
-
+    
     if (isExiting) {
       return {
         transform: 'translateY(-20px) scale(0.95)',
-        opacity: 0,
+        opacity: 0
       };
     }
-
+    
     return {
       transform: 'translateY(0) scale(1)',
-      opacity: 1,
+      opacity: 1
     };
   };
 
@@ -116,7 +116,7 @@ export default function useSmoothAppearance(shouldShow, options = {}) {
     // Utility methods
     reset: () => {
       setHasAnimated(false);
-      setAnimationKey((prev) => prev + 1);
+      setAnimationKey(prev => prev + 1);
     },
     forceShow: () => {
       setIsVisible(true);
@@ -127,7 +127,7 @@ export default function useSmoothAppearance(shouldShow, options = {}) {
       setIsVisible(false);
       setHasAnimated(false);
       setIsExiting(false);
-    },
+    }
   };
 }
 
@@ -150,7 +150,7 @@ export function useStaggeredAnimation(items, options = {}) {
     reverse = false,
     loop = false,
     loopDelay = 2000,
-    onAnimationComplete,
+    onAnimationComplete
   } = options;
 
   const [animatedItems, setAnimatedItems] = useState(new Set());
@@ -167,22 +167,22 @@ export function useStaggeredAnimation(items, options = {}) {
 
     resetAnimations();
     const timers = [];
-    const itemIndices = reverse
-      ? Array.from({ length: items.length }, (_, i) => items.length - 1 - i)
-      : Array.from({ length: items.length }, (_, i) => i);
+    const itemIndices = reverse ? 
+      Array.from({ length: items.length }, (_, i) => items.length - 1 - i) : 
+      Array.from({ length: items.length }, (_, i) => i);
 
     itemIndices.forEach((index, i) => {
       const timer = setTimeout(() => {
-        setAnimatedItems((prev) => {
+        setAnimatedItems(prev => {
           const newSet = new Set([...prev, index]);
-
+          
           // Check if all items are animated
           if (newSet.size === items.length) {
             setIsComplete(true);
             if (onAnimationComplete) {
               onAnimationComplete();
             }
-
+            
             // Handle looping
             if (loop && !isLooping) {
               setIsLooping(true);
@@ -192,7 +192,7 @@ export function useStaggeredAnimation(items, options = {}) {
               }, loopDelay);
             }
           }
-
+          
           return newSet;
         });
       }, i * staggerDelay);
@@ -200,23 +200,14 @@ export function useStaggeredAnimation(items, options = {}) {
     });
 
     return timers;
-  }, [
-    items,
-    staggerDelay,
-    reverse,
-    loop,
-    loopDelay,
-    onAnimationComplete,
-    isLooping,
-    resetAnimations,
-  ]);
+  }, [items, staggerDelay, reverse, loop, loopDelay, onAnimationComplete, isLooping, resetAnimations]);
 
   useEffect(() => {
     const timers = startAnimation();
-
+    
     return () => {
       if (timers) {
-        timers.forEach((timer) => clearTimeout(timer));
+        timers.forEach(timer => clearTimeout(timer));
       }
     };
   }, [startAnimation]);
@@ -228,7 +219,7 @@ export function useStaggeredAnimation(items, options = {}) {
     delay: index * staggerDelay,
     isLast: index === items.length - 1,
     isFirst: index === 0,
-    progress: animatedItems.has(index) ? 1 : 0,
+    progress: animatedItems.has(index) ? 1 : 0
   }));
 
   return {
@@ -236,6 +227,6 @@ export function useStaggeredAnimation(items, options = {}) {
     isComplete,
     resetAnimations,
     isLooping,
-    totalDuration: items.length * staggerDelay,
+    totalDuration: items.length * staggerDelay
   };
 }

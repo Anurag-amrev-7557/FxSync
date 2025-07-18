@@ -6,4 +6,4 @@ export default function useModalState(initial = false) {
   const close = useCallback(() => setIsOpen(false), []);
   const toggle = useCallback(() => setIsOpen((v) => !v), []);
   return [isOpen, open, close, toggle];
-}
+} 

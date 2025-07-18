@@ -1,7 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import SYNC_CONFIG from '../utils/syncConfig';
 import { createEMA } from '../utils/syncConfig'; // Import EMA utility
-import DriftWorker from './driftWorker.js?worker';
 
 // Helper: Smoothly fade audio volume in/out
 export function fadeAudio(audio, targetVolume, duration = 200) {
@@ -83,18 +82,6 @@ export default function useDriftCorrection({
   const driftEMARef = useRef(createEMA(0.18, 0));
   // --- Drift buffer for median filter ---
   const driftBufferRef = useRef([]);
-  // --- Web Worker for drift analysis ---
-  const driftWorkerRef = useRef();
-  const [workerDrift, setWorkerDrift] = useState({ ema: 0, median: 0 });
-  useEffect(() => {
-    driftWorkerRef.current = new DriftWorker();
-    driftWorkerRef.current.onmessage = (e) => {
-      setWorkerDrift(e.data);
-    };
-    return () => {
-      driftWorkerRef.current.terminate();
-    };
-  }, []);
 
   // --- Adaptive thresholds based on jitter ---
   let adaptiveMin = MICRO_DRIFT_MIN;
@@ -104,7 +91,7 @@ export default function useDriftCorrection({
     const jitterVal = sessionSyncState.jitter;
     if (jitterVal > 30) {
       adaptiveMin = 0.025; // 25ms
-      adaptiveMax = 0.25; // 250ms
+      adaptiveMax = 0.25;  // 250ms
     } else if (jitterVal > 15) {
       adaptiveMin = 0.015;
       adaptiveMax = 0.15;
@@ -115,82 +102,84 @@ export default function useDriftCorrection({
   }
 
   /**
-   * Ultra-precise Micro-Millisecond Drift Correction (RAF loop)
-   * - Uses performance.now() for all local time math
-   * - For drift > 1ms, nudge currentTime directly
-   * - For drift < 1ms, use playbackRate micro-correction, then ramp back to 1.0
-   * - Runs every animation frame for ultra-smooth sync
+   * Micro-Drift Correction Effect (requestAnimationFrame version)
+   * Uses EMA-smoothed and median-filtered drift for ultra-precise, stable corrections.
+   * For sub-10ms drift, uses direct currentTime nudge (micro-nudging).
    */
   useEffect(() => {
     if (!audioRef.current) return;
     const audio = audioRef.current;
     let running = true;
+    let lastFrameTime = performance.now();
     let microActive = false;
     let pausedByVisibility = false;
-    driftEMARef.current.reset(0);
+    driftEMARef.current.reset(0); // Reset EMA on effect re-run
     driftBufferRef.current = [];
-    if (driftWorkerRef.current) driftWorkerRef.current.postMessage({ reset: true });
-    function correctUltraPreciseDriftRAF() {
+    function correctMicroDriftRAF() {
       if (!running || pausedByVisibility) return;
       if (!audio || isController) return;
-      // Use performance.now() for local time
-      const perfNow = window.performance ? performance.timeOrigin + performance.now() : Date.now();
-      // Use getServerTime if available, else fallback
-      const now = getServerTime ? getServerTime() : perfNow;
+      const nowFrame = performance.now();
+      const frameElapsed = nowFrame - lastFrameTime;
+      lastFrameTime = nowFrame;
+      // Detect animation frame throttling (e.g., tab backgrounded)
+      if (frameElapsed > 500 && typeof onDriftDetected === 'function') {
+        onDriftDetected('raf_drift');
+      }
+      const now = getServerTime ? getServerTime() : Date.now();
       const rttComp = rtt ? rtt / 2000 : 0;
-      const expected =
-        sessionSyncState &&
-        typeof sessionSyncState.timestamp === 'number' &&
-        typeof sessionSyncState.lastUpdated === 'number'
-          ? sessionSyncState.timestamp +
-            (now - sessionSyncState.lastUpdated) / 1000 -
-            audioLatency +
-            rttComp +
-            smoothedOffset
-          : null;
+      const expected = (sessionSyncState && typeof sessionSyncState.timestamp === 'number' && typeof sessionSyncState.lastUpdated === 'number')
+        ? sessionSyncState.timestamp + (now - sessionSyncState.lastUpdated) / 1000 - audioLatency + rttComp + smoothedOffset
+        : null;
       if (!isFiniteNumber(expected)) {
-        requestAnimationFrame(correctUltraPreciseDriftRAF);
+        requestAnimationFrame(correctMicroDriftRAF);
         return;
       }
       const drift = audio.currentTime - expected;
-      // For drift > 10ms, nudge currentTime directly
-      if (Math.abs(drift) > 0.01) {
-        audio.currentTime = expected;
-        if (microActive && typeof onMicroCorrection === 'function') onMicroCorrection(false);
-        microActive = false;
-        if (audio.playbackRate !== 1) {
-          rampPlaybackRate(audio, 200, rampLockRef);
-        }
-      } else if (Math.abs(drift) > 0.0001) {
-        // For sub-10ms drift, use playbackRate micro-correction
+      // --- Use EMA for smoothing drift ---
+      const smoothedDrift = driftEMARef.current.next(drift);
+      // --- Median filter ---
+      driftBufferRef.current.push(smoothedDrift);
+      if (driftBufferRef.current.length > 9) driftBufferRef.current.shift();
+      const medianDrift = median(driftBufferRef.current);
+      // --- Micro-nudging for sub-10ms drift ---
+      if (Math.abs(medianDrift) > 0.002 && Math.abs(medianDrift) < 0.010) { // 2ms < drift < 10ms
+        audio.currentTime += -medianDrift * 0.5; // Nudge toward expected
         if (!microActive && typeof onMicroCorrection === 'function') onMicroCorrection(true);
         microActive = true;
-        let rateAdj = 1 - Math.max(-MICRO_RATE_CAP_MICRO, Math.min(MICRO_RATE_CAP_MICRO, drift * 20));
+        if (import.meta.env.MODE === 'development') {
+          window._driftAnalytics = window._driftAnalytics || [];
+          window._driftAnalytics.push({ type: 'nudge', drift: medianDrift, time: Date.now(), current: audio.currentTime, expected });
+        }
+      } else if (Math.abs(medianDrift) > adaptiveMin && Math.abs(medianDrift) < adaptiveMax) {
+        // Use playbackRate micro-correction
+        if (!microActive && typeof onMicroCorrection === 'function') onMicroCorrection(true);
+        microActive = true;
+        let rateAdj = 1 - Math.max(-MICRO_RATE_CAP_MICRO, Math.min(MICRO_RATE_CAP_MICRO, medianDrift / adaptiveMax * MICRO_RATE_CAP_MICRO));
         rateAdj = Math.max(1 - MICRO_RATE_CAP_MICRO, Math.min(1 + MICRO_RATE_CAP_MICRO, rateAdj));
-        if (Math.abs(audio.playbackRate - rateAdj) > 0.0001) {
+        if (Math.abs(audio.playbackRate - rateAdj) > 0.0005) {
           audio.playbackRate = rateAdj;
-          setTimeout(() => {
-            if (audio && Math.abs(audio.playbackRate - 1) > 0.0001) {
-              rampPlaybackRate(audio, 200, rampLockRef);
-            }
-          }, 200);
+          if (import.meta.env.MODE === 'development') {
+            window._driftAnalytics = window._driftAnalytics || [];
+            window._driftAnalytics.push({ type: 'micro', drift: medianDrift, rateAdj, time: Date.now(), current: audio.currentTime, expected });
+          }
         }
       } else {
         if (microActive && typeof onMicroCorrection === 'function') onMicroCorrection(false);
         microActive = false;
         if (audio.playbackRate !== 1) {
-          rampPlaybackRate(audio, 200, rampLockRef);
+          rampPlaybackRate(audio, 300, rampLockRef);
         }
       }
-      requestAnimationFrame(correctUltraPreciseDriftRAF);
+      requestAnimationFrame(correctMicroDriftRAF);
     }
-    let rafId = requestAnimationFrame(correctUltraPreciseDriftRAF);
+    let rafId = requestAnimationFrame(correctMicroDriftRAF);
+    // Page Visibility API: pause/resume correction loop
     function handleVisibility() {
       if (document.visibilityState === 'hidden') {
         pausedByVisibility = true;
       } else {
         pausedByVisibility = false;
-        rafId = requestAnimationFrame(correctUltraPreciseDriftRAF);
+        rafId = requestAnimationFrame(correctMicroDriftRAF);
       }
     }
     document.addEventListener('visibilitychange', handleVisibility);
@@ -202,14 +191,11 @@ export default function useDriftCorrection({
 
   // maybeCorrectDrift function (unchanged)
   function maybeCorrectDrift(audio, expected) {
-    if (!audio || typeof audio.currentTime !== 'number')
-      return { corrected: false, reason: 'audio_invalid' };
-    if (!isFiniteNumber(expected) || expected < 0)
-      return { corrected: false, reason: 'expected_invalid' };
+    if (!audio || typeof audio.currentTime !== 'number') return { corrected: false, reason: 'audio_invalid' };
+    if (!isFiniteNumber(expected) || expected < 0) return { corrected: false, reason: 'expected_invalid' };
     if (correctionInProgressRef.current) return { corrected: false, reason: 'in_progress' };
     const now = Date.now();
-    if (now - lastCorrectionRef.current < CORRECTION_COOLDOWN)
-      return { corrected: false, reason: 'cooldown' };
+    if (now - lastCorrectionRef.current < CORRECTION_COOLDOWN) return { corrected: false, reason: 'cooldown' };
     correctionInProgressRef.current = true;
     if (!audio.paused) {
       const before = audio.currentTime;
@@ -224,14 +210,7 @@ export default function useDriftCorrection({
         // Log micro-correction
         if (import.meta.env.MODE === 'development') {
           window._driftAnalytics = window._driftAnalytics || [];
-          window._driftAnalytics.push({
-            type: 'micro',
-            drift,
-            rate,
-            time: Date.now(),
-            before,
-            after: expected,
-          });
+          window._driftAnalytics.push({ type: 'micro', drift, rate, time: Date.now(), before, after: expected });
         }
         return { corrected: true, micro: true, before, after: expected, drift, rate };
       } else {
@@ -249,13 +228,7 @@ export default function useDriftCorrection({
         // Log large correction
         if (import.meta.env.MODE === 'development') {
           window._driftAnalytics = window._driftAnalytics || [];
-          window._driftAnalytics.push({
-            type: 'large',
-            drift,
-            time: Date.now(),
-            before,
-            after: expected,
-          });
+          window._driftAnalytics.push({ type: 'large', drift, time: Date.now(), before, after: expected });
         }
         return { corrected: true, before, after: expected, at: now };
       }
@@ -266,4 +239,4 @@ export default function useDriftCorrection({
   }
 
   return { maybeCorrectDrift };
-}
+} 

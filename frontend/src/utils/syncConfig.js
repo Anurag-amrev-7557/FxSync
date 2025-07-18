@@ -3,11 +3,11 @@
 
 const SYNC_CONFIG = {
   // Drift correction thresholds (in seconds)
-  SMART_RESYNC_THRESHOLD: 0.18, // 180ms (more sensitive)
-  DRIFT_THRESHOLD: 0.06, // 60ms (more aggressive for tighter sync)
-  DRIFT_JITTER_BUFFER: 1, // Correct on first detection for fastest response
+  SMART_RESYNC_THRESHOLD: 0.25, // 250ms
+  DRIFT_THRESHOLD: 0.2, // 200ms
+  DRIFT_JITTER_BUFFER: 2, // Number of consecutive drift checks before correction
   RESYNC_COOLDOWN_MS: 5000, // 5 seconds
-  PLAY_OFFSET: 0.25, // 250ms (increased for reliable sync start, compensates for network delay)
+  PLAY_OFFSET: 0.04, // 40ms
 
   // Micro-correction parameters by quality tier
   DRIFT_PARAMS_BY_QUALITY: {
@@ -17,8 +17,8 @@ const SYNC_CONFIG = {
       MICRO_DRIFT_MIN: 0.006,
       MICRO_DRIFT_MAX: 0.06,
       MICRO_RATE_CAP: 0.018,
-      MICRO_RATE_CAP_MICRO: 0.01, // Increased for faster correction, prevents slow playback
-      CORRECTION_COOLDOWN: 700,
+      MICRO_RATE_CAP_MICRO: 0.0015,
+      CORRECTION_COOLDOWN: 900,
     },
     good: {
       MICRO_DRIFT_THRESHOLD: 0.04,
@@ -26,8 +26,8 @@ const SYNC_CONFIG = {
       MICRO_DRIFT_MIN: 0.01,
       MICRO_DRIFT_MAX: 0.1,
       MICRO_RATE_CAP: 0.03,
-      MICRO_RATE_CAP_MICRO: 0.01, // Increased for faster correction, prevents slow playback
-      CORRECTION_COOLDOWN: 700,
+      MICRO_RATE_CAP_MICRO: 0.003,
+      CORRECTION_COOLDOWN: 1500,
     },
     fair: {
       MICRO_DRIFT_THRESHOLD: 0.06,
@@ -35,8 +35,8 @@ const SYNC_CONFIG = {
       MICRO_DRIFT_MIN: 0.018,
       MICRO_DRIFT_MAX: 0.16,
       MICRO_RATE_CAP: 0.045,
-      MICRO_RATE_CAP_MICRO: 0.01, // Increased for faster correction, prevents slow playback
-      CORRECTION_COOLDOWN: 700,
+      MICRO_RATE_CAP_MICRO: 0.0045,
+      CORRECTION_COOLDOWN: 2200,
     },
     poor: {
       MICRO_DRIFT_THRESHOLD: 0.09,
@@ -44,24 +44,18 @@ const SYNC_CONFIG = {
       MICRO_DRIFT_MIN: 0.03,
       MICRO_DRIFT_MAX: 0.22,
       MICRO_RATE_CAP: 0.07,
-      MICRO_RATE_CAP_MICRO: 0.01, // Increased for faster correction, prevents slow playback
-      CORRECTION_COOLDOWN: 700,
+      MICRO_RATE_CAP_MICRO: 0.007,
+      CORRECTION_COOLDOWN: 3200,
     },
   },
 
   // Smoothing and window sizes
-  OFFSET_SMOOTHING_WINDOW: 4, // Reduced for faster adaptation and tighter sync
+  OFFSET_SMOOTHING_WINDOW: 10, // Number of samples for offset smoothing
   OUTLIER_STDDEV_MULTIPLIER: 2, // Outlier filter for peer offsets
 
   // Adaptive tuning (to be implemented)
   ADAPTIVE: {
-    ENABLED: true, // Set to true to enable adaptive thresholds
-    DRIFT_WINDOW: 8, // Number of drift samples for moving average
-    JITTER_WINDOW: 8, // Number of jitter samples for moving average
-    HIGH_DRIFT_THRESHOLD: 0.18, // seconds
-    LOW_DRIFT_THRESHOLD: 0.08, // seconds
-    MIN_CORRECTION_COOLDOWN: 400, // ms
-    MAX_CORRECTION_COOLDOWN: 2200, // ms
+    ENABLED: false, // Set to true to enable adaptive thresholds
     // ...future adaptive logic params
   },
 };
@@ -94,4 +88,4 @@ export function createEMA(alpha = 0.2, initial = 0) {
 // ema.next(newSample);
 // ema.get();
 
-export default SYNC_CONFIG;
+export default SYNC_CONFIG; 

@@ -34,51 +34,48 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
   // --- NTP-like multi-round time sync before joining session ---
   async function ntpBatchSync(socket, rounds = 8) {
     const samples = [];
-    const requests = [];
     for (let i = 0; i < rounds; i++) {
-      requests.push(
-        new Promise((resolve) => {
-          const now = Date.now();
-          socket.emit(
-            'time_sync',
-            { clientSent: now, clientCallbackReceived: Date.now(), userAgent: navigator.userAgent },
-            (data) => {
-              if (
-                data &&
-                typeof data.serverReceived === 'number' &&
-                typeof data.serverProcessed === 'number' &&
-                typeof data.clientSent === 'number'
-              ) {
-                const clientReceived = Date.now();
-                const serverMid = (data.serverReceived + data.serverProcessed) / 2;
-                const roundTrip = clientReceived - data.clientSent;
-                if (roundTrip > MAX_RTT) return resolve();
-                const offset = serverMid - clientReceived;
-                samples.push({ offset, rtt: roundTrip });
-              } else if (
-                data &&
-                typeof data.serverTime === 'number' &&
-                typeof data.clientSent === 'number'
-              ) {
-                const clientReceived = Date.now();
-                const roundTrip = clientReceived - data.clientSent;
-                if (roundTrip > MAX_RTT) return resolve();
-                const estimatedServerTime = data.serverTime + roundTrip / 2;
-                const offset = estimatedServerTime - clientReceived;
-                samples.push({ offset, rtt: roundTrip });
-              }
-              resolve();
+      const now = Date.now();
+      await new Promise((resolve) => {
+        socket.emit(
+          'time_sync',
+          { clientSent: now, clientCallbackReceived: Date.now(), userAgent: navigator.userAgent },
+          (data) => {
+            if (
+              data &&
+              typeof data.serverReceived === 'number' &&
+              typeof data.serverProcessed === 'number' &&
+              typeof data.clientSent === 'number'
+            ) {
+              const clientReceived = Date.now();
+              // Use midpoint between serverReceived and serverProcessed for more accurate offset
+              const serverMid = (data.serverReceived + data.serverProcessed) / 2;
+              const roundTrip = clientReceived - data.clientSent;
+              if (roundTrip > MAX_RTT) return resolve(); // Ignore high RTT
+              const offset = serverMid - clientReceived;
+              samples.push({ offset, rtt: roundTrip });
+            } else if (
+              data &&
+              typeof data.serverTime === 'number' &&
+              typeof data.clientSent === 'number'
+            ) {
+              // Fallback to old method if serverReceived/Processed missing
+              const clientReceived = Date.now();
+              const roundTrip = clientReceived - data.clientSent;
+              if (roundTrip > MAX_RTT) return resolve();
+              const estimatedServerTime = data.serverTime + roundTrip / 2;
+              const offset = estimatedServerTime - clientReceived;
+              samples.push({ offset, rtt: roundTrip });
             }
-          );
-        })
-      );
-      // Optional: stagger requests by a few ms to avoid burst
-      await new Promise((res) => setTimeout(res, 8));
+            setTimeout(resolve, 20); // Small delay between rounds
+          }
+        );
+      });
     }
-    await Promise.all(requests);
-    if (samples.length < 4) return;
+    if (samples.length < 4) return; // Not enough samples
     samples.sort((a, b) => a.rtt - b.rtt);
-    const trimmed = samples.slice(2, -2);
+    const trimmed = samples.slice(2, -2); // Remove top/bottom 2 RTTs
+    // Weighted offset calculation: 50% lowest, 30% second, 20% third
     let avgOffset;
     if (trimmed.length >= 3) {
       const [best, second, third] = trimmed;
@@ -89,19 +86,6 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
     const avgRtt = trimmed.reduce((sum, s) => sum + s.rtt, 0) / trimmed.length;
     setTimeOffset(avgOffset);
     setRtt(avgRtt);
-  }
-
-  // Add a callback for clock skew warning
-  let clockSkewWarned = false;
-  function warnClockSkew(offset) {
-    if (!clockSkewWarned && Math.abs(offset) > 1.5 * 1000) { // >1.5s skew
-      clockSkewWarned = true;
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('fxsync:clockskew', { detail: { offset } }));
-      }
-      // Increase sync frequency
-      adaptiveInterval = Math.max(ADAPTIVE_INTERVAL_BAD, 800);
-    }
   }
 
   // Further enhanced time sync logic with drift smoothing, error handling, diagnostics, and visibility/reactivity improvements
@@ -140,12 +124,15 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
       if (!arr.length) return 0;
       const sorted = [...arr].sort((a, b) => a - b);
       const mid = Math.floor(sorted.length / 2);
-      return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+      return sorted.length % 2 !== 0
+        ? sorted[mid]
+        : (sorted[mid - 1] + sorted[mid]) / 2;
     }
 
     // Helper: log diagnostics
     function logTimeSyncDiagnostics(diag) {
       if (import.meta.env.MODE !== 'production') {
+         
         console.debug('[TimeSync]', diag);
       }
     }
@@ -177,7 +164,7 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
           syncFailures++;
           if (syncFailures >= MAX_SYNC_FAILURES) {
             resetSyncHistory();
-            adaptiveInterval = Math.max(ADAPTIVE_INTERVAL_BAD, adaptiveInterval * 0.7); // Decrease interval on repeated failures
+            adaptiveInterval = ADAPTIVE_INTERVAL_BAD;
           }
           syncInProgress = false;
         }
@@ -203,7 +190,7 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
             syncFailures++;
             if (syncFailures >= MAX_SYNC_FAILURES) {
               resetSyncHistory();
-              adaptiveInterval = Math.max(ADAPTIVE_INTERVAL_BAD, adaptiveInterval * 0.7);
+              adaptiveInterval = ADAPTIVE_INTERVAL_BAD;
             }
             return;
           }
@@ -212,15 +199,17 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
           const clientReceived = Date.now();
           let offset, roundTrip;
           if (typeof data.serverReceived === 'number' && typeof data.serverProcessed === 'number') {
+            // Use midpoint between serverReceived and serverProcessed
             const serverMid = (data.serverReceived + data.serverProcessed) / 2;
             roundTrip = clientReceived - data.clientSent;
             offset = serverMid - clientReceived;
           } else {
+            // Fallback to old method
             roundTrip = clientReceived - data.clientSent;
             const estimatedServerTime = data.serverTime + roundTrip / 2;
             offset = estimatedServerTime - clientReceived;
           }
-          if (roundTrip > MAX_RTT) return;
+          if (roundTrip > MAX_RTT) return; // Ignore high RTT samples
 
           // Smoothing: keep a rolling window, filter outliers
           lastOffsets.push(offset);
@@ -234,20 +223,51 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
 
           // Jitter calculation
           const calcJitterVal = calcJitter(lastRtts);
+          lastJitters.push(calcJitterVal);
+          if (lastJitters.length > MAX_HISTORY) lastJitters.shift();
           setJitter(calcJitterVal);
 
-          // Adaptive interval logic: more responsive
-          if (syncFailures > 0 || avgRtt > AVG_RTT_BAD || calcJitterVal > JITTER_BAD) {
-            adaptiveInterval = Math.max(ADAPTIVE_INTERVAL_BAD, adaptiveInterval * 0.7);
-          } else if (avgRtt < AVG_RTT_GOOD && calcJitterVal < JITTER_GOOD) {
-            adaptiveInterval = Math.min(ADAPTIVE_INTERVAL_GOOD, adaptiveInterval * 1.15);
-          } else {
-            adaptiveInterval = ADAPTIVE_INTERVAL_DEFAULT;
+          // Drift calculation (change in offset)
+          let driftVal = 0;
+          if (lastOffsets.length > 1) {
+            driftVal = lastOffsets[lastOffsets.length - 1] - lastOffsets[lastOffsets.length - 2];
+            lastDrifts.push(driftVal);
+            if (lastDrifts.length > MAX_HISTORY) lastDrifts.shift();
+            setDrift(driftVal);
           }
 
           setTimeOffset(avgOffset);
           setRtt(avgRtt);
-          warnClockSkew(offset);
+
+          // Adaptive interval: shorter if unstable, longer if stable
+          if (calcJitterVal > 20 || Math.abs(driftVal) > 20) {
+            adaptiveInterval = ADAPTIVE_INTERVAL_BAD; 
+          } else if (calcJitterVal < JITTER_GOOD && Math.abs(driftVal) < 5 && avgRtt < AVG_RTT_GOOD) {
+            adaptiveInterval = ADAPTIVE_INTERVAL_GOOD; // Very stable, sync less often
+          } else {
+            adaptiveInterval = ADAPTIVE_INTERVAL_DEFAULT; // Default
+          }
+
+          // Optionally, log diagnostics for debugging
+          logTimeSyncDiagnostics({
+            serverTime: data.serverTime,
+            clientSent: data.clientSent,
+            clientReceived,
+            roundTrip,
+            offset,
+            avgOffset,
+            avgRtt,
+            jitter: calcJitterVal,
+            drift: driftVal,
+            medianJitter: median(lastJitters),
+            medianDrift: median(lastDrifts),
+            adaptiveInterval,
+            serverIso: data.serverIso,
+            serverUptime: data.serverUptime,
+            serverInfo: data.serverInfo,
+            roundTripEstimate: data.roundTripEstimate,
+            historyLen: lastOffsets.length,
+          });
         }
       );
     }
@@ -315,7 +335,7 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
     }
 
     const url = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
-    const socket = io(url, {
+    const socket = io(url, { 
       transports: ['websocket'],
       timeout: 20000,
       forceNew: true,
@@ -564,4 +584,4 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
     },
     forceNtpBatchSync,
   };
-}
+} 

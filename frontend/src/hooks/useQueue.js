@@ -66,12 +66,7 @@ export default function useQueue(socket, initialQueue = [], pendingTrackIdxRef =
 
   // Apply buffered track_change when queue is set
   useEffect(() => {
-    if (
-      Array.isArray(queue) &&
-      queue.length > 0 &&
-      pendingTrackIdxRef &&
-      pendingTrackIdxRef.current !== null
-    ) {
+    if (Array.isArray(queue) && queue.length > 0 && pendingTrackIdxRef && pendingTrackIdxRef.current !== null) {
       const clampedIdx = Math.max(0, Math.min(pendingTrackIdxRef.current, queue.length - 1));
       setCurrentTrackOverride(pendingTrackIdxRef.currentTrack || null);
       setSelectedTrackIdx(clampedIdx);
@@ -80,12 +75,5 @@ export default function useQueue(socket, initialQueue = [], pendingTrackIdxRef =
     }
   }, [queue, pendingTrackIdxRef]);
 
-  return [
-    queue,
-    setQueue,
-    selectedTrackIdx,
-    setSelectedTrackIdx,
-    currentTrackOverride,
-    setCurrentTrackOverride,
-  ];
-}
+  return [queue, setQueue, selectedTrackIdx, setSelectedTrackIdx, currentTrackOverride, setCurrentTrackOverride];
+} 

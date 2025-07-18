@@ -4,7 +4,7 @@ const STORAGE_KEYS = {
   MESSAGES: 'fxsync_messages',
   QUEUE: 'fxsync_queue',
   SESSION_DATA: 'fxsync_session_data',
-  MOBILE_TAB: 'fxsync_mobile_tab',
+  MOBILE_TAB: 'fxsync_mobile_tab'
 };
 
 // Get storage key for a specific session
@@ -81,9 +81,7 @@ const GLOBAL_MOBILE_TAB_KEY = 'fxsync_mobile_tab_global';
 // Save mobile tab for a session or globally
 export const saveMobileTab = (sessionId, mobileTab) => {
   try {
-    const key = sessionId
-      ? getSessionKey(STORAGE_KEYS.MOBILE_TAB, sessionId)
-      : GLOBAL_MOBILE_TAB_KEY;
+    const key = sessionId ? getSessionKey(STORAGE_KEYS.MOBILE_TAB, sessionId) : GLOBAL_MOBILE_TAB_KEY;
     localStorage.setItem(key, JSON.stringify(mobileTab));
   } catch (error) {
     console.warn('Failed to save mobile tab to localStorage:', error);
@@ -93,9 +91,7 @@ export const saveMobileTab = (sessionId, mobileTab) => {
 // Load mobile tab for a session or globally
 export const loadMobileTab = (sessionId) => {
   try {
-    const key = sessionId
-      ? getSessionKey(STORAGE_KEYS.MOBILE_TAB, sessionId)
-      : GLOBAL_MOBILE_TAB_KEY;
+    const key = sessionId ? getSessionKey(STORAGE_KEYS.MOBILE_TAB, sessionId) : GLOBAL_MOBILE_TAB_KEY;
     const stored = localStorage.getItem(key);
     return stored ? JSON.parse(stored) : 0; // Default to 0 (audio tab)
   } catch (error) {
@@ -111,9 +107,9 @@ export const clearSessionData = (sessionId) => {
       getSessionKey(STORAGE_KEYS.MESSAGES, sessionId),
       getSessionKey(STORAGE_KEYS.QUEUE, sessionId),
       getSessionKey(STORAGE_KEYS.SESSION_DATA, sessionId),
-      getSessionKey(STORAGE_KEYS.MOBILE_TAB, sessionId),
+      getSessionKey(STORAGE_KEYS.MOBILE_TAB, sessionId)
     ];
-    keys.forEach((key) => localStorage.removeItem(key));
+    keys.forEach(key => localStorage.removeItem(key));
   } catch (error) {
     console.warn('Failed to clear session data from localStorage:', error);
   }
@@ -123,11 +119,11 @@ export const clearSessionData = (sessionId) => {
 export const cleanupOldSessions = () => {
   try {
     const allKeys = Object.keys(localStorage);
-    const sessionKeys = allKeys.filter((key) => key.startsWith('fxsync_'));
-
+    const sessionKeys = allKeys.filter(key => key.startsWith('fxsync_'));
+    
     // Group by session ID
     const sessions = {};
-    sessionKeys.forEach((key) => {
+    sessionKeys.forEach(key => {
       const parts = key.split('_');
       if (parts.length >= 3) {
         const sessionId = parts.slice(2).join('_');
@@ -137,16 +133,16 @@ export const cleanupOldSessions = () => {
         sessions[sessionId].push(key);
       }
     });
-
+    
     // Keep only the 10 most recent sessions
     const sessionIds = Object.keys(sessions);
     if (sessionIds.length > 10) {
       const sessionsToRemove = sessionIds.slice(10);
-      sessionsToRemove.forEach((sessionId) => {
-        sessions[sessionId].forEach((key) => localStorage.removeItem(key));
+      sessionsToRemove.forEach(sessionId => {
+        sessions[sessionId].forEach(key => localStorage.removeItem(key));
       });
     }
   } catch (error) {
     console.warn('Failed to cleanup old sessions:', error);
   }
-};
+}; 

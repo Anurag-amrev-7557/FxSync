@@ -13,4 +13,4 @@ export function getSessionFiles(sessionId) {
 
 export function removeSessionFiles(sessionId) {
   delete sessionFiles[sessionId];
-}
+} 

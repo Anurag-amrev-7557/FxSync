@@ -35,18 +35,13 @@ export default function RoomCodeInput({
   measureRef,
   error,
   isGenerating,
-  onGenerate,
+  onGenerate
 }) {
   const inputId = 'room-code-input';
   const errorId = 'room-code-error';
   return (
     <div className="space-y-2 sm:space-y-3">
-      <label
-        htmlFor={inputId}
-        className="block text-sm font-medium text-neutral-300 transition-all duration-300 hover:text-white"
-      >
-        Room Code
-      </label>
+      <label htmlFor={inputId} className="block text-sm font-medium text-neutral-300 transition-all duration-300 hover:text-white">Room Code</label>
       <div className="relative group">
         <div className="relative">
           <input
@@ -79,8 +74,7 @@ export default function RoomCodeInput({
               whiteSpace: 'pre',
               fontSize: '16px',
               lineHeight: '1.5',
-              fontFamily:
-                'ui-monospace, SFMono-Regular, \"SF Mono\", Consolas, \"Liberation Mono\", Menlo, monospace',
+              fontFamily: 'ui-monospace, SFMono-Regular, \"SF Mono\", Consolas, \"Liberation Mono\", Menlo, monospace'
             }}
           />
           {/* Animated cursor */}
@@ -95,18 +89,9 @@ export default function RoomCodeInput({
             />
           )}
         </div>
-        <div
-          className={`absolute inset-0 rounded-xl bg-gradient-to-r from-transparent via-white/5 to-transparent opacity-0 transition-opacity duration-500 pointer-events-none ${isFocused ? 'opacity-100' : 'group-hover:opacity-50'}`}
-        ></div>
+        <div className={`absolute inset-0 rounded-xl bg-gradient-to-r from-transparent via-white/5 to-transparent opacity-0 transition-opacity duration-500 pointer-events-none ${isFocused ? 'opacity-100' : 'group-hover:opacity-50'}`}></div>
         {error && (
-          <p
-            id={errorId}
-            className="text-red-400 text-sm mt-2 text-center animate-shake"
-            role="alert"
-            aria-live="polite"
-          >
-            {error}
-          </p>
+          <p id={errorId} className="text-red-400 text-sm mt-2 text-center animate-shake" role="alert" aria-live="polite">{error}</p>
         )}
       </div>
       {/* Generate Room Code Button */}
@@ -124,18 +109,7 @@ export default function RoomCodeInput({
           </>
         ) : (
           <>
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="transition-transform duration-300 group-hover:rotate-180"
-            >
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="transition-transform duration-300 group-hover:rotate-180">
               <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
               <path d="M21 3v5h-5"></path>
               <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
@@ -147,4 +121,4 @@ export default function RoomCodeInput({
       </button>
     </div>
   );
-}
+} 

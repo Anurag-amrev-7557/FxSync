@@ -14,36 +14,27 @@ dotenv.config();
 
 const app = express();
 app.use(compression());
-app.use(
-  helmet({
-    crossOriginResourcePolicy: { policy: 'cross-origin' },
-  })
-);
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' }
+}));
 const server = http.createServer(app);
 
-const allowedOrigins = process.env.FRONTEND_ORIGINS
-  ? process.env.FRONTEND_ORIGINS.split(',').map((origin) => origin.trim())
-  : [
-      'http://localhost:5173',
-      'http://localhost:5174',
-      'http://localhost:3000',
-      'https://fxsync-web.web.app',
-    ];
+const allowedOrigins = (process.env.FRONTEND_ORIGINS
+  ? process.env.FRONTEND_ORIGINS.split(',').map(origin => origin.trim())
+  : ["http://localhost:5173", "http://localhost:5174", "http://localhost:3000", "https://fxsync-web.web.app"]);
 
 const io = new Server(server, {
   cors: {
     origin: allowedOrigins,
     methods: ['GET', 'POST'],
-    credentials: true,
-  },
+    credentials: true
+  }
 });
 
-app.use(
-  cors({
-    origin: allowedOrigins,
-    credentials: true,
-  })
-);
+app.use(cors({
+  origin: allowedOrigins,
+  credentials: true
+}));
 app.use(express.json());
 
 app.use('/audio', audioRouter);
@@ -59,4 +50,4 @@ setupSocket(io);
 const PORT = process.env.PORT || 4000;
 server.listen(PORT, () => {
   log(`Server listening on port ${PORT}`);
-});
+}); 

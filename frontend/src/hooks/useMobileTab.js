@@ -18,4 +18,4 @@ export default function useMobileTab(initial = 0, sessionId = null) {
   }, [mobileTab, sessionId]);
 
   return [mobileTab, setMobileTab];
-}
+} 

@@ -12,15 +12,7 @@ import PropTypes from 'prop-types';
  * @param {object} props.resyncStats
  * @param {string} [props.className]
  */
-export default function SyncStatusBanner({
-  status,
-  showSmartSuggestion,
-  syncQuality,
-  selectedSource,
-  isController,
-  resyncStats,
-  className = '',
-}) {
+export default function SyncStatusBanner({ status, showSmartSuggestion, syncQuality, selectedSource, isController, resyncStats, className = '' }) {
   return (
     <div className={className}>
       <div>
@@ -28,9 +20,7 @@ export default function SyncStatusBanner({
           {status}
           {showSmartSuggestion && <span className="ml-2 text-orange-400">(Re-sync suggested)</span>}
         </span>
-        <div className={`text-xs mt-1 ${syncQuality?.color || ''}`}>
-          {syncQuality?.label} ({selectedSource})
-        </div>
+        <div className={`text-xs mt-1 ${syncQuality?.color || ''}`}>{syncQuality?.label} ({selectedSource})</div>
         <div className="text-neutral-400 text-xs mt-1">
           {isController ? 'You are the controller' : 'You are a listener'}
         </div>
@@ -49,10 +39,10 @@ SyncStatusBanner.propTypes = {
   showSmartSuggestion: PropTypes.bool,
   syncQuality: PropTypes.shape({
     label: PropTypes.string,
-    color: PropTypes.string,
+    color: PropTypes.string
   }),
   selectedSource: PropTypes.string,
   isController: PropTypes.bool,
   resyncStats: PropTypes.object,
-  className: PropTypes.string,
-};
+  className: PropTypes.string
+}; 

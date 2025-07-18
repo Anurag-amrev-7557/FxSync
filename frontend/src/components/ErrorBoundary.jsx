@@ -33,6 +33,7 @@ class ErrorBoundary extends React.Component {
     }
     // Optionally log to an external service here
     if (process.env.NODE_ENV === 'development') {
+       
       console.error('[ErrorBoundary] Error:', error, errorInfo);
     }
     // Optionally: send to Sentry or similar
@@ -83,24 +84,13 @@ class ErrorBoundary extends React.Component {
           <div className="relative bg-neutral-900/95 border border-neutral-800 rounded-2xl shadow-xl px-8 py-10 max-w-md w-full text-center flex flex-col items-center gap-7">
             {/* Minimalist error icon */}
             <div className="flex items-center justify-center w-16 h-16 rounded-full bg-neutral-950 border border-neutral-800 mb-2 shadow-md">
-              <svg
-                width="36"
-                height="36"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="white"
-                strokeWidth="2.2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <circle cx="12" cy="12" r="10" stroke="white" strokeOpacity="0.10" fill="none" />
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" stroke="white" strokeOpacity="0.10" fill="none"/>
                 <path d="M12 8v4" stroke="white" />
                 <circle cx="12" cy="16" r="1" fill="white" />
               </svg>
             </div>
-            <h2 className="text-xl font-semibold text-white tracking-tight mb-1">
-              Something went wrong
-            </h2>
+            <h2 className="text-xl font-semibold text-white tracking-tight mb-1">Something went wrong</h2>
             <p className="text-neutral-400 text-sm mb-2 font-mono break-words">
               {error?.message || 'An unexpected error occurred.'}
             </p>
@@ -157,8 +147,8 @@ class ErrorBoundary extends React.Component {
                     rel="noopener noreferrer"
                   >
                     contact support
-                  </a>{' '}
-                  or refresh the page.
+                  </a>
+                  {' '}or refresh the page.
                 </span>
                 <div className="mt-1 text-neutral-700 text-[11px]">
                   Error ID: <span className="font-mono">{this.errorId}</span>

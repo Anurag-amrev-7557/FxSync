@@ -16,24 +16,14 @@ export default function usePeerTimeSync(socket, localId, peerId) {
   const intervalRef = useRef(null);
 
   useEffect(() => {
-    if (!socket || !localId || !peerId || localId === peerId) {
-      return;
-    }
+    if (!socket || !localId || !peerId || localId === peerId) return;
 
-    console.log('Connecting to peer:', peerId, 'from', localId);
     let isInitiator = localId < peerId; // Simple deterministic initiator
-    let dc;
+    let pc, dc;
     setConnectionState('connecting');
 
     // --- 1. Create PeerConnection ---
-    const pc = new RTCPeerConnection({
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-        { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-        { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
-      ]
-    });
+    pc = new RTCPeerConnection();
     pcRef.current = pc;
 
     // --- 2. DataChannel setup ---
@@ -50,64 +40,38 @@ export default function usePeerTimeSync(socket, localId, peerId) {
     // --- 3. ICE Candidate Handling ---
     pc.onicecandidate = (event) => {
       if (event.candidate) {
-        console.log('ICE candidate:', event.candidate);
-        socket.emit('peer-ice-candidate', {
-          to: peerId,
-          from: localId,
-          candidate: event.candidate,
-        });
-      } else {
-        console.log('All ICE candidates have been sent');
+        socket.emit('peer-ice-candidate', { to: peerId, from: localId, candidate: event.candidate });
       }
-    };
-    pc.oniceconnectionstatechange = () => {
-      console.log('ICE connection state:', pc.iceConnectionState);
     };
 
     // --- 4. Signaling: Offer/Answer Exchange ---
     async function startSignaling() {
-      console.log('startSignaling called for', localId, '->', peerId);
       if (isInitiator) {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
         socket.emit('peer-offer', { to: peerId, from: localId, offer });
-        console.log('Emitted peer-offer to', peerId, 'from', localId);
-        console.log('Sent peer-offer to', peerId, 'from', localId);
       }
     }
 
-    socket.on('peer-offer', async (data) => {
-      if (data.to !== localId) return;
-      const { from, offer } = data;
-      console.log('peer-offer event received (filtered):', data, 'localId:', localId, 'peerId:', peerId);
+    socket.on('peer-offer', async ({ from, offer }) => {
       if (from !== peerId) return;
-      console.log('Received peer-offer from', from, 'to', localId);
       await pc.setRemoteDescription(new RTCSessionDescription(offer));
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       socket.emit('peer-answer', { to: from, from: localId, answer });
-      console.log('Emitted peer-answer to', from, 'from', localId);
-      console.log('Sent peer-answer to', from, 'from', localId);
     });
 
-    socket.on('peer-answer', async (data) => {
-      if (data.to !== localId) return;
-      const { from, answer } = data;
-      console.log('peer-answer event received (filtered):', data, 'localId:', localId, 'peerId:', peerId);
+    socket.on('peer-answer', async ({ from, answer }) => {
       if (from !== peerId) return;
-      console.log('Received peer-answer from', from, 'to', localId);
       await pc.setRemoteDescription(new RTCSessionDescription(answer));
     });
 
-    socket.on('peer-ice-candidate', async (data) => {
-      if (data.to !== localId) return;
-      const { from, candidate } = data;
-      console.log('peer-ice-candidate event received (filtered):', data, 'localId:', localId, 'peerId:', peerId);
+    socket.on('peer-ice-candidate', async ({ from, candidate }) => {
       if (from !== peerId) return;
       try {
         await pc.addIceCandidate(new RTCIceCandidate(candidate));
-      } catch (e) {
-        console.warn('Failed to add ICE candidate:', e);
+      } catch {
+        // Ignore
       }
     });
 
@@ -116,7 +80,6 @@ export default function usePeerTimeSync(socket, localId, peerId) {
       dcRef.current = dataChannel;
       dataChannel.onopen = () => {
         setConnectionState('connected');
-        console.log('Peer connection open:', localId, '->', peerId);
         // Periodically send time sync messages
         let lastIntervalFired = Date.now();
         intervalRef.current = setInterval(() => {
@@ -124,48 +87,35 @@ export default function usePeerTimeSync(socket, localId, peerId) {
           const elapsed = nowInterval - lastIntervalFired;
           lastIntervalFired = nowInterval;
           // Timer drift detection: if interval fires late, reset connection
-          if (elapsed > 1200) { // 4x the normal 300ms interval
+          if (elapsed > 4000) { // 2x the normal 2000ms interval
             setConnectionState('disconnected');
             if (intervalRef.current) clearInterval(intervalRef.current);
             if (dataChannel.readyState === 'open' || dataChannel.readyState === 'connecting') {
               dataChannel.close();
             }
-            if (
-              typeof window !== 'undefined' &&
-              window.console &&
-              import.meta.env.MODE === 'development'
-            ) {
-              console.warn(
-                '[PeerTimeSync] Timer drift detected (tab throttling?). Peer sync will reconnect.'
-              );
+            // Optionally, log or trigger a reconnect here
+            if (typeof window !== 'undefined' && window.console) {
+              console.warn('[PeerTimeSync] Timer drift detected (tab throttling?). Peer sync will reconnect.');
             }
             return;
           }
           const now = Date.now();
           dataChannel.send(JSON.stringify({ type: 'timeSync', clientSent: now }));
-        }, 300); // Increased frequency for tighter sync
+        }, 2000);
       };
       dataChannel.onclose = () => {
         setConnectionState('disconnected');
-        console.log('Peer connection closed:', localId, '->', peerId);
         if (intervalRef.current) clearInterval(intervalRef.current);
       };
       dataChannel.onerror = () => {
         setConnectionState('error');
-        console.log('Peer connection error:', localId, '->', peerId);
         if (intervalRef.current) clearInterval(intervalRef.current);
       };
       dataChannel.onmessage = (event) => {
         const msg = JSON.parse(event.data);
         if (msg.type === 'timeSync') {
           // Respond with server time
-          dataChannel.send(
-            JSON.stringify({
-              type: 'timeSyncReply',
-              clientSent: msg.clientSent,
-              serverTime: Date.now(),
-            })
-          );
+          dataChannel.send(JSON.stringify({ type: 'timeSyncReply', clientSent: msg.clientSent, serverTime: Date.now() }));
         } else if (msg.type === 'timeSyncReply') {
           const clientReceived = Date.now();
           const rtt = clientReceived - msg.clientSent;
@@ -177,7 +127,6 @@ export default function usePeerTimeSync(socket, localId, peerId) {
     }
 
     // --- 6. Start signaling if initiator ---
-    console.log('isInitiator:', isInitiator, 'localId:', localId, 'peerId:', peerId);
     if (isInitiator) startSignaling();
 
     // --- 7. Cleanup ---
@@ -192,4 +141,4 @@ export default function usePeerTimeSync(socket, localId, peerId) {
   }, [socket, localId, peerId]);
 
   return { peerOffset, peerRtt, connectionState };
-}
+} 

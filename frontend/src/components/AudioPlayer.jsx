@@ -3,9 +3,9 @@ import SyncStatus from './SyncStatus';
 import useSmoothAppearance from '../hooks/useSmoothAppearance';
 import LoadingSpinner from './LoadingSpinner';
 import ResyncAnalytics from './ResyncAnalytics';
-import useDriftCorrection from '../hooks/useDriftCorrection';
-import useAudioElement from '../hooks/useAudioElement';
-import useResyncAnalytics from '../hooks/useResyncAnalytics';
+import useDriftCorrection from '../hooks/useDriftCorrection'
+import useAudioElement from '../hooks/useAudioElement'
+import useResyncAnalytics from '../hooks/useResyncAnalytics'
 import SYNC_CONFIG from '../utils/syncConfig';
 import useUltraPreciseOffset from '../hooks/useUltraPreciseOffset';
 import { createEMA } from '../utils/syncConfig';
@@ -15,14 +15,13 @@ import ErrorBanner from './AudioPlayer/ErrorBanner';
 import TrackInfo from './AudioPlayer/TrackInfo';
 import SyncStatusBanner from './AudioPlayer/SyncStatusBanner';
 import DiagnosticsPanel from './AudioPlayer/DiagnosticsPanel';
-import { animationDurations, animationEasings } from '../utils/animationTokens';
 
 // Add global error handlers
 if (typeof window !== 'undefined' && !window._audioPlayerErrorHandlerAdded) {
-  window.addEventListener('unhandledrejection', function (event) {
+  window.addEventListener('unhandledrejection', function(event) {
     // Remove all console.log, console.warn, and console.error statements
   });
-  window.addEventListener('error', function (event) {
+  window.addEventListener('error', function(event) {
     // Remove all console.log, console.warn, and console.error statements
   });
   window._audioPlayerErrorHandlerAdded = true;
@@ -121,6 +120,7 @@ function setCurrentTimeSafely(audio, value, setCurrentTime) {
         setCurrentTime(value);
         // Optionally, fire a custom event for debugging
         // audio.dispatchEvent(new CustomEvent('currentTimeSetSafely', { detail: { value, eventType } }));
+
       }
     } catch (e) {
       console.warn(`[setCurrentTimeSafely] Failed to set currentTime (${eventType}):`, context, e);
@@ -128,7 +128,11 @@ function setCurrentTimeSafely(audio, value, setCurrentTime) {
   };
 
   // If audio is ready and duration is known, set immediately
-  if (audio.readyState >= 1 && audio.duration && isFinite(audio.duration)) {
+  if (
+    audio.readyState >= 1 &&
+    audio.duration &&
+    isFinite(audio.duration)
+  ) {
     doSet(logContext, 'immediate');
     return;
   }
@@ -211,8 +215,7 @@ function setCurrentTimeSafely(audio, value, setCurrentTime) {
 // Optimized helper to get the most accurate server time for syncing
 function getNow(getServerTime) {
   // Use performance.now() for high-resolution local fallback
-  const localNow = () =>
-    window.performance ? performance.timeOrigin + performance.now() : Date.now();
+  const localNow = () => (window.performance ? performance.timeOrigin + performance.now() : Date.now());
 
   if (typeof getServerTime === 'function') {
     try {
@@ -221,41 +224,25 @@ function getNow(getServerTime) {
         return now;
       } else {
         if (import.meta.env.MODE === 'development') {
-          console.warn(
-            '[AudioPlayer][getNow] getServerTime() returned invalid value:',
-            now,
-            'Falling back to high-res local time.'
-          );
+           
+          console.warn('[AudioPlayer][getNow] getServerTime() returned invalid value:', now, 'Falling back to high-res local time.');
         }
         return localNow();
       }
     } catch (e) {
       if (import.meta.env.MODE === 'development') {
-        console.error(
-          '[AudioPlayer][getNow] getServerTime threw error:',
-          e,
-          'Falling back to high-res local time.'
-        );
+         
+        console.error('[AudioPlayer][getNow] getServerTime threw error:', e, 'Falling back to high-res local time.');
       }
       return localNow();
     }
   } else {
     if (import.meta.env.MODE === 'development') {
-      console.warn(
-        '[AudioPlayer][getNow] getServerTime is missing! Falling back to high-res local time. This may cause sync drift.'
-      );
+       
+      console.warn('[AudioPlayer][getNow] getServerTime is missing! Falling back to high-res local time. This may cause sync drift.');
     }
     return localNow();
   }
-}
-
-// --- Singleton AudioContext for ultra-stable timing ---
-let globalAudioCtx = null;
-function getAudioContext() {
-  if (!globalAudioCtx) {
-    globalAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  }
-  return globalAudioCtx;
 }
 
 /**
@@ -282,7 +269,6 @@ export default function AudioPlayer({
   selectedTrackIdx = 0, // Add selectedTrackIdx prop
   onSelectTrack, // Add onSelectTrack prop
   sessionId, // Add sessionId prop
-  peerSyncs = [], // <-- Add this prop for peer syncs
 }) {
   // Fix: manualLatency must be declared before any useEffect or code that references it
   const [manualLatency, setManualLatency] = useState(() => {
@@ -316,8 +302,8 @@ export default function AudioPlayer({
 
   // Check if previous/next buttons should be enabled
   const canNavigate = isController && queue && queue.length > 1;
-  const canGoPrevious = Boolean(isController && canNavigate && selectedTrackIdx > 0);
-  const canGoNext = Boolean(isController && canNavigate && selectedTrackIdx < queue.length - 1);
+  const canGoPrevious = isController && canNavigate && selectedTrackIdx > 0;
+  const canGoNext = isController && canNavigate && selectedTrackIdx < queue.length - 1;
   // Remove: audioUrl, loading, audioError, isPlaying, duration, displayedCurrentTime, audioRef, and their setters
   // Instead, use:
   const lastSeekTime = useRef(0); // Track last user seek time
@@ -335,14 +321,7 @@ export default function AudioPlayer({
     setAudioUrl,
     handleSeek,
     isSeeking,
-  } = useAudioElement({
-    currentTrack,
-    isController,
-    getServerTime,
-    setLastSeekTime: (t) => {
-      lastSeekTime.current = t;
-    },
-  });
+  } = useAudioElement({ currentTrack, isController, getServerTime, setLastSeekTime: (t) => { lastSeekTime.current = t; } })
   const [syncStatus, setSyncStatus] = useState('In Sync');
   const [shouldAnimate, setShouldAnimate] = useState(false);
   const [audioLatency, setAudioLatency] = useState(0.08); // measured latency in seconds
@@ -360,19 +339,13 @@ export default function AudioPlayer({
   const [showCalibrateBanner, setShowCalibrateBanner] = useState(false);
   const [firstSyncAttempted, setFirstSyncAttempted] = useState(false);
   const [firstSyncFailed, setFirstSyncFailed] = useState(false);
-  const lastSyncVersion = useRef(0);
 
   // --- Dynamic Drift Correction Parameters ---
   const driftParams = getDriftCorrectionParams({ rtt, jitter });
 
-  // Use peerSyncs for ultra-precise offset if available
-  const {
-    ultraPreciseOffset: computedUltraPreciseOffset,
-    syncQuality,
-    allOffsets,
-    selectedSource,
-  } = useUltraPreciseOffset(
-    peerSyncs && peerSyncs.length > 0 ? peerSyncs : [], // Use peerSyncs if provided
+  // After calling useUltraPreciseOffset, destructure as:
+  const { ultraPreciseOffset: computedUltraPreciseOffset, syncQuality, allOffsets, selectedSource } = useUltraPreciseOffset(
+    [], // Pass an empty array if no peerSyncs are available
     timeOffset,
     rtt,
     jitter
@@ -380,9 +353,7 @@ export default function AudioPlayer({
 
   // --- EMA for offset smoothing ---
   const offsetEMARef = useRef(createEMA(0.18, computedUltraPreciseOffset ?? timeOffset ?? 0));
-  const [smoothedOffset, setSmoothedOffset] = useState(
-    computedUltraPreciseOffset ?? timeOffset ?? 0
-  );
+  const [smoothedOffset, setSmoothedOffset] = useState(computedUltraPreciseOffset ?? timeOffset ?? 0);
 
   // --- Use EMA for offset smoothing ---
   useEffect(() => {
@@ -398,13 +369,9 @@ export default function AudioPlayer({
     const smoothed = offsetEMARef.current.next(nextOffset);
     setSmoothedOffset(smoothed);
     if (
-      typeof computedUltraPreciseOffset === 'number' &&
-      (isNaN(computedUltraPreciseOffset) || Math.abs(computedUltraPreciseOffset) > 1000)
+      typeof computedUltraPreciseOffset === 'number' && (isNaN(computedUltraPreciseOffset) || Math.abs(computedUltraPreciseOffset) > 1000)
     ) {
-      console.warn(
-        '[AudioPlayer] Ignoring suspicious computedUltraPreciseOffset:',
-        computedUltraPreciseOffset
-      );
+      console.warn('[AudioPlayer] Ignoring suspicious computedUltraPreciseOffset:', computedUltraPreciseOffset);
     }
   }, [computedUltraPreciseOffset, timeOffset]);
 
@@ -451,8 +418,8 @@ export default function AudioPlayer({
     smartResyncSuggestion,
     setSmartResyncSuggestion,
     resyncStats,
-    updateResyncHistory,
-  } = useResyncAnalytics();
+    updateResyncHistory
+  } = useResyncAnalytics()
 
   // Jitter buffer: only correct drift if sustained for N checks
   const driftCountRef = useRef(0);
@@ -524,94 +491,6 @@ export default function AudioPlayer({
     }
   }, [selectedTrackIdx]);
 
-  // --- Predictive drift compensation state ---
-  const driftHistoryRef = useRef([]); // Store recent drift values
-  const [predictedDrift, setPredictedDrift] = useState(0);
-
-  // --- Enhanced: Use AudioContext.currentTime for all sync math ---
-  function getUltraStableNow() {
-    const ctx = getAudioContext();
-    // Convert AudioContext.currentTime (seconds since context creation) to epoch ms
-    return ctx ? ctx.baseLatency ? ctx.currentTime * 1000 + performance.timeOrigin : ctx.currentTime * 1000 + performance.timeOrigin : Date.now();
-  }
-
-  // --- Per-listener adaptive play scheduling ---
-  useEffect(() => {
-    if (!socket) return;
-    // Listen for sync_state events
-    const handleSyncState = ({ isPlaying, timestamp, lastUpdated, serverTime, syncVersion }) => {
-      if (!audioRef.current) return;
-      const audio = audioRef.current;
-      // Only listeners (not controller) schedule playback
-      if (isController) return;
-      // Calculate the exact scheduled start time using AudioContext
-      const ctx = getAudioContext();
-      const now = getUltraStableNow();
-      // Use the most recent offset, RTT, and predicted drift
-      const rttComp = rtt ? rtt / 2000 : 0;
-      const expectedStart =
-        timestamp + (now - lastUpdated) / 1000 - audioLatency + rttComp + smoothedOffset + predictedDrift;
-      const delay = (expectedStart - audio.currentTime) * 1000;
-      if (isPlaying && delay > 0) {
-        // Schedule playback at the exact time
-        setTimeout(() => {
-          audio.play().catch(() => {});
-        }, delay);
-      } else if (isPlaying && delay <= 0) {
-        // If already late, start immediately and seek to expected position
-        audio.currentTime = expectedStart;
-        audio.play().catch(() => {});
-      } else if (!isPlaying) {
-        audio.pause();
-      }
-    };
-    socket.on('sync_state', handleSyncState);
-    return () => socket.off('sync_state', handleSyncState);
-  }, [socket, isController, audioLatency, smoothedOffset, predictedDrift, rtt]);
-
-  // --- Predictive drift compensation logic ---
-  useEffect(() => {
-    let raf;
-    function updatePrediction() {
-      if (!audioRef.current) return;
-      const audio = audioRef.current;
-      const ctx = getAudioContext();
-      const now = getUltraStableNow();
-      // Calculate drift as usual
-      const expected = /* same as in drift correction */
-        sessionSyncState && typeof sessionSyncState.timestamp === 'number' && typeof sessionSyncState.lastUpdated === 'number'
-          ? sessionSyncState.timestamp + (now - sessionSyncState.lastUpdated) / 1000 - audioLatency + (rtt ? rtt / 2000 : 0) + smoothedOffset
-          : null;
-      if (expected !== null && isFinite(expected)) {
-        const drift = audio.currentTime - expected;
-        // Store drift history
-        driftHistoryRef.current.push(drift);
-        if (driftHistoryRef.current.length > 10) driftHistoryRef.current.shift();
-        // Predict next drift using linear regression (simple trend)
-        if (driftHistoryRef.current.length >= 3) {
-          const n = driftHistoryRef.current.length;
-          const x = Array.from({ length: n }, (_, i) => i);
-          const y = driftHistoryRef.current;
-          const xMean = x.reduce((a, b) => a + b, 0) / n;
-          const yMean = y.reduce((a, b) => a + b, 0) / n;
-          let num = 0, den = 0;
-          for (let i = 0; i < n; i++) {
-            num += (x[i] - xMean) * (y[i] - yMean);
-            den += (x[i] - xMean) ** 2;
-          }
-          const slope = den ? num / den : 0;
-          // Predict drift 1 frame ahead (16ms)
-          setPredictedDrift(slope * 0.016);
-        } else {
-          setPredictedDrift(0);
-        }
-      }
-      raf = requestAnimationFrame(updatePrediction);
-    }
-    raf = requestAnimationFrame(updatePrediction);
-    return () => cancelAnimationFrame(raf);
-  }, [sessionSyncState, audioLatency, rtt, smoothedOffset]);
-
   // Auto-play audio for listeners when audioUrl changes and should be playing
   useEffect(() => {
     const audio = audioRef.current;
@@ -627,18 +506,16 @@ export default function AudioPlayer({
     if (currentTrack && currentTrack.url) return;
     const backendUrl = import.meta.env.VITE_BACKEND_URL;
     if (!backendUrl) {
-      setAudioError(
-        'Audio backend URL is not configured. Please set VITE_BACKEND_URL in your environment.'
-      );
+      setAudioError('Audio backend URL is not configured. Please set VITE_BACKEND_URL in your environment.');
       // setLoading(false); // Removed
       return;
     }
     fetch(`${backendUrl}/audio/audio-url`)
-      .then((res) => {
+      .then(res => {
         if (!res.ok) throw new Error(`Failed to fetch audio URL: ${res.status}`);
         return res.json();
       })
-      .then((data) => {
+      .then(data => {
         if (data && typeof data.url === 'string' && data.url.length > 0) {
           setAudioUrl(data.url);
         } else {
@@ -646,7 +523,7 @@ export default function AudioPlayer({
         }
         // setLoading(false); // Removed
       })
-      .catch((err) => {
+      .catch(err => {
         setAudioError('Error fetching audio URL. ' + (err?.message || ''));
         // setLoading(false); // Removed
       });
@@ -656,7 +533,7 @@ export default function AudioPlayer({
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
-
+    
     // const update = () => setDisplayedCurrentTime(audio.currentTime); // Removed
     // const setDur = () => setDuration(audio.duration || 0); // Removed
     const handlePlaying = () => {
@@ -666,11 +543,11 @@ export default function AudioPlayer({
         playRequestedAt.current = null;
       }
     };
-
+    
     // audio.addEventListener('timeupdate', update); // Removed
     // audio.addEventListener('durationchange', setDur); // Removed
     audio.addEventListener('playing', handlePlaying);
-
+    
     return () => {
       // audio.removeEventListener('timeupdate', update); // Removed
       // audio.removeEventListener('durationchange', setDur); // Removed
@@ -682,7 +559,7 @@ export default function AudioPlayer({
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
-
+    
     // If we're not the controller and audio is playing but shouldn't be, pause it
     if (!isController && !isPlaying && !audio.paused) {
       audio.pause();
@@ -699,6 +576,7 @@ export default function AudioPlayer({
     // Helper: log with context and level
     const log = (level, ...args) => {
       if (import.meta.env.MODE === 'development') {
+         
         console[level]?.('[AudioPlayer][sync_state]', ...args);
       }
     };
@@ -734,16 +612,7 @@ export default function AudioPlayer({
       trackId,
       meta,
       serverTime,
-      syncVersion,
     }) => {
-      const { syncVersion: currentSyncVersion } = meta || {};
-      if (typeof syncVersion === 'number') {
-        if (syncVersion < lastSyncVersion.current) {
-          // Ignore out-of-order or stale sync states
-          return;
-        }
-        lastSyncVersion.current = syncVersion;
-      }
       // Defensive: check for valid timestamp and lastUpdated
       if (
         typeof timestamp !== 'number' ||
@@ -769,8 +638,7 @@ export default function AudioPlayer({
       }
       // Compensate for measured audio latency and RTT (one-way delay)
       const rttComp = rtt ? rtt / 2000 : 0; // ms to s, one-way
-      const expected =
-        timestamp + (now - lastUpdated) / 1000 - audioLatency + rttComp + smoothedOffset;
+      const expected = timestamp + (now - lastUpdated) / 1000 - audioLatency + rttComp + smoothedOffset;
       if (!isFiniteNumber(expected)) {
         showSyncStatus('Sync failed');
         setErrorBanner('Sync failed: Invalid expected time.');
@@ -816,7 +684,7 @@ export default function AudioPlayer({
 
       // Only play/pause if state differs
       if (isPlaying && audio.paused) {
-        audio.play().catch((e) => {
+        audio.play().catch(e => {
           log('warn', 'SYNC_STATE: failed to play audio', e);
         });
       } else if (!isPlaying && !audio.paused) {
@@ -847,8 +715,7 @@ export default function AudioPlayer({
       const elapsed = nowInterval - lastIntervalFired;
       lastIntervalFired = nowInterval;
       // Timer drift detection: if interval fires late, trigger resync
-      if (elapsed > SYNC_CONFIG.TIMER_DRIFT_DETECTION) {
-        // 2x the normal 1200ms interval
+      if (elapsed > SYNC_CONFIG.TIMER_DRIFT_DETECTION) { // 2x the normal 1200ms interval
         setEdgeCaseBanner('Timer drift detected (tab throttling?). Auto-resyncing...');
         handleResync();
         setTimeout(() => setEdgeCaseBanner(null), 4000);
@@ -862,14 +729,6 @@ export default function AudioPlayer({
         return;
       }
       socket.emit('sync_request', { sessionId: socket.sessionId }, (state) => {
-        const { syncVersion } = state || {};
-        if (typeof syncVersion === 'number') {
-          if (syncVersion < lastSyncVersion.current) {
-            // Ignore out-of-order or stale sync states
-            return;
-          }
-          lastSyncVersion.current = syncVersion;
-        }
         // Handle server error
         if (state && state.error) {
           if (import.meta.env.MODE === 'development') {
@@ -898,12 +757,7 @@ export default function AudioPlayer({
 
         const now = getNow(getServerTime);
         const rttComp = rtt ? rtt / 2000 : 0; // ms to s, one-way
-        const expected =
-          state.timestamp +
-          (now - state.lastUpdated) / 1000 -
-          audioLatency +
-          rttComp +
-          smoothedOffset;
+        const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency + rttComp + smoothedOffset;
         if (!isFiniteNumber(expected)) {
           if (import.meta.env.MODE === 'development') {
             console.warn('[DriftCheck] Expected is not finite', { expected, state });
@@ -912,14 +766,12 @@ export default function AudioPlayer({
         }
 
         const syncedNow = getNow(getServerTime);
-        const expectedSynced =
-          state.timestamp + (syncedNow - state.lastUpdated) / 1000 + rttComp + smoothedOffset;
+        const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000 + rttComp + smoothedOffset;
         const drift = Math.abs(audio.currentTime - expectedSynced);
 
         // Only correct if not in cooldown and not right after a seek
         const nowMs = Date.now();
-        const canCorrect =
-          nowMs - lastCorrection > correctionCooldown && nowMs - lastSeekTime.current > 500;
+        const canCorrect = nowMs - lastCorrection > correctionCooldown && nowMs - lastSeekTime.current > 500;
 
         if (drift > SYNC_CONFIG.DRIFT_THRESHOLD) {
           driftCountRef.current += 1;
@@ -939,7 +791,7 @@ export default function AudioPlayer({
                 sessionId: socket.sessionId,
                 drift,
                 clientId,
-                timestamp: nowMs,
+                timestamp: nowMs
               });
             }
 
@@ -947,6 +799,7 @@ export default function AudioPlayer({
             lastCorrection = nowMs;
           }
         } else {
+         
           driftCountRef.current = 0;
           setSyncStatus('In Sync');
         }
@@ -964,6 +817,7 @@ export default function AudioPlayer({
     // Helper for logging (dev only)
     const log = (...args) => {
       if (import.meta.env.MODE === 'development') {
+         
         console.log('[AudioPlayer][sync_request]', ...args);
       }
     };
@@ -971,20 +825,13 @@ export default function AudioPlayer({
     // Helper for warning (dev only)
     const warn = (...args) => {
       if (import.meta.env.MODE === 'development') {
+         
         console.warn('[AudioPlayer][sync_request]', ...args);
       }
     };
 
     // Defensive: wrap in try/catch for callback
     socket.emit('sync_request', { sessionId: socket.sessionId }, (state) => {
-      const { syncVersion } = state || {};
-      if (typeof syncVersion === 'number') {
-        if (syncVersion < lastSyncVersion.current) {
-          // Ignore out-of-order or stale sync states
-          return;
-        }
-        lastSyncVersion.current = syncVersion;
-      }
       setFirstSyncAttempted(true); // Mark that we've attempted the first sync
       try {
         const audio = audioRef.current;
@@ -1027,8 +874,7 @@ export default function AudioPlayer({
           if (!firstSyncFailed) {
             setFirstSyncFailed(true);
             setTimeout(() => {
-              if (firstSyncFailed)
-                setErrorBanner('Sync failed: No valid state received from server.');
+              if (firstSyncFailed) setErrorBanner('Sync failed: No valid state received from server.');
             }, 1000);
           } else {
             setErrorBanner('Sync failed: No valid state received from server.');
@@ -1061,12 +907,7 @@ export default function AudioPlayer({
         const now = getNow(getServerTime);
         // Compensate for measured audio latency and RTT (one-way delay)
         const rttComp = rtt ? rtt / 2000 : 0; // ms to s, one-way
-        const expected =
-          state.timestamp +
-          (now - state.lastUpdated) / 1000 -
-          audioLatency +
-          rttComp +
-          smoothedOffset;
+        const expected = state.timestamp + (now - state.lastUpdated) / 1000 - audioLatency + rttComp + smoothedOffset;
         if (!isFiniteNumber(expected) || expected < 0) {
           warn('Invalid expected time, pausing audio', { expected, state });
           audio.pause();
@@ -1085,8 +926,7 @@ export default function AudioPlayer({
 
         // Use advanced time sync
         const syncedNow = getNow(getServerTime);
-        const expectedSynced =
-          state.timestamp + (syncedNow - state.lastUpdated) / 1000 + rttComp + smoothedOffset;
+        const expectedSynced = state.timestamp + (syncedNow - state.lastUpdated) / 1000 + rttComp + smoothedOffset;
 
         // Clamp expectedSynced to [0, duration] if possible
         let safeExpected = expectedSynced;
@@ -1121,12 +961,7 @@ export default function AudioPlayer({
     if (isController && socket && getServerTime) {
       const now = getNow(getServerTime);
       const audio = audioRef.current;
-      // Adaptive play offset: at least 250ms, or RTT + jitter + 80ms safety margin
-      const adaptiveOffset = Math.max(
-        0.25,
-        (rtt ? rtt / 1000 : 0) + (jitter ? jitter / 1000 : 0) + 0.08
-      );
-      const playAt = (audio ? audio.currentTime : 0) + adaptiveOffset;
+      const playAt = (audio ? audio.currentTime : 0) + SYNC_CONFIG.PLAY_OFFSET;
       const payload = {
         sessionId: socket.sessionId,
         timestamp: playAt,
@@ -1134,11 +969,12 @@ export default function AudioPlayer({
         emittedAt: now,
         latency: audioLatency,
       };
-
+      
       try {
         socket.emit('play', payload);
       } catch (err) {
         if (import.meta.env.MODE === 'development') {
+           
           console.error('[AudioPlayer][emitPlay] Failed to emit play event', err, payload);
         }
       }
@@ -1158,6 +994,7 @@ export default function AudioPlayer({
         socket.emit('pause', payload);
       } catch (err) {
         if (import.meta.env.MODE === 'development') {
+           
           console.error('[AudioPlayer][emitPause] Failed to emit pause event', err, payload);
         }
       }
@@ -1172,11 +1009,12 @@ export default function AudioPlayer({
         clientId,
         emittedAt: getNow(getServerTime),
       };
-
+      
       try {
         socket.emit('seek', payload);
       } catch (err) {
         if (import.meta.env.MODE === 'development') {
+           
           console.error('[AudioPlayer][emitSeek] Failed to emit seek event', err, payload);
         }
       }
@@ -1189,6 +1027,7 @@ export default function AudioPlayer({
     const audio = audioRef.current;
     if (!audio) {
       if (import.meta.env.MODE === 'development') {
+         
         console.warn('[AudioPlayer][handlePlay] Audio element not available');
       }
       return;
@@ -1201,9 +1040,11 @@ export default function AudioPlayer({
       }
       setIsPlaying(true);
       emitPlay();
+     
     } catch (err) {
       setIsPlaying(false);
       if (import.meta.env.MODE === 'development') {
+         
         console.error('[AudioPlayer][handlePlay] Failed to play audio', err);
       }
     }
@@ -1213,6 +1054,7 @@ export default function AudioPlayer({
     const audio = audioRef.current;
     if (!audio) {
       if (import.meta.env.MODE === 'development') {
+         
         console.warn('[AudioPlayer][handlePause] Audio element not available');
       }
       return;
@@ -1221,8 +1063,10 @@ export default function AudioPlayer({
       audio.pause();
       setIsPlaying(false);
       emitPause();
+     
     } catch (err) {
       if (import.meta.env.MODE === 'development') {
+         
         console.error('[AudioPlayer][handlePause] Failed to pause audio', err);
       }
     }
@@ -1237,9 +1081,7 @@ export default function AudioPlayer({
       return;
     }
     if (now - lastResyncTime < SYNC_CONFIG.RESYNC_COOLDOWN_MS) {
-      const remainingCooldown = Math.ceil(
-        (SYNC_CONFIG.RESYNC_COOLDOWN_MS - (now - lastResyncTime)) / 1000
-      );
+      const remainingCooldown = Math.ceil((SYNC_CONFIG.RESYNC_COOLDOWN_MS - (now - lastResyncTime)) / 1000);
       setSyncStatus(`Please wait ${remainingCooldown}s before resyncing again.`);
       setTimeout(() => setSyncStatus('In Sync'), 1500);
       return;
@@ -1342,7 +1184,7 @@ export default function AudioPlayer({
       const audio = audioRef.current;
       if (!audio) return;
       const actual = audio.currentTime;
-      setDisplayedCurrentTime((prev) => {
+      setDisplayedCurrentTime(prev => {
         if (isSeeking) return prev;
         if (Math.abs(prev - actual) < 0.015) return actual;
         return prev + (actual - prev) * 0.22;
@@ -1452,10 +1294,9 @@ export default function AudioPlayer({
       dragProgress = expanded ? 1 : 0;
     }
     // Interpolated values
-    const minHeight = 80,
-      maxHeight = expanded ? 500 : 340; // Allow more height when expanded
+    const minHeight = 80, maxHeight = expanded ? 500 : 340; // Allow more height when expanded
     const interpHeight = minHeight + (maxHeight - minHeight) * dragProgress;
-    const interpPadding = 8 + 20 * dragProgress;
+    const interpPadding = 8 + (20 * dragProgress);
 
     if (loading) {
       return (
@@ -1469,17 +1310,8 @@ export default function AudioPlayer({
         <div className="fixed bottom-20 left-1/2 -translate-x-1/2 w-[95vw] max-w-sm z-40 pointer-events-auto">
           <div className="p-4 bg-red-900/80 rounded-2xl shadow-xl border border-red-700 text-center animate-fade-in">
             <div className="flex flex-col items-center gap-2">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                className="h-7 w-7 text-red-400"
-                viewBox="0 0 20 20"
-                fill="currentColor"
-              >
-                <path
-                  fillRule="evenodd"
-                  d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v4.5a.75.75 0 001.5 0v-4.5zm-.75 8a1 1 0 100-2 1 1 0 000 2z"
-                  clipRule="evenodd"
-                />
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-7 w-7 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v4.5a.75.75 0 001.5 0v-4.5zm-.75 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
               </svg>
               <div className="text-white font-medium">Audio Error</div>
               <div className="text-neutral-300 text-sm">{audioError}</div>
@@ -1506,13 +1338,11 @@ export default function AudioPlayer({
             }}
           />
         )}
-        <div
-          className={`${shouldAnimate ? 'animate-slide-up-from-bottom' : 'opacity-0 translate-y-full'}`}
-        >
+        <div className={`${shouldAnimate ? 'animate-slide-up-from-bottom' : 'opacity-0 translate-y-full'}`}>
           <div
             className={
               `bg-neutral-900/95 backdrop-blur-xl rounded-3xl shadow-2xl flex flex-col gap-2 border border-neutral-700/50 overflow-hidden` +
-              (dragging ? '' : ' transition-transform transition-opacity duration-300')
+              (dragging ? '' : ' transition-all duration-300')
             }
             style={{
               minHeight: expanded ? 'auto' : interpHeight,
@@ -1531,9 +1361,7 @@ export default function AudioPlayer({
               onMouseDown={onHandleMouseDown}
               style={{ touchAction: 'none' }}
             >
-              <div
-                className={`w-10 h-1 rounded-full transition-all duration-200 ${dragging ? 'bg-primary shadow-lg' : 'bg-neutral-600'}`}
-              />
+              <div className={`w-10 h-1 rounded-full transition-all duration-200 ${dragging ? 'bg-primary shadow-lg' : 'bg-neutral-600'}`} />
             </div>
             {/* Interpolated content: fade/slide between compact and expanded */}
             <div style={{ position: 'relative', flex: 1 }}>
@@ -1574,7 +1402,7 @@ export default function AudioPlayer({
                           {formatTime(displayedCurrentTime)} / {formatTime(duration)}
                         </div>
                       </div>
-
+                      
                       {/* Compact Progress Bar */}
                       <ProgressBar
                         currentTime={displayedCurrentTime}
@@ -1616,26 +1444,16 @@ export default function AudioPlayer({
                         {(() => {
                           let artists = currentTrack?.artist;
                           if (Array.isArray(artists)) artists = artists.filter(Boolean);
-                          else if (typeof artists === 'string')
-                            artists = artists
-                              .split(',')
-                              .map((a) => a.trim())
-                              .filter(Boolean);
+                          else if (typeof artists === 'string') artists = artists.split(',').map(a => a.trim()).filter(Boolean);
                           else artists = [];
                           const shown = artists.slice(0, 2);
-                          return shown
-                            .map((a, i) => (
-                              <span key={i} className="truncate max-w-[40vw]" title={a}>
-                                {a}
-                              </span>
-                            ))
-                            .concat(artists.length > 2 ? <span key="more">...</span> : []);
+                          return shown.map((a, i) => (
+                            <span key={i} className="truncate max-w-[40vw]" title={a}>{a}</span>
+                          )).concat(artists.length > 2 ? <span key="more">...</span> : []);
                         })()}
                         {currentTrack?.artist && currentTrack?.album && <span>•</span>}
                         {currentTrack?.album && (
-                          <span className="truncate max-w-[40vw]" title={currentTrack.album}>
-                            {currentTrack.album}
-                          </span>
+                          <span className="truncate max-w-[40vw]" title={currentTrack.album}>{currentTrack.album}</span>
                         )}
                       </div>
                     </div>
@@ -1644,12 +1462,10 @@ export default function AudioPlayer({
                     <div className="space-y-2">
                       {/* Time Display */}
                       <div className="flex items-center justify-between text-xs">
-                        <span className="text-neutral-400 font-mono">
-                          {formatTime(displayedCurrentTime)}
-                        </span>
+                        <span className="text-neutral-400 font-mono">{formatTime(displayedCurrentTime)}</span>
                         <span className="text-neutral-400 font-mono">{formatTime(duration)}</span>
                       </div>
-
+                      
                       {/* Progress Bar */}
                       <ProgressBar
                         currentTime={displayedCurrentTime}
@@ -1664,29 +1480,17 @@ export default function AudioPlayer({
                       {/* Track settings: loop toggle */}
                       <button
                         className={`w-8 h-8 flex items-center justify-center border-none bg-transparent mr-1 p-0 ${loop ? 'text-primary' : 'text-neutral-400 hover:text-primary'}`}
-                        onClick={() => setLoop((l) => !l)}
+                        onClick={() => setLoop(l => !l)}
                         aria-label={loop ? 'Disable loop' : 'Enable loop'}
                         title={loop ? 'Disable loop' : 'Enable loop'}
                         style={{ boxShadow: 'none' }}
                       >
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          width="18"
-                          height="18"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                           <path d="M17 1l4 4-4 4" />
                           <path d="M3 11V9a4 4 0 014-4h14" />
                           <path d="M7 23l-4-4 4-4" />
                           <path d="M21 13v2a4 4 0 01-4 4H3" />
-                          {loop && (
-                            <circle cx="12" cy="12" r="3" fill="currentColor" opacity="0.3" />
-                          )}
+                          {loop && <circle cx="12" cy="12" r="3" fill="currentColor" opacity="0.3" />}
                         </svg>
                       </button>
                       <PlayerControls
@@ -1703,10 +1507,10 @@ export default function AudioPlayer({
                       />
                       <button
                         className={`w-8 h-8 flex items-center justify-center border-none bg-transparent p-0 disabled:opacity-50 disabled:cursor-not-allowed ${
-                          resyncInProgress
-                            ? 'text-blue-500'
-                            : smartResyncSuggestion
-                              ? 'text-orange-400'
+                          resyncInProgress 
+                            ? 'text-blue-500' 
+                            : smartResyncSuggestion 
+                              ? 'text-orange-400' 
                               : 'text-neutral-400 hover:text-primary'
                         }`}
                         onClick={handleResync}
@@ -1715,32 +1519,11 @@ export default function AudioPlayer({
                         style={{ boxShadow: 'none' }}
                       >
                         {resyncInProgress ? (
-                          <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            width="18"
-                            height="18"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            className="animate-spin"
-                          >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin">
                             <path d="M21 12a9 9 0 11-6.219-8.56"></path>
                           </svg>
                         ) : (
-                          <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            width="18"
-                            height="18"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                             <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
                             <path d="M21 3v5h-5"></path>
                             <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
@@ -1769,17 +1552,8 @@ export default function AudioPlayer({
       <div className="p-6 bg-neutral-900/50 rounded-lg border border-neutral-800 animate-fade-in">
         <div className="flex items-center gap-3 mb-4">
           <div className="w-10 h-10 bg-red-500/20 rounded-lg flex items-center justify-center">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-5 w-5 text-red-500"
-              viewBox="0 0 20 20"
-              fill="currentColor"
-            >
-              <path
-                fillRule="evenodd"
-                d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v4.5a.75.75 0 001.5 0v-4.5zm-.75 8a1 1 0 100-2 1 1 0 000 2z"
-                clipRule="evenodd"
-              />
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-red-500" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v4.5a.75.75 0 001.5 0v-4.5zm-.75 8a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
             </svg>
           </div>
           <div>
@@ -1792,13 +1566,15 @@ export default function AudioPlayer({
     );
   }
 
+
+
   return (
     <div className={`audio-player transition-all duration-500 ${audioLoaded.animationClass}`}>
       {/* Only one audio element for desktop, and only if not mobile */}
       {audioUrl && (
-        <audio
-          ref={audioRef}
-          src={audioUrl}
+        <audio 
+          ref={audioRef} 
+          src={audioUrl} 
           preload="auto"
           onLoadedMetadata={() => {
             // Ensure audio is paused when metadata loads (especially for listeners)
@@ -1811,18 +1587,22 @@ export default function AudioPlayer({
         />
       )}
       {errorBanner && (
-        <ErrorBanner message={errorBanner} color="#b91c1c" onDismiss={() => setErrorBanner(null)} />
-      )}
+  <ErrorBanner
+    message={errorBanner}
+    color="#b91c1c"
+    onDismiss={() => setErrorBanner(null)}
+  />
+)}
       {edgeCaseBanner && (
-        <ErrorBanner
-          message={edgeCaseBanner}
-          color="#2563eb"
-          onDismiss={() => setEdgeCaseBanner(null)}
-          onResync={handleResync}
-          showResync={true}
-          resyncLabel="Re-sync now"
-        />
-      )}
+  <ErrorBanner
+    message={edgeCaseBanner}
+    color="#2563eb"
+    onDismiss={() => setEdgeCaseBanner(null)}
+    onResync={handleResync}
+    showResync={true}
+    resyncLabel="Re-sync now"
+  />
+)}
       {/* Now Playing Section */}
       <div className="bg-neutral-900/50 rounded-lg border border-neutral-800 p-4">
         <div className="flex items-center gap-3 mb-4">
@@ -1835,18 +1615,7 @@ export default function AudioPlayer({
                 style={{ minWidth: 48, minHeight: 48 }}
               />
             ) : (
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="24"
-                height="24"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="text-primary"
-              >
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
                 <path d="M9 18V5l12-2v13"></path>
                 <circle cx="6" cy="18" r="3"></circle>
                 <circle cx="18" cy="16" r="3"></circle>
@@ -1855,32 +1624,26 @@ export default function AudioPlayer({
           </div>
           <div className="flex-1">
             <div className="mb-1 text-white text-base font-semibold min-h-[1.5em] relative flex items-center">
-              <TrackInfo title={displayedTitle} animating={animating} direction={direction} />
+              <TrackInfo
+                title={displayedTitle}
+                animating={animating}
+                direction={direction}
+              />
             </div>
             <div className="text-[12px] text-neutral-400 truncate flex flex-row flex-wrap gap-x-2 gap-y-0.5 items-center">
               {(() => {
                 let artists = currentTrack?.artist;
                 if (Array.isArray(artists)) artists = artists.filter(Boolean);
-                else if (typeof artists === 'string')
-                  artists = artists
-                    .split(',')
-                    .map((a) => a.trim())
-                    .filter(Boolean);
+                else if (typeof artists === 'string') artists = artists.split(',').map(a => a.trim()).filter(Boolean);
                 else artists = [];
                 const shown = artists.slice(0, 2);
-                return shown
-                  .map((a, i) => (
-                    <span key={i} className="truncate max-w-xs" title={a}>
-                      {a}
-                    </span>
-                  ))
-                  .concat(artists.length > 2 ? <span key="more">...</span> : []);
+                return shown.map((a, i) => (
+                  <span key={i} className="truncate max-w-xs" title={a}>{a}</span>
+                )).concat(artists.length > 2 ? <span key="more">...</span> : []);
               })()}
               {currentTrack?.artist && currentTrack?.album && <span>•</span>}
               {currentTrack?.album && (
-                <span className="truncate max-w-xs" title={currentTrack.album}>
-                  {currentTrack.album}
-                </span>
+                <span className="truncate max-w-xs" title={currentTrack.album}>{currentTrack.album}</span>
               )}
             </div>
           </div>
@@ -1896,19 +1659,19 @@ export default function AudioPlayer({
         <div className="mb-4">
           <div className="relative">
             <div className="h-2 bg-neutral-800 rounded-lg overflow-hidden">
-              <div
+              <div 
                 className="h-full bg-white rounded-lg transition-all duration-300"
-                style={{
-                  width: `${isFinite(duration) && duration > 0 ? (displayedCurrentTime / duration) * 100 : 0}%`,
+                style={{ 
+                  width: `${isFinite(duration) && duration > 0 ? (displayedCurrentTime / duration) * 100 : 0}%` 
                 }}
               />
             </div>
             {/* Custom Thumb */}
-            <div
+            <div 
               className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full shadow-lg border border-neutral-300 transition-all duration-200 hover:scale-110"
-              style={{
+              style={{ 
                 left: `${isFinite(duration) && duration > 0 ? (displayedCurrentTime / duration) * 100 : 0}%`,
-                transform: 'translate(-50%, -50%)',
+                transform: 'translate(-50%, -50%)'
               }}
             />
             <input
@@ -1917,7 +1680,7 @@ export default function AudioPlayer({
               max={isFinite(duration) ? duration : 0}
               step={0.01}
               value={isFinite(displayedCurrentTime) ? displayedCurrentTime : 0}
-              onChange={(e) => handleSeekWithEmit(Number(e.target.value))}
+              onChange={e => handleSeekWithEmit(Number(e.target.value))}
               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
               disabled={disabled || !isController || !audioUrl}
             />
@@ -1951,82 +1714,46 @@ export default function AudioPlayer({
         </div>
       </div>
       {import.meta.env.MODE === 'development' && showLatencyCal && (
-        <div
-          style={{
-            position: 'fixed',
-            bottom: 340,
-            left: 20,
-            zIndex: 10001,
-            background: 'rgba(30,30,30,0.97)',
-            color: '#fff',
-            padding: '16px 22px',
-            borderRadius: 10,
-            fontSize: 15,
-            maxWidth: 340,
-            boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
-          }}
-        >
-          <div style={{ fontWeight: 'bold', marginBottom: 8 }}>Audio Latency Calibration</div>
-          <div>
-            Measured: <b>{audioLatency.toFixed(3)}s</b>
-          </div>
-          <div>
-            Override:{' '}
-            <input
-              type="number"
-              step="0.001"
-              min="0"
-              max="1"
-              value={manualLatency ?? ''}
-              onChange={(e) => setManualLatency(parseFloat(e.target.value) || 0)}
-              style={{ width: 80, marginLeft: 8 }}
-            />{' '}
-            s
-          </div>
-          <button
-            style={{
-              marginTop: 10,
-              padding: '4px 10px',
-              borderRadius: 6,
-              background: '#444',
-              color: '#fff',
-              border: 'none',
-              cursor: 'pointer',
-            }}
-            onClick={() => {
-              setManualLatency(null);
-              localStorage.removeItem('audioLatencyOverride');
-            }}
-          >
-            Reset
-          </button>
-          <div style={{ color: '#aaa', fontSize: 12, marginTop: 8 }}>
-            Press <b>L</b> to toggle this panel.
-          </div>
-        </div>
-      )}
+  <div style={{
+    position: 'fixed',
+    bottom: 340,
+    left: 20,
+    zIndex: 10001,
+    background: 'rgba(30,30,30,0.97)',
+    color: '#fff',
+    padding: '16px 22px',
+    borderRadius: 10,
+    fontSize: 15,
+    maxWidth: 340,
+    boxShadow: '0 2px 8px rgba(0,0,0,0.25)'
+  }}>
+    <div style={{fontWeight: 'bold', marginBottom: 8}}>Audio Latency Calibration</div>
+    <div>Measured: <b>{audioLatency.toFixed(3)}s</b></div>
+    <div>Override: <input type="number" step="0.001" min="0" max="1" value={manualLatency ?? ''} onChange={e => setManualLatency(parseFloat(e.target.value) || 0)} style={{width: 80, marginLeft: 8}} /> s</div>
+    <button style={{marginTop: 10, padding: '4px 10px', borderRadius: 6, background: '#444', color: '#fff', border: 'none', cursor: 'pointer'}} onClick={() => { setManualLatency(null); localStorage.removeItem('audioLatencyOverride'); }}>Reset</button>
+    <div style={{color:'#aaa', fontSize:12, marginTop:8}}>Press <b>L</b> to toggle this panel.</div>
+  </div>
+)}
       {import.meta.env.MODE === 'development' && showDriftDebug && (
-        <DiagnosticsPanel
-          audioLatency={audioLatency}
-          manualLatency={manualLatency}
-          setManualLatency={setManualLatency}
-          resyncStats={resyncStats}
-          rtt={rtt}
-          jitter={jitter}
-          syncQuality={syncQuality}
-          selectedSource={selectedSource}
-          computedUltraPreciseOffset={computedUltraPreciseOffset}
-          smoothedOffset={smoothedOffset}
-        />
-      )}
+  <DiagnosticsPanel
+    audioLatency={audioLatency}
+    manualLatency={manualLatency}
+    setManualLatency={setManualLatency}
+    resyncStats={resyncStats}
+    rtt={rtt}
+    jitter={jitter}
+    syncQuality={syncQuality}
+    selectedSource={selectedSource}
+    computedUltraPreciseOffset={computedUltraPreciseOffset}
+    smoothedOffset={smoothedOffset}
+  />
+)}
       {import.meta.env.MODE === 'development' && showCalibrateBanner && (
-        <LatencyCalBanner
-          onCalibrate={() => {
-            setShowCalibrateBanner(false);
-          }}
-          onDismiss={() => setShowCalibrateBanner(false)}
-        />
-      )}
+  <LatencyCalBanner
+    onCalibrate={() => { setShowCalibrateBanner(false); }}
+    onDismiss={() => setShowCalibrateBanner(false)}
+  />
+)}
     </div>
   );
-}
+} 

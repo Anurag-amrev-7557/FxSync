@@ -11,4 +11,4 @@ export default function useMultiPeerTimeSync(socket, clientId, peerIds) {
     usePeerTimeSync(socket, clientId, peerIds[3] || null),
     usePeerTimeSync(socket, clientId, peerIds[4] || null),
   ];
-}
+} 

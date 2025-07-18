@@ -17,7 +17,5 @@ export function isValidSessionId(id) {
 }
 
 export function log(...args) {
-  if (process.env.NODE_ENV === 'development') {
-    console.log('[Backend]', ...args);
-  }
-}
+  console.log('[Backend]', ...args);
+} 

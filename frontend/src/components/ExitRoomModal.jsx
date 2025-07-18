@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react'
 
 function ExitRoomModal({ isOpen, onClose, onConfirm, roomName }) {
   const modalRef = useRef(null);
@@ -24,8 +24,7 @@ function ExitRoomModal({ isOpen, onClose, onConfirm, roomName }) {
   // Focus trap and ESC support
   useEffect(() => {
     if (!visible || exiting) return;
-    const focusableSelectors =
-      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+    const focusableSelectors = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
     const modal = modalRef.current;
     if (!modal) return;
     const focusableEls = modal.querySelectorAll(focusableSelectors);
@@ -78,7 +77,7 @@ function ExitRoomModal({ isOpen, onClose, onConfirm, roomName }) {
     }, 400); // match exit animation duration
   };
 
-  if (!visible) return null;
+  if (!visible) return null
 
   return (
     <div
@@ -103,11 +102,9 @@ function ExitRoomModal({ isOpen, onClose, onConfirm, roomName }) {
           mx-2 sm:mx-4
           shadow-none
           overflow-hidden
-          ${
-            exiting
-              ? 'animate-[modal-pop-out_0.4s_cubic-bezier(0.22,1,0.36,1)_forwards]'
-              : 'animate-[modal-pop_0.45s_cubic-bezier(0.22,1,0.36,1)]'
-          }
+          ${exiting
+            ? 'animate-[modal-pop-out_0.4s_cubic-bezier(0.22,1,0.36,1)_forwards]'
+            : 'animate-[modal-pop_0.45s_cubic-bezier(0.22,1,0.36,1)]'}
         `}
         style={{
           animationName: exiting ? 'modal-pop-out' : 'modal-pop',
@@ -119,56 +116,24 @@ function ExitRoomModal({ isOpen, onClose, onConfirm, roomName }) {
         {/* Header */}
         <div className="flex items-center gap-3 mb-5 sm:mb-7">
           <div className="w-10 h-10 flex items-center justify-center bg-neutral-900 border border-neutral-800 rounded-lg">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="22"
-              height="22"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="text-white"
-            >
+            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="text-white">
               <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
               <polyline points="16,17 21,12 16,7"></polyline>
               <line x1="21" y1="12" x2="9" y2="12"></line>
             </svg>
           </div>
           <div className="flex-1">
-            <h3
-              id="exit-room-title"
-              className="text-lg sm:text-xl font-bold text-white mb-0 tracking-tight"
-            >
-              Exit Room
-            </h3>
-            <p className="text-xs sm:text-sm text-neutral-400 font-normal mt-1">
-              Are you sure you want to leave this session?
-            </p>
+            <h3 id="exit-room-title" className="text-lg sm:text-xl font-bold text-white mb-0 tracking-tight">Exit Room</h3>
+            <p className="text-xs sm:text-sm text-neutral-400 font-normal mt-1">Are you sure you want to leave this session?</p>
           </div>
         </div>
         {/* Room Info */}
         <div className="bg-neutral-900 rounded-lg p-3 sm:p-4 mb-5 sm:mb-7 border border-neutral-800 flex items-center gap-2">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="15"
-            height="15"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className="text-neutral-400"
-          >
+          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-400">
             <circle cx="9" cy="7" r="4"></circle>
             <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
           </svg>
-          <span className="text-xs sm:text-sm text-neutral-300">
-            <span className="text-neutral-500">Room:</span>{' '}
-            <span className="text-white font-mono">{roomName}</span>
-          </span>
+          <span className="text-xs sm:text-sm text-neutral-300"><span className="text-neutral-500">Room:</span> <span className="text-white font-mono">{roomName}</span></span>
         </div>
         {/* Action Buttons */}
         <div className="flex flex-row gap-2 mt-2">
@@ -200,7 +165,7 @@ function ExitRoomModal({ isOpen, onClose, onConfirm, roomName }) {
         }
       `}</style>
     </div>
-  );
+  )
 }
 
-export default ExitRoomModal;
+export default ExitRoomModal 

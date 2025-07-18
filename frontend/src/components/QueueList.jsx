@@ -12,11 +12,14 @@ function formatDuration(duration) {
   return `${min}:${sec.toString().padStart(2, '0')}`;
 }
 
+
+
 // Memoized Track Row for performance
 const TrackRow = React.memo(function TrackRow({
   item,
   idx,
   selectedTrackIdx,
+  queueAnimations,
   onSelectTrack,
   handleRemove,
   loading,
@@ -24,10 +27,10 @@ const TrackRow = React.memo(function TrackRow({
   disableRemove,
   pendingRemoveId,
   confirmRemove,
-  reducedMotion,
 }) {
   const trackId = item.url || item.id || item.title;
   const isSelected = selectedTrackIdx === idx;
+  const animationClass = queueAnimations[idx]?.animationClass || '';
   const durationStr = formatDuration(item.duration);
 
   // Only animate on first appearance
@@ -43,7 +46,7 @@ const TrackRow = React.memo(function TrackRow({
     }
   }, [trackId]);
 
-  const appliedAnimationClass = shouldAnimate ? 'animate-slide-in-up' : '';
+  const appliedAnimationClass = shouldAnimate ? animationClass : '';
 
   // --- Swipe-to-remove state and handlers (mobile only) ---
   const [touchStartX, setTouchStartX] = useState(null);
@@ -106,7 +109,7 @@ const TrackRow = React.memo(function TrackRow({
       removalPositionRef.current = finalDirection === 'right' ? 500 : -500;
       removalSwipeX.current = removalPositionRef.current; // <--- set local ref
       setRemoving(true);
-      setRemovalKey((k) => k + 1); // <--- force re-render
+      setRemovalKey(k => k + 1); // <--- force re-render
       setTimeout(() => {
         handleRemove(item.url || item.id || item.title);
         setRemoving(false);
@@ -115,7 +118,7 @@ const TrackRow = React.memo(function TrackRow({
         removalPositionRef.current = null;
         removalSwipeX.current = null; // <--- clear after animation
         setTouchDeltaX(0);
-        setRemovalKey((k) => k + 1); // <--- force re-render
+        setRemovalKey(k => k + 1); // <--- force re-render
       }, 200); // allow animation
     } else {
       // Animate back to position
@@ -127,7 +130,7 @@ const TrackRow = React.memo(function TrackRow({
         setRemovalDirection(null);
         removalPositionRef.current = null;
         removalSwipeX.current = null;
-        setRemovalKey((k) => k + 1); // <--- force re-render
+        setRemovalKey(k => k + 1); // <--- force re-render
       }, 250);
     }
     setTouchStartX(null);
@@ -146,27 +149,28 @@ const TrackRow = React.memo(function TrackRow({
     swipeX = touchDeltaX;
   }
 
-  const swipeStyle =
-    isMobile && (swiping || removing || shouldAnimateBack)
-      ? {
-          transform: `translateX(${swipeX}px)`,
-          transition: removing
+  const swipeStyle = isMobile && (swiping || removing || shouldAnimateBack)
+    ? {
+        transform: `translateX(${swipeX}px)`,
+        transition:
+          removing
             ? 'transform 0.35s cubic-bezier(0.4,0,0.2,1), opacity 0.25s cubic-bezier(0.4,0,0.2,1)'
             : shouldAnimateBack
               ? 'transform 0.25s cubic-bezier(0.4,0,0.2,1)'
               : 'none',
-          opacity: removing ? 0 : 1,
-          zIndex: 2,
-          position: 'relative',
-          willChange: 'transform',
-        }
-      : { position: 'relative', zIndex: 2 };
+        opacity: removing ? 0 : 1,
+        zIndex: 2,
+        position: 'relative',
+        willChange: 'transform',
+      }
+    : { position: 'relative', zIndex: 2 };
 
   // Only show red background if user has actually swiped (not just tapped)
   const hasSwiped = Math.abs(touchDeltaX) > 10;
 
-  const iconDirection =
-    removing && lockedRemovalDirection.current ? lockedRemovalDirection.current : swipeDirection;
+  const iconDirection = (removing && lockedRemovalDirection.current)
+    ? lockedRemovalDirection.current
+    : swipeDirection;
 
   React.useEffect(() => {
     const trackId = item.url || item.id || item.title;
@@ -179,7 +183,7 @@ const TrackRow = React.memo(function TrackRow({
       lockedRemovalDirection.current = direction; // lock the direction
       removalPositionRef.current = direction === 'right' ? 500 : -500;
       removalSwipeX.current = removalPositionRef.current;
-      setRemovalKey((k) => k + 1); // Force re-render to trigger animation
+      setRemovalKey(k => k + 1); // Force re-render to trigger animation
       setTimeout(() => {
         confirmRemove(trackId);
         setRemoving(false);
@@ -188,7 +192,7 @@ const TrackRow = React.memo(function TrackRow({
         removalPositionRef.current = null;
         removalSwipeX.current = null;
         lockedRemovalDirection.current = null;
-        setRemovalKey((k) => k + 1); // Force re-render
+        setRemovalKey(k => k + 1); // Force re-render
       }, 200); // Allow animation
     }
   }, [pendingRemoveId, item, iconDirection, confirmRemove]);
@@ -206,30 +210,20 @@ const TrackRow = React.memo(function TrackRow({
         >
           {/* Left side icon/text */}
           <span style={{ opacity: iconDirection === 'right' ? 1 : 0, transition: 'opacity 0.2s' }}>
-            <svg width="24" height="24" fill="none" viewBox="0 0 24 24">
-              <path
-                d="M7 18c0 1.104.896 2 2 2h6c1.104 0 2-.896 2-2V8H7v10zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"
-                fill="#ef4444"
-              />
-            </svg>
+            <svg width="24" height="24" fill="none" viewBox="0 0 24 24"><path d="M7 18c0 1.104.896 2 2 2h6c1.104 0 2-.896 2-2V8H7v10zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" fill="#ef4444"/></svg>
           </span>
           {/* Right side icon/text */}
           <span style={{ opacity: iconDirection === 'left' ? 1 : 0, transition: 'opacity 0.2s' }}>
-            <svg width="24" height="24" fill="none" viewBox="0 0 24 24">
-              <path
-                d="M7 18c0 1.104.896 2 2 2h6c1.104 0 2-.896 2-2V8H7v10zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"
-                fill="#ef4444"
-              />
-            </svg>
+            <svg width="24" height="24" fill="none" viewBox="0 0 24 24"><path d="M7 18c0 1.104.896 2 2 2h6c1.104 0 2-.896 2-2V8H7v10zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" fill="#ef4444"/></svg>
           </span>
         </div>
       )}
       {/* Swipable item */}
       <div
         className={`p-3 sm:p-4 h-20 sm:h-20 border-l-4 border-transparent hover:bg-primary/20 focus:bg-primary/30 transition-all duration-300 group cursor-pointer outline-none ${appliedAnimationClass} ${isSelected ? '' : ''} ${isMobile && (swiping || removing) ? 'hide-scrollbar' : ''}`}
-        style={{ animationDelay: !reducedMotion ? `${idx * 120}ms` : undefined }}
+        style={swipeStyle}
         onClick={() => isController && onSelectTrack && onSelectTrack(idx)}
-        onKeyDown={(e) => {
+        onKeyDown={e => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
             isController && onSelectTrack && onSelectTrack(idx);
@@ -245,14 +239,14 @@ const TrackRow = React.memo(function TrackRow({
         onTouchEnd={handleTouchEnd}
       >
         <div className="flex items-center gap-2 sm:gap-3 relative z-10">
-          <div
-            className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 transition-all duration-300 ${isSelected ? 'bg-white' : 'bg-neutral-800'}`}
+          <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 transition-all duration-300 ${isSelected ? 'bg-white' : 'bg-neutral-800'}`}
             title={item.title || 'Unknown Track'}
           >
             <MusicIcon className={isSelected ? 'text-black drop-shadow-lg' : 'text-neutral-400'} />
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1 sm:gap-2 mb-0.5 sm:mb-1">
+              
               <h4
                 className={`truncate transition-all duration-300 ${
                   isSelected
@@ -320,26 +314,16 @@ const TrackRow = React.memo(function TrackRow({
                 {(() => {
                   let artists = item.artist;
                   if (Array.isArray(artists)) artists = artists.filter(Boolean);
-                  else if (typeof artists === 'string')
-                    artists = artists
-                      .split(',')
-                      .map((a) => a.trim())
-                      .filter(Boolean);
+                  else if (typeof artists === 'string') artists = artists.split(',').map(a => a.trim()).filter(Boolean);
                   else artists = [];
                   const shown = artists.slice(0, 2);
-                  return shown
-                    .map((a, i) => (
-                      <span key={i} className="truncate max-w-[40vw]" title={a}>
-                        {a}
-                      </span>
-                    ))
-                    .concat(artists.length > 2 ? <span key="more">...</span> : []);
+                  return shown.map((a, i) => (
+                    <span key={i} className="truncate max-w-[40vw]" title={a}>{a}</span>
+                  )).concat(artists.length > 2 ? <span key="more">...</span> : []);
                 })()}
                 {item.artist && item.album && <span>•</span>}
                 {item.album && (
-                  <span className="truncate max-w-[40vw]" title={item.album}>
-                    {item.album}
-                  </span>
+                  <span className="truncate max-w-[40vw]" title={item.album}>{item.album}</span>
                 )}
                 {(item.artist || item.album) && durationStr && <span>•</span>}
                 {durationStr && <span>{durationStr}</span>}
@@ -349,41 +333,28 @@ const TrackRow = React.memo(function TrackRow({
                 {(() => {
                   let artists = item.artist;
                   if (Array.isArray(artists)) artists = artists.filter(Boolean);
-                  else if (typeof artists === 'string')
-                    artists = artists
-                      .split(',')
-                      .map((a) => a.trim())
-                      .filter(Boolean);
+                  else if (typeof artists === 'string') artists = artists.split(',').map(a => a.trim()).filter(Boolean);
                   else artists = [];
                   const shown = artists.slice(0, 2);
-                  return shown
-                    .map((a, i) => (
-                      <span key={i} className="truncate max-w-xs" title={a}>
-                        {a}
-                      </span>
-                    ))
-                    .concat(artists.length > 2 ? <span key="more">...</span> : []);
+                  return shown.map((a, i) => (
+                    <span key={i} className="truncate max-w-xs" title={a}>{a}</span>
+                  )).concat(artists.length > 2 ? <span key="more">...</span> : []);
                 })()}
                 {item.album && <span>•</span>}
-                {item.album && (
-                  <span className="truncate max-w-xs" title={item.album}>
-                    {item.album}
-                  </span>
-                )}
+                {item.album && <span className="truncate max-w-xs" title={item.album}>{item.album}</span>}
                 {durationStr && <span>•</span>}
                 {durationStr && <span>{durationStr}</span>}
               </span>
             </div>
           </div>
-          {isSelected && <EqualizerBars />}
+          {isSelected && (
+            <EqualizerBars />
+          )}
           {/* Hide delete button for mobile view entirely */}
           {isController && !isMobile && (
             <button
               className="opacity-100 sm:opacity-0 group-hover:opacity-100 focus:opacity-100 p-2 sm:p-2.5 text-neutral-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all duration-200 ml-1 sm:ml-0 min-w-[36px] min-h-[36px]"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleRemove(item.url || item.id || item.title);
-              }}
+              onClick={e => { e.stopPropagation(); handleRemove(item.url || item.id || item.title); }}
               disabled={loading || disableRemove}
               title="Remove track"
               aria-label={`Remove track ${item.title || 'Unknown Track'}`}
@@ -415,7 +386,7 @@ const EqualizerBars = React.memo(function EqualizerBars() {
   // 5 bars, each with a different animation delay
   return (
     <div className="flex items-end h-8 w-8 justify-end ml-2 sm:ml-4">
-      {[0, 1, 2, 3].map((i) => (
+      {[0, 1, 2, 3].map(i => (
         <span key={i} className={`eq-bar eq-bar-${i + 1}`} />
       ))}
       <style>{`
@@ -448,6 +419,7 @@ const EqualizerBars = React.memo(function EqualizerBars() {
 
 function QueueList({
   queue,
+  queueAnimations = [],
   selectedTrackIdx,
   onSelectTrack,
   isController,
@@ -458,12 +430,9 @@ function QueueList({
   queueScrollRef,
   pendingRemoveId,
   confirmRemove,
-  reducedMotion,
 }) {
   // All hooks must be called before any early return
-  const [isMobile, setIsMobile] = useState(() =>
-    typeof window !== 'undefined' ? window.innerWidth < 640 : false
-  );
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' ? window.innerWidth < 640 : false);
 
   // Update isMobile on resize
   React.useEffect(() => {
@@ -483,9 +452,7 @@ function QueueList({
         </div>
         <p className="text-neutral-400 text-sm mb-1">No tracks in queue</p>
         <p className="text-neutral-500 text-xs">
-          {isController
-            ? 'Add audio URLs or upload MP3s to get started'
-            : 'The controller will add tracks here'}
+          {isController ? 'Add audio URLs or upload MP3s to get started' : 'The controller will add tracks here'}
         </p>
       </div>
     );
@@ -494,7 +461,7 @@ function QueueList({
   // Single non-drag version for all users
   return (
     <div
-      ref={(el) => {
+      ref={el => {
         if (queueScrollRef) {
           if (typeof queueScrollRef === 'function') queueScrollRef(el);
           else if (queueScrollRef.current) queueScrollRef.current = el;
@@ -511,6 +478,7 @@ function QueueList({
           item={item}
           idx={idx}
           selectedTrackIdx={selectedTrackIdx}
+          queueAnimations={queueAnimations}
           onSelectTrack={onSelectTrack}
           handleRemove={handleRemove}
           loading={loading}
@@ -518,7 +486,6 @@ function QueueList({
           disableRemove={false}
           pendingRemoveId={pendingRemoveId}
           confirmRemove={confirmRemove}
-          reducedMotion={reducedMotion}
         />
       ))}
     </div>
