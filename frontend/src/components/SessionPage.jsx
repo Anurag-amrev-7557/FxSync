@@ -25,6 +25,456 @@ import useUltraPreciseOffset from '../hooks/useUltraPreciseOffset';
 import useModalState from '../hooks/useModalState';
 import useMobileTab from '../hooks/useMobileTab';
 
+// --- CalibrateLatencyWizard: Automatic device-specific latency measurement ---
+function CalibrateLatencyWizard({ onDone, socket, onSkip, theme = 'dark' }) {
+  // --- Accessibility: Focus trap, ARIA, keyboard nav ---
+  const modalRef = useRef(null);
+  useEffect(() => {
+    if (!modalRef.current) return;
+    const focusable = modalRef.current.querySelectorAll(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    if (focusable.length) focusable[0].focus();
+    function trap(e) {
+      if (e.key !== 'Tab') return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    }
+    modalRef.current.addEventListener('keydown', trap);
+    return () => modalRef.current && modalRef.current.removeEventListener('keydown', trap);
+  }, []);
+
+  // --- Calibration steps ---
+  const steps = [
+    { key: 'latency', label: 'Audio Latency', desc: 'How quickly your device can play sound.' },
+    { key: 'rtt', label: 'RTT', desc: 'Network round-trip time to server.' },
+    { key: 'jitter', label: 'Jitter', desc: 'Network timing variability.' },
+    { key: 'offset', label: 'Offset', desc: 'Clock difference with server.' },
+  ];
+  const [step, setStep] = useState(0); // 0: latency, 1: rtt, 2: jitter, 3: offset
+  const [measuring, setMeasuring] = useState(true);
+  const [latency, setLatency] = useState(null);
+  const [rtt, setRtt] = useState(null);
+  const [jitter, setJitter] = useState(null);
+  const [offset, setOffset] = useState(null);
+  const [miniProgress, setMiniProgress] = useState(0); // 0-100 for current step
+  const [calibrationDone, setCalibrationDone] = useState(false);
+  const [showButtons, setShowButtons] = useState(false);
+  const [error, setError] = useState(null);
+  const [showResults, setShowResults] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const [manualOverride, setManualOverride] = useState(false);
+  const [manualValues, setManualValues] = useState({ latency: '', rtt: '', jitter: '', offset: '' });
+  const [calibrationKey, setCalibrationKey] = useState(0); // For remount
+  const [ariaStatus, setAriaStatus] = useState('');
+
+  // --- Minimum time per step for smoothness ---
+  const minStepTime = 300;
+
+  useEffect(() => {
+    let minTimeTimeout;
+    let cancelled = false;
+    async function measureAll() {
+      setCalibrationDone(false);
+      setShowButtons(false);
+      setShowResults(false);
+      setError(null);
+      setAriaStatus('');
+      // --- Step 1: Audio Latency ---
+      setStep(0);
+      setMiniProgress(0);
+      let measured = null;
+      let audioError = null;
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        if (ctx.baseLatency && ctx.baseLatency > 0 && ctx.baseLatency < 1) {
+          measured = ctx.baseLatency;
+        } else {
+          audioError = 'Could not measure audio latency (unsupported browser/device).';
+        }
+        await ctx.close();
+      } catch (e) {
+        audioError = 'AudioContext error: ' + (e.message || e);
+      }
+      setLatency(measured);
+      setMiniProgress(100);
+      await new Promise(res => setTimeout(res, minStepTime));
+      if (audioError) {
+        setError(audioError);
+        setMeasuring(false);
+        setCalibrationDone(false);
+        setShowButtons(true);
+        setAriaStatus('Calibration failed: ' + audioError);
+        return;
+      }
+      if (cancelled) return;
+      // --- Step 2: RTT/Jitter/Offset ---
+      setStep(1);
+      setMiniProgress(0);
+      let rttSamples = [];
+      let offsetSamples = [];
+      let socketError = null;
+      if (socket && typeof socket.emit === 'function') {
+        for (let i = 0; i < 5; ++i) {
+          await new Promise(resolve => {
+            const clientSent = Date.now();
+            let responded = false;
+            const timeout = setTimeout(() => {
+              if (!responded) {
+                socketError = 'Network/server error during RTT test.';
+                setError(socketError);
+                setMeasuring(false);
+                setCalibrationDone(false);
+                setShowButtons(true);
+                setAriaStatus('Calibration failed: ' + socketError);
+                resolve();
+              }
+            }, 2000);
+            socket.emit('time_sync', { clientSent }, (res) => {
+              responded = true;
+              clearTimeout(timeout);
+              const clientReceived = Date.now();
+              if (res && typeof res.serverTime === 'number' && typeof res.serverReceived === 'number') {
+                const rttSample = clientReceived - clientSent;
+                const offsetSample = res.serverTime + rttSample / 2 - clientReceived;
+                rttSamples.push(rttSample);
+                offsetSamples.push(offsetSample);
+              }
+              setMiniProgress(Math.round(((i + 1) / 5) * 100));
+              setTimeout(resolve, 15);
+            });
+          });
+          if (socketError) return;
+        }
+      } else {
+        socketError = 'Socket not available.';
+        setError(socketError);
+        setMeasuring(false);
+        setCalibrationDone(false);
+        setShowButtons(true);
+        setAriaStatus('Calibration failed: ' + socketError);
+        return;
+      }
+      if (cancelled) return;
+      // --- Step 3: Jitter/Offset Calculation ---
+      setStep(2);
+      setMiniProgress(0);
+      await new Promise(res => setTimeout(res, minStepTime));
+      if (rttSamples.length) {
+        const avgRtt = rttSamples.reduce((a, b) => a + b, 0) / rttSamples.length;
+        const mean = avgRtt;
+        const stddev = Math.sqrt(rttSamples.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / rttSamples.length);
+        setRtt(avgRtt);
+        setJitter(stddev);
+      }
+      if (offsetSamples.length) {
+        const avgOffset = offsetSamples.reduce((a, b) => a + b, 0) / offsetSamples.length;
+        setOffset(avgOffset);
+      }
+      setMiniProgress(100);
+      await new Promise(res => setTimeout(res, minStepTime));
+      // --- Store in localStorage ---
+      const key = 'audioLatency_' + (navigator.userAgent || 'unknown');
+      const data = {
+        latency: measured,
+        rtt: rttSamples.length ? rttSamples.reduce((a, b) => a + b, 0) / rttSamples.length : null,
+        jitter: rttSamples.length ? Math.sqrt(rttSamples.reduce((a, b) => a + Math.pow(b - (rttSamples.reduce((a, b) => a + b, 0) / rttSamples.length)), 2), 0) / rttSamples.length : null,
+        offset: offsetSamples.length ? offsetSamples.reduce((a, b) => a + b, 0) / offsetSamples.length : null,
+      };
+      localStorage.setItem(key, JSON.stringify(data));
+      // Only now, after all steps, mark measuring as false
+      setMeasuring(false);
+      setCalibrationDone(true);
+      setShowResults(true);
+      setAriaStatus('Calibration complete.');
+      // Wait for the progress bar to visually reach 100% (matches transition duration)
+      minTimeTimeout = setTimeout(() => setShowButtons(true), 100);
+    }
+    measureAll();
+    return () => {
+      cancelled = true;
+      clearTimeout(minTimeTimeout);
+    };
+  }, [onDone, socket, calibrationKey]);
+
+  // Handler for Enter Room
+  const handleEnterRoom = () => {
+    setAriaStatus('Entering room.');
+    onDone({ latency, rtt, jitter, offset });
+  };
+  // Handler for Recalibrate
+  const handleRecalibrate = () => {
+    setCalibrationKey(k => k + 1);
+    setStep(0);
+    setMeasuring(true);
+    setCalibrationDone(false);
+    setShowButtons(false);
+    setLatency(null);
+    setRtt(null);
+    setJitter(null);
+    setOffset(null);
+    setError(null);
+    setShowResults(false);
+    setManualOverride(false);
+    setManualValues({ latency: '', rtt: '', jitter: '', offset: '' });
+    setAriaStatus('Recalibrating.');
+  };
+  // Handler for Skip
+  const handleSkip = () => {
+    setAriaStatus('Calibration skipped.');
+    if (onSkip) onSkip();
+    else onDone({ latency: null, rtt: null, jitter: null, offset: null });
+  };
+  // Handler for manual override
+  const handleManualOverride = () => {
+    setManualOverride(true);
+    setShowResults(true);
+    setShowButtons(true);
+    setAriaStatus('Manual override.');
+  };
+  // Handler for manual value change
+  const handleManualChange = (k, v) => {
+    setManualValues(vals => ({ ...vals, [k]: v }));
+  };
+  // Handler for manual submit
+  const handleManualSubmit = () => {
+    setAriaStatus('Manual calibration entered.');
+    onDone({
+      latency: parseFloat(manualValues.latency) || null,
+      rtt: parseFloat(manualValues.rtt) || null,
+      jitter: parseFloat(manualValues.jitter) || null,
+      offset: parseFloat(manualValues.offset) || null,
+    });
+  };
+  // Handler for copy results
+  const handleCopy = () => {
+    const text = `Latency: ${latency}\nRTT: ${rtt}\nJitter: ${jitter}\nOffset: ${offset}`;
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1200);
+  };
+
+  // --- Theme ---
+  const isDark = theme === 'dark';
+  const cardClass =
+    'relative flex flex-col items-center w-full max-w-xs sm:max-w-md mx-auto px-4 sm:px-8 py-8 sm:py-12 rounded-2xl ' +
+    (isDark ? 'bg-black/95 border border-white/10' : 'bg-white/95 border border-black/10') +
+    ' animate-fade-in-slow transition-all duration-500';
+
+  // --- Animation helpers ---
+  const [showModal, setShowModal] = useState(true);
+  useEffect(() => { setShowModal(true); return () => setShowModal(false); }, []);
+  // For fade/slide in/out of sections (no delay, fast transitions)
+  const [showResultsAnim, setShowResultsAnim] = useState(false);
+  useEffect(() => { setShowResultsAnim(showResults); }, [showResults]);
+  const [showButtonsAnim, setShowButtonsAnim] = useState(false);
+  useEffect(() => { setShowButtonsAnim(showButtons); }, [showButtons]);
+  const [showErrorAnim, setShowErrorAnim] = useState(false);
+  useEffect(() => { setShowErrorAnim(!!error); }, [error]);
+  const [showHelpAnim, setShowHelpAnim] = useState(false);
+  useEffect(() => { setShowHelpAnim(showHelp); }, [showHelp]);
+
+  // --- Circular Progress Bar SVG ---
+  const circleSize = 64;
+  const strokeWidth = 2;
+  const radius = (circleSize - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  // For checkmark animation
+  const tickPath = "M24 34 L30 40 L44 24";
+  const tickLength = 28; // visually fits the path
+
+  // --- Progress Calculation: linear ---
+  let progress;
+  if (calibrationDone && showButtons) {
+    progress = 100;
+  } else {
+    progress = Math.round(((step + miniProgress / 100) / steps.length) * 100);
+  }
+  // Ensure progress never goes backward
+  const maxProgressRef = useRef(0);
+  useEffect(() => {
+    if (progress > maxProgressRef.current) {
+      maxProgressRef.current = progress;
+    }
+  }, [progress]);
+  const displayedProgress = Math.max(progress, maxProgressRef.current);
+  const progressValue = Math.max(0, Math.min(displayedProgress, 100));
+  const offsetValue = circumference * (1 - progressValue / 100);
+
+  // --- UI ---
+  // Determine which steps are completed
+  const completedStep = calibrationDone && showButtons ? steps.length : step;
+  return (
+    <div
+      ref={modalRef}
+      className={`fixed inset-0 z-50 flex items-center justify-center bg-black/90 transition-opacity duration-500 ${showModal ? 'opacity-100' : 'opacity-0'}`}
+      style={{ minHeight: '100vh', minWidth: '100vw' }}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="calib-title"
+      aria-describedby="calib-desc"
+    >
+      <div
+        className={
+          'relative flex flex-col items-center w-full max-w-xs sm:max-w-md md:max-w-lg mx-auto p-3 sm:p-6 md:p-10 rounded-xl sm:rounded-2xl ' +
+          'bg-black border border-white/10 shadow-none transition-all duration-500 animate-fade-in-slow'
+        }
+        style={{
+          background: 'rgba(0,0,0,1)',
+          boxShadow: 'none',
+          border: '1.5px solid #fff2',
+          transition: 'background 0.2s, box-shadow 0.2s, border 0.2s',
+        }}
+      >
+        {/* Top: Circular progress or tick */}
+        <div className="flex items-center justify-center mb-6 transition-all duration-200" style={{ height: circleSize }}>
+          <svg
+            width={circleSize}
+            height={circleSize}
+            viewBox={`0 0 ${circleSize} ${circleSize}`}
+            className="block"
+            aria-hidden="true"
+            style={{ display: 'block', transition: 'all 0.2s cubic-bezier(.4,1,.4,1)' }}
+          >
+            {/* Track */}
+            <circle
+              cx={circleSize / 2}
+              cy={circleSize / 2}
+              r={radius}
+              fill="none"
+              stroke="#222"
+              strokeWidth={strokeWidth}
+              style={{
+                transition: 'stroke 0.2s, opacity 0.2s',
+                opacity: calibrationDone ? 0 : 1
+              }}
+            />
+            {/* Progress (always present, animates to full) */}
+            <circle
+              cx={circleSize / 2}
+              cy={circleSize / 2}
+              r={radius}
+              fill="none"
+              stroke="#fff"
+              strokeWidth={strokeWidth}
+              strokeDasharray={circumference}
+              strokeDashoffset={calibrationDone ? 0 : offsetValue}
+              strokeLinecap="round"
+              style={{
+                transition: calibrationDone
+                  ? 'stroke-dashoffset 0.3s cubic-bezier(.4,1,.4,1), opacity 0.2s'
+                  : 'stroke-dashoffset 0.2s cubic-bezier(.4,1,.4,1), opacity 0.2s',
+                filter: 'drop-shadow(0 0 2px #fff2)',
+                opacity: calibrationDone ? 0 : 1
+              }}
+            />
+            {/* Percentage, fades out as tick appears */}
+            <text
+              x="50%"
+              y="50%"
+              textAnchor="middle"
+              dominantBaseline="central"
+              fontSize="1rem"
+              fill="#fff"
+              fontFamily="monospace"
+              fontWeight="400"
+              style={{
+                letterSpacing: '-0.04em',
+                opacity: calibrationDone ? 0 : 0.7,
+                userSelect: 'none',
+                transition: 'opacity 0.2s',
+              }}
+            >
+              {Math.round(progressValue)}%
+            </text>
+            {/* Checkmark, morphs in as progress completes */}
+            <path
+              d={tickPath}
+              fill="none"
+              stroke="#fff"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeDasharray={tickLength}
+              strokeDashoffset={calibrationDone ? 0 : tickLength}
+              style={{
+                filter: 'drop-shadow(0 0 2px #fff2)',
+                transition: calibrationDone
+                  ? 'stroke-dashoffset 0.2s 0.05s cubic-bezier(.4,1,.4,1), opacity 0.2s'
+                  : 'stroke-dashoffset 0.15s',
+                opacity: calibrationDone ? 1 : 0,
+              }}
+            />
+          </svg>
+        </div>
+
+        {/* Title & subtitle */}
+        <div className="mb-4 sm:mb-6 flex flex-col items-center transition-all duration-200">
+          <span
+            id="calib-title"
+            className="text-base sm:text-lg md:text-xl font-semibold tracking-tight font-sans select-none transition-colors duration-500 text-white"
+            style={{ letterSpacing: '-0.01em' }}
+          >
+            {calibrationDone ? 'Calibration Complete' : 'Device & Network Calibration'}
+          </span>
+          <span
+            id="calib-desc"
+            className="text-xs sm:text-sm text-center flex justify-center text-white/60 mt-1 font-sans select-none transition-colors duration-500"
+            style={{ fontWeight: 400, letterSpacing: '-0.01em' }}
+          >
+            {calibrationDone
+              ? 'Your device and network are ready for perfectly synced music.'
+              : 'Measuring your device and network timing for perfect music sync.'}
+          </span>
+        </div>
+
+        {/* Linear progress bar */}
+        {!showButtons && (
+          <div className="w-full max-w-xs sm:max-w-sm mb-6 sm:mb-8">
+            <div className="w-full h-1 rounded-full bg-white/10 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-white transition-all duration-200"
+                style={{
+                  width: `${progressValue}%`,
+                  transition: 'width 0.2s cubic-bezier(.4,1,.4,1)'
+                }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Bottom: Enter button and info */}
+        <div className={`flex flex-col items-center w-full max-w-xs sm:max-w-sm mt-5 transition-all duration-200 ${calibrationDone && showButtons ? 'opacity-100 scale-100' : 'opacity-0 scale-95 pointer-events-none h-0'}`}>
+          <button
+            className="w-full py-3 sm:py-[6px] rounded-full bg-white text-black text-base font-semibold transition hover:bg-white/90 focus:outline-none focus:ring-2 focus:ring-white transition-all duration-300"
+            onClick={handleEnterRoom}
+            tabIndex={0}
+          >
+            Enter Room
+          </button>
+          <div className="mt-3 sm:mt-4 text-xs sm:text-sm text-white/40 text-center font-sans select-none">
+            For best results, use your device’s native speakers.
+          </div>
+        </div>
+        {/* ARIA live region for screen readers */}
+        <div className="sr-only" aria-live="polite">{ariaStatus}</div>
+      </div>
+    </div>
+  );
+}
+
 function SessionPage({
   currentSessionId,
   setCurrentSessionId,
@@ -400,8 +850,31 @@ function SessionPage({
     };
   }, []);
 
-  return (
-    <div className="min-h-screen bg-neutral-950 text-white">
+  // --- Latency Calibration Wizard State ---
+  const [calibrated, setCalibrated] = useState(true); // Default to true, only show after join
+  useEffect(() => {
+    // Only check for calibration after a session is joined
+    if (currentSessionId) {
+      const key = 'audioLatency_' + (navigator.userAgent || 'unknown');
+      const stored = localStorage.getItem(key);
+      if (!stored || isNaN(parseFloat(stored))) {
+        setCalibrated(false);
+      } else {
+        setCalibrated(true);
+      }
+    }
+  }, [currentSessionId]);
+
+  // --- Always render session UI, but show calibration wizard as modal overlay only after join/create ---
+  return <>
+    {!calibrated && currentSessionId && (
+      <CalibrateLatencyWizard onDone={() => setCalibrated(true)} socket={socket} />
+    )}
+    <div style={
+      !calibrated && currentSessionId
+        ? { filter: 'blur(2px)', pointerEvents: 'none', opacity: 0.5, userSelect: 'none' }
+        : {}
+    }>
       {!currentSessionId ? (
         <SessionForm onJoin={handleJoin} currentSessionId={currentSessionId} />
       ) : (
@@ -771,7 +1244,7 @@ function SessionPage({
         roomName={currentSessionId}
       />
     </div>
-  )
+  </>;
 }
 
 export default SessionPage 

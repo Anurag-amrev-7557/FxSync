@@ -269,6 +269,9 @@ export default function AudioPlayer({
   selectedTrackIdx = 0, // Add selectedTrackIdx prop
   onSelectTrack, // Add onSelectTrack prop
   sessionId, // Add sessionId prop
+  // --- Add these props for sync quality display ---
+  syncQuality: propSyncQuality,
+  selectedSource: propSelectedSource,
 }) {
   // Fix: manualLatency must be declared before any useEffect or code that references it
   const [manualLatency, setManualLatency] = useState(() => {
@@ -343,37 +346,46 @@ export default function AudioPlayer({
   // --- Dynamic Drift Correction Parameters ---
   const driftParams = getDriftCorrectionParams({ rtt, jitter });
 
-  // After calling useUltraPreciseOffset, destructure as:
-  const { ultraPreciseOffset: computedUltraPreciseOffset, syncQuality, allOffsets, selectedSource } = useUltraPreciseOffset(
-    [], // Pass an empty array if no peerSyncs are available
-    timeOffset,
-    rtt,
-    jitter
-  );
+  // --- Canonical Offset: Use prop from SessionPage (peer+server hybrid) ---
+  // If ultraPreciseOffset prop is provided, use it as the source of truth for all sync logic.
+  // Fallback: If not provided, calculate locally (server-only).
+  const canonicalUltraPreciseOffset =
+    typeof ultraPreciseOffset === 'number' && !isNaN(ultraPreciseOffset)
+      ? ultraPreciseOffset
+      : (() => {
+          // Fallback: local calculation (server only)
+          const { ultraPreciseOffset: fallbackOffset } = useUltraPreciseOffset(
+            [],
+            timeOffset,
+            rtt,
+            jitter
+          );
+          return fallbackOffset;
+        })();
 
   // --- EMA for offset smoothing ---
-  const offsetEMARef = useRef(createEMA(0.18, computedUltraPreciseOffset ?? timeOffset ?? 0));
-  const [smoothedOffset, setSmoothedOffset] = useState(computedUltraPreciseOffset ?? timeOffset ?? 0);
+  const offsetEMARef = useRef(createEMA(0.18, canonicalUltraPreciseOffset ?? timeOffset ?? 0));
+  const [smoothedOffset, setSmoothedOffset] = useState(canonicalUltraPreciseOffset ?? timeOffset ?? 0);
 
   // --- Use EMA for offset smoothing ---
   useEffect(() => {
     let nextOffset = timeOffset || 0;
     if (
-      typeof computedUltraPreciseOffset === 'number' &&
-      Math.abs(computedUltraPreciseOffset) < 1000 && // sanity check: < 1s
-      !isNaN(computedUltraPreciseOffset)
+      typeof canonicalUltraPreciseOffset === 'number' &&
+      Math.abs(canonicalUltraPreciseOffset) < 1000 && // sanity check: < 1s
+      !isNaN(canonicalUltraPreciseOffset)
     ) {
-      nextOffset = computedUltraPreciseOffset;
+      nextOffset = canonicalUltraPreciseOffset;
     }
     // Use EMA for smoothing
     const smoothed = offsetEMARef.current.next(nextOffset);
     setSmoothedOffset(smoothed);
     if (
-      typeof computedUltraPreciseOffset === 'number' && (isNaN(computedUltraPreciseOffset) || Math.abs(computedUltraPreciseOffset) > 1000)
+      typeof canonicalUltraPreciseOffset === 'number' && (isNaN(canonicalUltraPreciseOffset) || Math.abs(canonicalUltraPreciseOffset) > 1000)
     ) {
-      console.warn('[AudioPlayer] Ignoring suspicious computedUltraPreciseOffset:', computedUltraPreciseOffset);
+      console.warn('[AudioPlayer] Ignoring suspicious canonicalUltraPreciseOffset:', canonicalUltraPreciseOffset);
     }
-  }, [computedUltraPreciseOffset, timeOffset]);
+  }, [canonicalUltraPreciseOffset, timeOffset]);
 
   // useDriftCorrection hook at the top level
   const { maybeCorrectDrift } = useDriftCorrection({
@@ -658,6 +670,28 @@ export default function AudioPlayer({
         trackId,
       });
       if (window._audioDriftHistory.length > 10) window._audioDriftHistory.shift();
+
+      // --- IMMEDIATE CORRECTION FOR EXTREME DRIFT ---
+      if (drift > 1.0) { // 1 second or more
+        maybeCorrectDrift(audio, expected);
+        setSyncStatus('Major re-sync');
+        if (typeof socket?.forceTimeSync === 'function') {
+          socket.forceTimeSync();
+        }
+        emitDriftReport(drift, expected, audio.currentTime, { ctrlId, trackId, meta, immediate: true });
+        driftCountRef.current = 0;
+        setTimeout(() => setSyncStatus('In Sync'), 1200);
+        // Only play/pause if state differs
+        if (isPlaying && audio.paused) {
+          audio.play().catch(e => {
+            log('warn', 'SYNC_STATE: failed to play audio', e);
+          });
+        } else if (!isPlaying && !audio.paused) {
+          audio.pause();
+        }
+        return;
+      }
+      // --- END IMMEDIATE CORRECTION ---
 
       // Enhanced: show drift in UI if large
       if (drift > SYNC_CONFIG.DRIFT_THRESHOLD) {
@@ -1566,7 +1600,9 @@ export default function AudioPlayer({
     );
   }
 
-
+  // Provide syncQuality and selectedSource for UI display
+  const syncQuality = propSyncQuality || { label: 'Unknown', color: 'bg-gray-500', tooltip: 'Sync quality unknown.' };
+  const selectedSource = propSelectedSource || 'server';
 
   return (
     <div className={`audio-player transition-all duration-500 ${audioLoaded.animationClass}`}>
@@ -1744,7 +1780,7 @@ export default function AudioPlayer({
     jitter={jitter}
     syncQuality={syncQuality}
     selectedSource={selectedSource}
-    computedUltraPreciseOffset={computedUltraPreciseOffset}
+    computedUltraPreciseOffset={canonicalUltraPreciseOffset}
     smoothedOffset={smoothedOffset}
   />
 )}

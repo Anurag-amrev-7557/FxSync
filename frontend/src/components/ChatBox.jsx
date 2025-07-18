@@ -1,6 +1,13 @@
-import React, { useReducer, useRef, useEffect, useMemo, useCallback, useContext, useState } from 'react';
+import React, {
+  useReducer,
+  useRef,
+  useEffect,
+  useMemo,
+  useCallback,
+  useContext,
+  useState,
+} from 'react';
 import useFocusTrap from './useFocusTrap';
-import { useStaggeredAnimation } from '../hooks/useSmoothAppearance';
 import '../App.css'; // Ensure global styles are loaded
 import {
   FiSettings,
@@ -14,7 +21,7 @@ import {
   FiSmile,
   FiEdit,
   FiFlag,
-  FiCopy
+  FiCopy,
 } from 'react-icons/fi';
 import { VariableSizeList as List } from 'react-window';
 import { ReducedMotionContext } from '../App';
@@ -22,13 +29,61 @@ import MessageList from './MessageList';
 import PropTypes from 'prop-types';
 
 const EMOJIS = [
-  '🎵', '👏', '🔥', '😂', '😍', '👍', '❤️', '🎉',
-  '😎', '🤔', '🥳', '😅', '😭', '🙌', '🤩', '😡',
-  '😇', '😱', '🤗', '😜', '😏', '😴', '🤓', '🥰',
-  '😃', '😆', '😋', '😢', '😤', '😬', '😮', '😐',
-  '😑', '😶', '😕', '😲', '😛', '😝', '😚', '😘',
-  '😗', '😙', '😎', '😈', '👻', '💀', '🤖', '👽',
-  '💩', '🤑', '🤠', '🥸', '🤡', '👾', '🫶', '💯'
+  '👏',
+  '🔥',
+  '😂',
+  '😍',
+  '👍',
+  '❤️',
+  '🎉',
+  '😎',
+  '🤔',
+  '🥳',
+  '😅',
+  '😭',
+  '🙌',
+  '🤩',
+  '😡',
+  '😇',
+  '😱',
+  '🤗',
+  '😜',
+  '😏',
+  '😴',
+  '🤓',
+  '🥰',
+  '😃',
+  '😆',
+  '😋',
+  '😢',
+  '😤',
+  '😬',
+  '😮',
+  '😐',
+  '😑',
+  '😶',
+  '😕',
+  '😲',
+  '😛',
+  '😝',
+  '😚',
+  '😘',
+  '😗',
+  '😙',
+  '😎',
+  '😈',
+  '👻',
+  '💀',
+  '🤖',
+  '👽',
+  '💩',
+  '🤑',
+  '🤠',
+  '🥸',
+  '🤡',
+  '👾',
+  '🫶',
+  '💯',
 ];
 
 // Constants for image upload validation
@@ -37,204 +92,213 @@ const MAX_IMAGE_SIZE_MB = 3;
 
 const predefinedThemes = [
   {
-    name: "Classic Dark",
-    bg: "#0A0A0A",
-    bubble: "#27272a",
-    text: "#fff",
-    bubbleText: "#fff",
-    bgImage: "",
-    font: "Inter, sans-serif"
+    name: 'Classic Dark',
+    bg: '#0A0A0A',
+    bubble: '#27272a',
+    text: '#fff',
+    bubbleText: '#fff',
+    bgImage: '',
+    font: 'Inter, sans-serif',
   },
   {
-    name: "Midnight Blue",
-    bg: "#1e293b",
-    bubble: "#334155",
-    text: "#e0e7ef",
-    bubbleText: "#fff",
-    bgImage: "",
-    font: "Inter, sans-serif"
+    name: 'Midnight Blue',
+    bg: '#1e293b',
+    bubble: '#334155',
+    text: '#e0e7ef',
+    bubbleText: '#fff',
+    bgImage: '',
+    font: 'Inter, sans-serif',
   },
   {
-    name: "Emerald",
-    bg: "#052e16",
-    bubble: "#059669",
-    text: "#e0ffe0",
-    bubbleText: "#fff",
-    bgImage: "",
-    font: "Inter, sans-serif"
+    name: 'Emerald',
+    bg: '#052e16',
+    bubble: '#059669',
+    text: '#e0ffe0',
+    bubbleText: '#fff',
+    bgImage: '',
+    font: 'Inter, sans-serif',
   },
   {
-    name: "Sunset",
-    bg: "#f59e42",
-    bubble: "#fbbf24",
-    text: "#3b2f1e",
-    bubbleText: "#3b2f1e", // Make bubble text dark for light bubble
-    bgImage: "",
-    font: "Inter, sans-serif"
+    name: 'Sunset',
+    bg: '#f59e42',
+    bubble: '#fbbf24',
+    text: '#3b2f1e',
+    bubbleText: '#3b2f1e', // Make bubble text dark for light bubble
+    bgImage: '',
+    font: 'Inter, sans-serif',
   },
   {
-    name: "Rose",
-    bg: "#881337",
-    bubble: "#f43f5e",
-    text: "#fff0f5",
-    bubbleText: "#881337", // Keep dark text for light bubble
-    bgImage: "",
-    font: "Inter, sans-serif"
+    name: 'Rose',
+    bg: '#881337',
+    bubble: '#f43f5e',
+    text: '#fff0f5',
+    bubbleText: '#881337', // Keep dark text for light bubble
+    bgImage: '',
+    font: 'Inter, sans-serif',
   },
   {
-    name: "Lavender",
-    bg: "#6d28d9",
-    bubble: "#a78bfa",
-    text: "#f3e8ff",
-    bubbleText: "#4b006e", // Keep dark text for light bubble
-    bgImage: "",
-    font: "Inter, sans-serif"
+    name: 'Lavender',
+    bg: '#6d28d9',
+    bubble: '#a78bfa',
+    text: '#f3e8ff',
+    bubbleText: '#4b006e', // Keep dark text for light bubble
+    bgImage: '',
+    font: 'Inter, sans-serif',
   },
   {
-    name: "Light",
-    bg: "#f3f4f6",
-    bubble: "#e5e7eb",
-    text: "#000",
-    bubbleText: "#232526", // Keep dark text for light bubble
-    bgImage: "",
-    font: "Inter, sans-serif"
+    name: 'Light',
+    bg: '#f3f4f6',
+    bubble: '#e5e7eb',
+    text: '#000',
+    bubbleText: '#232526', // Keep dark text for light bubble
+    bgImage: '',
+    font: 'Inter, sans-serif',
   },
   // Advanced themes
   {
-    name: "Glassmorphism",
-    bg: "rgba(24,24,27,0.7)",
-    bubble: "rgba(39,39,42,0.6)",
-    text: "#fff",
-    bubbleText: "#fff",
-    bgImage: "https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=800&q=80",
-    font: "Inter, sans-serif"
+    name: 'Glassmorphism',
+    bg: 'rgba(24,24,27,0.7)',
+    bubble: 'rgba(39,39,42,0.6)',
+    text: '#fff',
+    bubbleText: '#fff',
+    bgImage:
+      'https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=800&q=80',
+    font: 'Inter, sans-serif',
   },
   {
-    name: "Neon Night",
-    bg: "#18181b",
-    bubble: "#00f2fe",
-    text: "#fff",
-    bubbleText: "#18181b", // Dark text for neon bubble
-    bgImage: "https://images.unsplash.com/photo-1465101046530-73398c7f28ca?auto=format&fit=crop&w=800&q=80",
-    font: "'Orbitron', sans-serif"
+    name: 'Neon Night',
+    bg: '#18181b',
+    bubble: '#00f2fe',
+    text: '#fff',
+    bubbleText: '#18181b', // Dark text for neon bubble
+    bgImage:
+      'https://images.unsplash.com/photo-1465101046530-73398c7f28ca?auto=format&fit=crop&w=800&q=80',
+    font: "'Orbitron', sans-serif",
   },
   {
-    name: "Pastel Mint",
-    bg: "#e0f7fa",
-    bubble: "#b2f5ea",
-    text: "#1b5e20",
-    bubbleText: "#1b5e20", // Dark text for light bubble
-    bgImage: "",
-    font: "'Quicksand', sans-serif"
+    name: 'Pastel Mint',
+    bg: '#e0f7fa',
+    bubble: '#b2f5ea',
+    text: '#1b5e20',
+    bubbleText: '#1b5e20', // Dark text for light bubble
+    bgImage: '',
+    font: "'Quicksand', sans-serif",
   },
   {
-    name: "High Contrast",
-    bg: "#000",
-    bubble: "#fff",
-    text: "#fff",
-    bubbleText: "#000", // Black text for white bubble
-    bgImage: "",
-    font: "Inter, sans-serif"
+    name: 'High Contrast',
+    bg: '#000',
+    bubble: '#fff',
+    text: '#fff',
+    bubbleText: '#000', // Black text for white bubble
+    bgImage: '',
+    font: 'Inter, sans-serif',
   },
   {
-    name: "Solarized",
-    bg: "#002b36",
-    bubble: "#b58900",
-    text: "#fdf6e3",
-    bubbleText: "#002b36", // Dark text for yellow bubble
-    bgImage: "",
-    font: "'Fira Mono', monospace"
+    name: 'Solarized',
+    bg: '#002b36',
+    bubble: '#b58900',
+    text: '#fdf6e3',
+    bubbleText: '#002b36', // Dark text for yellow bubble
+    bgImage: '',
+    font: "'Fira Mono', monospace",
   },
   {
-    name: "Oceanic",
-    bg: "#0f2027",
-    bubble: "#2c5364",
-    text: "#e0f7fa",
-    bubbleText: "#fff", // White text for dark bubble
-    bgImage: "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=800&q=80",
-    font: "'Montserrat', sans-serif"
+    name: 'Oceanic',
+    bg: '#0f2027',
+    bubble: '#2c5364',
+    text: '#e0f7fa',
+    bubbleText: '#fff', // White text for dark bubble
+    bgImage:
+      'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=800&q=80',
+    font: "'Montserrat', sans-serif",
   },
   {
-    name: "Grape Soda",
-    bg: "#2d0036",
-    bubble: "#a259f7",
-    text: "#fff",
-    bubbleText: "#2d0036", // Dark text for light bubble
-    bgImage: "",
-    font: "'Baloo 2', cursive"
+    name: 'Grape Soda',
+    bg: '#2d0036',
+    bubble: '#a259f7',
+    text: '#fff',
+    bubbleText: '#2d0036', // Dark text for light bubble
+    bgImage: '',
+    font: "'Baloo 2', cursive",
   },
   {
-    name: "Peachy",
-    bg: "#fff0e5",
-    bubble: "#ffb385",
-    text: "#7c4700",
-    bubbleText: "#7c4700", // Dark text for light bubble
-    bgImage: "",
-    font: "'Quicksand', sans-serif"
+    name: 'Peachy',
+    bg: '#fff0e5',
+    bubble: '#ffb385',
+    text: '#7c4700',
+    bubbleText: '#7c4700', // Dark text for light bubble
+    bgImage: '',
+    font: "'Quicksand', sans-serif",
   },
   {
-    name: "Forest",
-    bg: "#1b5e20",
-    bubble: "#388e3c",
-    text: "#e0ffe0",
-    bubbleText: "#fff", // White text for dark bubble
-    bgImage: "https://images.unsplash.com/photo-1465101178521-c1a9136a3b99?auto=format&fit=crop&w=800&q=80",
-    font: "'Merriweather', serif"
+    name: 'Forest',
+    bg: '#1b5e20',
+    bubble: '#388e3c',
+    text: '#e0ffe0',
+    bubbleText: '#fff', // White text for dark bubble
+    bgImage:
+      'https://images.unsplash.com/photo-1465101178521-c1a9136a3b99?auto=format&fit=crop&w=800&q=80',
+    font: "'Merriweather', serif",
   },
   {
-    name: "Sky Gradient",
-    bg: "linear-gradient(135deg,#89f7fe 0%,#66a6ff 100%)",
-    bubble: "#66a6ff",
-    text: "#003366",
-    bubbleText: "#003366", // Dark text for light bubble
-    bgImage: "https://images.unsplash.com/photo-1502082553048-f009c37129b9?auto=format&fit=crop&w=800&q=80",
-    font: "'Poppins', sans-serif"
+    name: 'Sky Gradient',
+    bg: 'linear-gradient(135deg,#89f7fe 0%,#66a6ff 100%)',
+    bubble: '#66a6ff',
+    text: '#003366',
+    bubbleText: '#003366', // Dark text for light bubble
+    bgImage:
+      'https://images.unsplash.com/photo-1502082553048-f009c37129b9?auto=format&fit=crop&w=800&q=80',
+    font: "'Poppins', sans-serif",
   },
   {
-    name: "Pink Gradient",
-    bg: "linear-gradient(135deg,#f857a6 0%,#ff5858 100%)",
-    bubble: "#f857a6",
-    text: "#fff",
-    bubbleText: "#fff", // White text for dark bubble
-    bgImage: "https://images.unsplash.com/photo-1465101046530-73398c7f28ca?auto=format&fit=crop&w=800&q=80",
-    font: "'Baloo 2', cursive"
+    name: 'Pink Gradient',
+    bg: 'linear-gradient(135deg,#f857a6 0%,#ff5858 100%)',
+    bubble: '#f857a6',
+    text: '#fff',
+    bubbleText: '#fff', // White text for dark bubble
+    bgImage:
+      'https://images.unsplash.com/photo-1465101046530-73398c7f28ca?auto=format&fit=crop&w=800&q=80',
+    font: "'Baloo 2', cursive",
   },
   {
-    name: "Cyberpunk",
-    bg: "#0f0c29",
-    bubble: "#ff0080",
-    text: "#00ffe7",
-    bubbleText: "#0f0c29", // Dark text for neon bubble
-    bgImage: "https://images.unsplash.com/photo-1519125323398-675f0ddb6308?auto=format&fit=crop&w=800&q=80",
-    font: "'Share Tech Mono', monospace"
+    name: 'Cyberpunk',
+    bg: '#0f0c29',
+    bubble: '#ff0080',
+    text: '#00ffe7',
+    bubbleText: '#0f0c29', // Dark text for neon bubble
+    bgImage:
+      'https://images.unsplash.com/photo-1519125323398-675f0ddb6308?auto=format&fit=crop&w=800&q=80',
+    font: "'Share Tech Mono', monospace",
   },
   {
-    name: "Slate",
-    bg: "#232526",
-    bubble: "#414345",
-    text: "#e0e0e0",
-    bubbleText: "#fff", // White text for dark bubble
-    bgImage: "",
-    font: "Inter, sans-serif"
+    name: 'Slate',
+    bg: '#232526',
+    bubble: '#414345',
+    text: '#e0e0e0',
+    bubbleText: '#fff', // White text for dark bubble
+    bgImage: '',
+    font: 'Inter, sans-serif',
   },
   {
-    name: "WhatsApp Doodle",
-    bg: "#e5ddd5",
-    bubble: "#ffffff",
-    text: "#000000",
-    bubbleText: "#000000", // Dark text for light bubble
-    bgImage: "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZGVmcz48cGF0dGVybiBpZD0iZG9vZGxlIiB4PSIwIiB5PSIwIiB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHBhdHRlcm5Vbml0cz0idXNlclNwYWNlT25Vc2UiPjxnIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2M4YzhjOCIgc3Ryb2tlLXdpZHRoPSIwLjUiIG9wYWNpdHk9IjAuMyI+PHBhdGggZD0iTTEwIDE1IFEyMCAxMCAyMCAxNSBUMzAgMTUiLz48cGF0aCBkPSJNMzUgMjUgUTQ1IDIwIDQ1IDI1IFQ1NSAyNSIvPjxwYXRoIGQ9Ik01IDM1IFEyMCAzMCAyMCAzNSBUMzAgMzUiLz48cGF0aCBkPSJNMzAgNDUgUTQwIDQwIDQwIDQ1IFQ1MCA0NSIvPjxwYXRoIGQ9Ik0xNSA1IFEyMCAwIDIwIDUgVDMwIDUiLz48cGF0aCBkPSJNNDAgNTUgUTUwIDUwIDUwIDU1IFQ2MCA1NSIvPjxjaXJjbGUgY3g9IjEyIiBjeT0iMjIiIHI9IjEiLz48Y2lyY2xlIGN4PSI0MiIgY3k9IjMyIiByPSIxIi8+PGNpcmNsZSBjeD0iMTgiIGN5PSI0OCIgcj0iMSIvPjxjaXJjbGUgY3g9IjQ4IiBjeT0iOCIgcj0iMSIvPjxjaXJjbGUgY3g9IjgiIGN5PSIzOCIgcj0iMSIvPjwvZz48L3BhdHRlcm4+PC9kZWZzPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9InVybCgjZG9vZGxlKSIvPjwvc3ZnPg==",
-    font: "Inter, sans-serif"
+    name: 'WhatsApp Doodle',
+    bg: '#e5ddd5',
+    bubble: '#ffffff',
+    text: '#000000',
+    bubbleText: '#000000', // Dark text for light bubble
+    bgImage:
+      'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZGVmcz48cGF0dGVybiBpZD0iZG9vZGxlIiB4PSIwIiB5PSIwIiB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHBhdHRlcm5Vbml0cz0idXNlclNwYWNlT25Vc2UiPjxnIGZpbGw9Im5vbmUiIHN0cm9rZT0iI2M4YzhjOCIgc3Ryb2tlLXdpZHRoPSIwLjUiIG9wYWNpdHk9IjAuMyI+PHBhdGggZD0iTTEwIDE1IFEyMCAxMCAyMCAxNSBUMzAgMTUiLz48cGF0aCBkPSJNMzUgMjUgUTQ1IDIwIDQ1IDI1IFQ1NSAyNSIvPjxwYXRoIGQ9Ik01IDM1IFEyMCAzMCAyMCAzNSBUMzAgMzUiLz48cGF0aCBkPSJNMzAgNDUgUTQwIDQwIDQwIDQ1IFQ1MCA0NSIvPjxwYXRoIGQ9Ik0xNSA1IFEyMCAwIDIwIDUgVDMwIDUiLz48cGF0aCBkPSJNNDAgNTUgUTUwIDUwIDUwIDU1IFQ2MCA1NSIvPjxjaXJjbGUgY3g9IjEyIiBjeT0iMjIiIHI9IjEiLz48Y2lyY2xlIGN4PSI0MiIgY3k9IjMyIiByPSIxIi8+PGNpcmNsZSBjeD0iMTgiIGN5PSI0OCIgcj0iMSIvPjxjaXJjbGUgY3g9IjQ4IiBjeT0iOCIgcj0iMSIvPjxjaXJjbGUgY3g9IjgiIGN5PSIzOCIgcj0iMSIvPjwvZz48L3BhdHRlcm4+PC9kZWZzPjxyZWN0IHdpZHRoPSIxMDAlIiBoZWlnaHQ9IjEwMCUiIGZpbGw9InVybCgjZG9vZGxlKSIvPjwvc3ZnPg==',
+    font: 'Inter, sans-serif',
   },
   {
-    name: "Simple Doodle",
-    bg: "#f0f0f0",
-    bubble: "#ffffff",
-    text: "#000000",
-    bubbleText: "#000000",
-    bgImage: "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZGVmcz48cGF0dGVybiBpZD0iZG90cyIgeD0iMCIgeT0iMCIgd2lkdGg9IjQwIiBoZWlnaHQ9IjQwIiBwYXR0ZXJuVW5pdHM9InVzZXJTcGFjZU9uVXNlIj48Y2lyY2xlIGN4PSIxMCIgY3k9IjEwIiByPSIxIiBmaWxsPSIjZGRkIi8+PGNpcmNsZSBjeD0iMzAiIGN5PSIxNSIgcj0iMSIgZmlsbD0iI2RkZCIvPjxjaXJjbGUgY3g9IjUiIGN5PSIzMCIgcj0iMSIgZmlsbD0iI2RkZCIvPjxjaXJjbGUgY3g9IjM1IiBjeT0iMzUiIHI9IjEiIGZpbGw9IiNkZGQiLz48Y2lyY2xlIGN4PSIyMCIgY3k9IjUiIHI9IjEiIGZpbGw9IiNkZGQiLz48Y2lyY2xlIGN4PSIxNSIgY3k9IjI1IiByPSIxIiBmaWxsPSIjZGRkIi8+PC9wYXR0ZXJuPjwvZGVmcz48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSJ1cmwoI2RvdHMpIi8+PC9zdmc+",
-    font: "Inter, sans-serif"
-  }
+    name: 'Simple Doodle',
+    bg: '#f0f0f0',
+    bubble: '#ffffff',
+    text: '#000000',
+    bubbleText: '#000000',
+    bgImage:
+      'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZGVmcz48cGF0dGVybiBpZD0iZG90cyIgeD0iMCIgeT0iMCIgd2lkdGg9IjQwIiBoZWlnaHQ9IjQwIiBwYXR0ZXJuVW5pdHM9InVzZXJTcGFjZU9uVXNlIj48Y2lyY2xlIGN4PSIxMCIgY3k9IjEwIiByPSIxIiBmaWxsPSIjZGRkIi8+PGNpcmNsZSBjeD0iMzAiIGN5PSIxNSIgcj0iMSIgZmlsbD0iI2RkZCIvPjxjaXJjbGUgY3g9IjUiIGN5PSIzMCIgcj0iMSIgZmlsbD0iI2RkZCIvPjxjaXJjbGUgY3g9IjM1IiBjeT0iMzUiIHI9IjEiIGZpbGw9IiNkZGQiLz48Y2lyY2xlIGN4PSIyMCIgY3k9IjUiIHI9IjEiIGZpbGw9IiNkZGQiLz48Y2lyY2xlIGN4PSIxNSIgY3k9IjI1IiByPSIxIiBmaWxsPSIjZGRkIi8+PC9wYXR0ZXJuPjwvZGVmcz48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSJ1cmwoI2RvdHMpIi8+PC9zdmc+',
+    font: 'Inter, sans-serif',
+  },
 ];
 
 // --- ChatBox State Management with useReducer ---
@@ -267,6 +331,7 @@ const initialState = {
   showPlusMenu: false,
   copyFeedback: false,
   fileUploadError: '',
+  emojiRowMsgId: null, // messageId of the bubble showing emoji row
 };
 function reducer(state, action) {
   switch (action.type) {
@@ -275,12 +340,18 @@ function reducer(state, action) {
     case 'PUSH_PENDING_MESSAGE':
       return { ...state, pendingMessages: [...state.pendingMessages, action.payload] };
     case 'REMOVE_PENDING_MESSAGE':
-      return { ...state, pendingMessages: state.pendingMessages.filter(id => id !== action.payload) };
+      return {
+        ...state,
+        pendingMessages: state.pendingMessages.filter((id) => id !== action.payload),
+      };
     case 'ADD_TYPING_USER':
-      if (state.typingUsers.some(u => u.clientId === action.payload.clientId)) return state;
+      if (state.typingUsers.some((u) => u.clientId === action.payload.clientId)) return state;
       return { ...state, typingUsers: [...state.typingUsers, action.payload] };
     case 'REMOVE_TYPING_USER':
-      return { ...state, typingUsers: state.typingUsers.filter(u => u.clientId !== action.payload) };
+      return {
+        ...state,
+        typingUsers: state.typingUsers.filter((u) => u.clientId !== action.payload),
+      };
     default:
       return state;
   }
@@ -320,11 +391,59 @@ const ChatBox = React.memo(function ChatBox({
   // Scroll position tracking (debounced)
   const scrollDebounceRef = useRef(null);
   const chatListRef = useRef();
+  const emojiRowRef = useRef(null);
+  const [emojiRowStyle, setEmojiRowStyle] = useState({});
 
   // Add MAX_LENGTH constant
   const MAX_LENGTH = 500;
   const LONG_PRESS_DURATION = 500; // ms
   const LONG_PRESS_MOVE_THRESHOLD = 10; // px
+
+  // Add with other hooks at the top of ChatBox
+  const [emojiRowExiting, setEmojiRowExiting] = useState(false);
+  const [emojiRowVisible, setEmojiRowVisible] = useState(false);
+
+  // Add message reactions state
+  const [messageReactions, setMessageReactions] = useState(new Map()); // messageId -> reactions array
+
+  useEffect(() => {
+    if (state.emojiRowMsgId) {
+      setEmojiRowVisible(false);
+      const timer = setTimeout(() => setEmojiRowVisible(true), 10); // allow DOM to layout
+      return () => clearTimeout(timer);
+    } else {
+      setEmojiRowVisible(false);
+    }
+  }, [state.emojiRowMsgId]);
+
+  useEffect(() => {
+    if (!state.contextMenu.visible && state.emojiRowMsgId) {
+      setEmojiRowExiting(true);
+      const timeout = setTimeout(() => {
+        dispatch({ type: 'SET', payload: { emojiRowMsgId: null } });
+        setEmojiRowExiting(false);
+      }, 160); // match fade-scale-out duration
+      return () => clearTimeout(timeout);
+    }
+  }, [state.contextMenu.visible, state.emojiRowMsgId]);
+
+  useEffect(() => {
+    if (state.emojiRowMsgId && emojiRowRef.current) {
+      // Render offscreen first
+      setEmojiRowStyle({ left: -9999, visibility: 'hidden' });
+      requestAnimationFrame(() => {
+        const width = emojiRowRef.current.offsetWidth;
+        setEmojiRowStyle({
+          left: '50%',
+          transform: 'translateX(-50%)',
+          visibility: 'visible',
+          minWidth: width,
+        });
+      });
+    } else {
+      setEmojiRowStyle({});
+    }
+  }, [state.emojiRowMsgId]);
 
   // Handler functions
   const handleReportCancel = () => {
@@ -335,7 +454,9 @@ const ChatBox = React.memo(function ChatBox({
   // --- ACCESSIBILITY & FOCUS TRAP HELPERS ---
   useFocusTrap(!!state.reportingId, reportModalRef, handleReportCancel);
   useFocusTrap(!!state.deletingMsg, deleteModalRef, cancelDelete);
-  useFocusTrap(state.contextMenu.visible, contextMenuTrapRef, () => dispatch({ type: 'SET', payload: { menuExiting: true } }));
+  useFocusTrap(state.contextMenu.visible, contextMenuTrapRef, () =>
+    dispatch({ type: 'SET', payload: { menuExiting: true } })
+  );
 
   // --- DELETE PERIOD LOGIC ---
   const DELETE_PERIOD_MS = 2 * 60 * 1000; // 2 minutes
@@ -358,10 +479,34 @@ const ChatBox = React.memo(function ChatBox({
 
   // Dropdown menu options
   const plusMenuOptions = [
-    { label: 'Image', icon: <FiImage size={18} />, onClick: () => {/* TODO: handle image */ dispatch({ type: 'SET', payload: { showPlusMenu: false } }); } },
-    { label: 'Audio', icon: <FiMusic size={18} />, onClick: () => {/* TODO: handle audio */ dispatch({ type: 'SET', payload: { showPlusMenu: false } }); } },
-    { label: 'File', icon: <FiPaperclip size={18} />, onClick: () => {/* TODO: handle file */ dispatch({ type: 'SET', payload: { showPlusMenu: false } }); } },
-    { label: 'GIF', icon: <FiSmile size={18} />, onClick: () => {/* TODO: handle gif */ dispatch({ type: 'SET', payload: { showPlusMenu: false } }); } },
+    {
+      label: 'Image',
+      icon: <FiImage size={18} />,
+      onClick: () => {
+        /* TODO: handle image */ dispatch({ type: 'SET', payload: { showPlusMenu: false } });
+      },
+    },
+    {
+      label: 'Audio',
+      icon: <FiMusic size={18} />,
+      onClick: () => {
+        /* TODO: handle audio */ dispatch({ type: 'SET', payload: { showPlusMenu: false } });
+      },
+    },
+    {
+      label: 'File',
+      icon: <FiPaperclip size={18} />,
+      onClick: () => {
+        /* TODO: handle file */ dispatch({ type: 'SET', payload: { showPlusMenu: false } });
+      },
+    },
+    {
+      label: 'GIF',
+      icon: <FiSmile size={18} />,
+      onClick: () => {
+        /* TODO: handle gif */ dispatch({ type: 'SET', payload: { showPlusMenu: false } });
+      },
+    },
   ];
 
   // When a theme is selected, update all relevant states
@@ -381,7 +526,10 @@ const ChatBox = React.memo(function ChatBox({
     dispatch({ type: 'SET', payload: { bubbleColor: predefinedThemes[0].bubble || '#27272a' } });
     dispatch({ type: 'SET', payload: { chatBgImage: '' } });
     dispatch({ type: 'SET', payload: { bubbleRadius: 16 } }); // default px
-    dispatch({ type: 'SET', payload: { fontFamily: predefinedThemes[0].font || 'Inter, sans-serif' } });
+    dispatch({
+      type: 'SET',
+      payload: { fontFamily: predefinedThemes[0].font || 'Inter, sans-serif' },
+    });
   };
 
   // Use reducedMotion to skip or minimize animations
@@ -390,9 +538,6 @@ const ChatBox = React.memo(function ChatBox({
       dispatch({ type: 'SET', payload: { shouldAnimate: false } });
     }
   }, [reducedMotion]);
-
-  // Smooth animation for new messages
-  const messageAnimations = reducedMotion ? [] : useStaggeredAnimation(messages, 60, 'whatsapp-bubble-entry');
 
   // Trigger animation for mobile chat input
   useEffect(() => {
@@ -448,7 +593,7 @@ const ChatBox = React.memo(function ChatBox({
   useEffect(() => {
     if (!state.contextMenu.visible) return;
     const handleClick = () => {
-      dispatch({ type: 'SET', payload: { menuExiting: true } });
+      dispatch({ type: 'SET', payload: { menuExiting: true, emojiRowMsgId: null } });
     };
     window.addEventListener('click', handleClick);
     return () => window.removeEventListener('click', handleClick);
@@ -458,8 +603,14 @@ const ChatBox = React.memo(function ChatBox({
   useEffect(() => {
     if (!state.menuExiting) return;
     const timeout = setTimeout(() => {
-      dispatch({ type: 'SET', payload: { contextMenu: { ...state.contextMenu, visible: false, x: 0, y: 0, msg: null } } });
-      dispatch({ type: 'SET', payload: { menuExiting: false } });
+      dispatch({
+        type: 'SET',
+        payload: {
+          contextMenu: { ...state.contextMenu, visible: false, x: 0, y: 0, msg: null },
+          emojiRowMsgId: null,
+          menuExiting: false,
+        },
+      });
     }, 160); // match fade-scale-out duration
     return () => clearTimeout(timeout);
   }, [state.menuExiting]);
@@ -472,48 +623,40 @@ const ChatBox = React.memo(function ChatBox({
       e.stopPropagation?.();
     }
 
-    let x = 0, y = 0;
+    const isOwn = msg.sender === clientId;
 
-    // Mouse right-click or keyboard context menu (Shift+F10 or ContextMenu key)
-    if (e.type === 'contextmenu' || e.type === 'click') {
-      x = e.clientX;
-      y = e.clientY;
-    } 
-    // Touch long-press
-    else if (e.touches && e.touches.length > 0) {
-      x = e.touches[0].clientX;
-      y = e.touches[0].clientY;
-    } 
-    // Keyboard context menu key
-    else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
-      // Try to get bounding rect of the target
-      const rect = e.target.getBoundingClientRect();
-      x = rect.left + rect.width / 2;
-      y = rect.top + rect.height / 2;
-    } 
-    // Accessibility: focus/enter/space on message (simulate context menu)
-    else if (e.type === 'keydown' && (e.key === 'Enter' || e.key === ' ')) {
-      const rect = e.target.getBoundingClientRect();
-      x = rect.left + rect.width / 2;
-      y = rect.top + rect.height / 2;
-    }
-    // Fallback to mouse position or center of window
-    else {
-      x = e.clientX || window.innerWidth / 2;
-      y = e.clientY || window.innerHeight / 2;
+    // Get the bubble element for consistent positioning
+    const bubbleElement = e.target.closest('.relative') || e.target;
+    const bubbleRect = bubbleElement.getBoundingClientRect();
+
+    // Use consistent spacing like emoji row (-top-10 equivalent)
+    const consistentOffset = -20; // Moved down from -40 to -20 (20px above bubble)
+    let x = 0,
+      y = 0;
+
+    // Position horizontally based on message ownership (like emoji row)
+    if (isOwn) {
+      x = bubbleRect.right - 160 - 30; // Moved 20px to the left
+    } else {
+      x = bubbleRect.left - 30; // Moved 20px to the left
     }
 
-    // Clamp position to viewport (prevents menu from being offscreen on initial open)
-    const menuWidth = 160, menuHeight = 120; // Approximate, will be corrected after render
+    // Position vertically with consistent spacing above the bubble
+    y = bubbleRect.top + consistentOffset;
+
+    // Ensure menu stays within viewport
+    const menuWidth = 160;
     const maxX = window.innerWidth - menuWidth - 8;
-    const maxY = window.innerHeight - menuHeight - 8;
     x = Math.max(8, Math.min(x, maxX));
-    y = Math.max(8, Math.min(y, maxY));
 
-    // Set context menu state; will be further adjusted after render
-    dispatch({ type: 'SET', payload: { contextMenu: { ...state.contextMenu, visible: true, x: x - 53, y: y - 45, msg } } });
-    dispatch({ type: 'SET', payload: { menuExiting: false } });
-    // console.log('setContextMenu called', { visible: true, x: x - 53, y: y - 45, msg });
+    dispatch({
+      type: 'SET',
+      payload: {
+        contextMenu: { ...state.contextMenu, visible: true, x, y, msg },
+        menuExiting: false,
+        emojiRowMsgId: msg.messageId,
+      },
+    });
   };
 
   // Adjust context menu position to stay within chat section
@@ -574,12 +717,15 @@ const ChatBox = React.memo(function ChatBox({
   // Emit typing/stop_typing events
   const handleInputChange = (e) => {
     dispatch({ type: 'SET', payload: { input: e.target.value } });
-    if (e.target.value.trim().length <= MAX_LENGTH) dispatch({ type: 'SET', payload: { error: '' } });
+    if (e.target.value.trim().length <= MAX_LENGTH)
+      dispatch({ type: 'SET', payload: { error: '' } });
     if (!socket) return;
     socket.emit('typing', { sessionId, clientId, displayName });
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     typingTimeoutRef.current = setTimeout(() => {
       socket.emit('stop_typing', { sessionId, clientId });
+      // Remove self from typingUsers immediately
+      dispatch({ type: 'REMOVE_TYPING_USER', payload: { clientId } });
     }, 2000);
   };
 
@@ -602,59 +748,112 @@ const ChatBox = React.memo(function ChatBox({
   }, [socket, clientId]);
 
   // Replace the tick/clock rendering logic with WhatsApp-like SVGs:
-// Add these helper components inside ChatBox:
-const SingleCheck = () => (
-  <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg" className="inline align-bottom">
-    <path d="M5 9.5L8 12.5L13 7.5" stroke="#6EAF7C" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-  </svg>
-);
-const DoubleCheckGray = () => (
-  <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg" className="inline align-bottom">
-    <path d="M4.5 10.5L7.5 13.5L12.5 8.5" stroke="#A0A0A0" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-    <path d="M7 10.5L10 13.5L15 8.5" stroke="#A0A0A0" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-  </svg>
-);
-const DoubleCheckBlue = () => (
-  <svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg" className="inline align-bottom">
-    <path d="M4.5 10.5L7.5 13.5L12.5 8.5" stroke="#53BDEB" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-    <path d="M7 10.5L10 13.5L15 8.5" stroke="#53BDEB" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-  </svg>
-);
+  // Add these helper components inside ChatBox:
+  const SingleCheck = () => (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 18 18"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className="inline align-bottom"
+    >
+      <path
+        d="M5 9.5L8 12.5L13 7.5"
+        stroke="#6EAF7C"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+  const DoubleCheckGray = () => (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 18 18"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className="inline align-bottom"
+    >
+      <path
+        d="M4.5 10.5L7.5 13.5L12.5 8.5"
+        stroke="#A0A0A0"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M7 10.5L10 13.5L15 8.5"
+        stroke="#A0A0A0"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+  const DoubleCheckBlue = () => (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 18 18"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className="inline align-bottom"
+    >
+      <path
+        d="M4.5 10.5L7.5 13.5L12.5 8.5"
+        stroke="#53BDEB"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M7 10.5L10 13.5L15 8.5"
+        stroke="#53BDEB"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
 
-// --- COLOR CONTRAST CHECKER ---
-function hexToRgb(hex) {
-  // Expand shorthand form (e.g. "#03F") to full form ("#0033FF")
-  let shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i;
-  hex = hex.replace(shorthandRegex, function(m, r, g, b) {
-    return r + r + g + g + b + b;
-  });
-  let result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-  return result ? {
-    r: parseInt(result[1], 16),
-    g: parseInt(result[2], 16),
-    b: parseInt(result[3], 16)
-  } : null;
-}
-function luminance(r, g, b) {
-  let a = [r, g, b].map(function(v) {
-    v /= 255;
-    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
-  });
-  return a[0] * 0.2126 + a[1] * 0.7152 + a[2] * 0.0722;
-}
-function contrastRatio(hex1, hex2) {
-  const rgb1 = hexToRgb(hex1);
-  const rgb2 = hexToRgb(hex2);
-  if (!rgb1 || !rgb2) return 1;
-  const lum1 = luminance(rgb1.r, rgb1.g, rgb1.b);
-  const lum2 = luminance(rgb2.r, rgb2.g, rgb2.b);
-  const brightest = Math.max(lum1, lum2);
-  const darkest = Math.min(lum1, lum2);
-  return (brightest + 0.05) / (darkest + 0.05);
-}
-function isHexColor(str) {
-  return /^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/.test(str);
-}
+  // --- COLOR CONTRAST CHECKER ---
+  function hexToRgb(hex) {
+    // Expand shorthand form (e.g. "#03F") to full form ("#0033FF")
+    let shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i;
+    hex = hex.replace(shorthandRegex, function (m, r, g, b) {
+      return r + r + g + g + b + b;
+    });
+    let result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result
+      ? {
+          r: parseInt(result[1], 16),
+          g: parseInt(result[2], 16),
+          b: parseInt(result[3], 16),
+        }
+      : null;
+  }
+  function luminance(r, g, b) {
+    let a = [r, g, b].map(function (v) {
+      v /= 255;
+      return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+    });
+    return a[0] * 0.2126 + a[1] * 0.7152 + a[2] * 0.0722;
+  }
+  function contrastRatio(hex1, hex2) {
+    const rgb1 = hexToRgb(hex1);
+    const rgb2 = hexToRgb(hex2);
+    if (!rgb1 || !rgb2) return 1;
+    const lum1 = luminance(rgb1.r, rgb1.g, rgb1.b);
+    const lum2 = luminance(rgb2.r, rgb2.g, rgb2.b);
+    const brightest = Math.max(lum1, lum2);
+    const darkest = Math.min(lum1, lum2);
+    return (brightest + 0.05) / (darkest + 0.05);
+  }
+  function isHexColor(str) {
+    return /^#([A-Fa-f0-9]{6}|[A-Fa-f0-9]{3})$/.test(str);
+  }
 
   // Send message and track pending
   const sendMessage = (msg) => {
@@ -663,7 +862,10 @@ function isHexColor(str) {
       return;
     }
     if (trimmed.length > MAX_LENGTH) {
-      dispatch({ type: 'SET', payload: { error: `Message too long (max ${MAX_LENGTH} characters).` } });
+      dispatch({
+        type: 'SET',
+        payload: { error: `Message too long (max ${MAX_LENGTH} characters).` },
+      });
       return;
     }
     dispatch({ type: 'SET', payload: { error: '' } });
@@ -676,31 +878,42 @@ function isHexColor(str) {
         dispatch({ type: 'REMOVE_PENDING_MESSAGE', payload: localId });
       }
     }, 3000);
-    console.log('[ChatBox] Sending message:', { sessionId, message: trimmed, sender: clientId, displayName });
-    socket.emit('chat_message', { sessionId, message: trimmed, sender: clientId, displayName }, (response) => {
-      didRespond = true;
-      clearTimeout(fallbackTimeout);
-      console.log('[ChatBox] Received chat_message response:', response);
-      if (response && response.error) {
-        dispatch({ type: 'SET', payload: { error: response.error } });
-        dispatch({ type: 'REMOVE_PENDING_MESSAGE', payload: localId });
-      } else if (response && response.message && response.message.messageId) {
-        socket.emit('stop_typing', { sessionId, clientId });
-        // Mark delivered in chat state
-        if (markDelivered) markDelivered(response.message.messageId);
-        dispatch({ type: 'REMOVE_PENDING_MESSAGE', payload: localId });
-        // Refocus the input after sending a message (use setTimeout to ensure DOM is ready)
-        setTimeout(() => {
-          chatInputRef.current?.focus();
-        }, 0);
-      }
+    console.log('[ChatBox] Sending message:', {
+      sessionId,
+      message: trimmed,
+      sender: clientId,
+      displayName,
     });
+    socket.emit(
+      'chat_message',
+      { sessionId, message: trimmed, sender: clientId, displayName },
+      (response) => {
+        didRespond = true;
+        clearTimeout(fallbackTimeout);
+        if (import.meta.env.MODE === 'development') {
+          console.log('[ChatBox] Received chat_message response:', response);
+        }
+        if (response && response.error) {
+          dispatch({ type: 'SET', payload: { error: response.error } });
+          dispatch({ type: 'REMOVE_PENDING_MESSAGE', payload: localId });
+        } else if (response && response.message && response.message.messageId) {
+          socket.emit('stop_typing', { sessionId, clientId });
+          // Mark delivered in chat state
+          if (markDelivered) markDelivered(response.message.messageId);
+          dispatch({ type: 'REMOVE_PENDING_MESSAGE', payload: localId });
+          // Refocus the input after sending a message (use setTimeout to ensure DOM is ready)
+          setTimeout(() => {
+            chatInputRef.current?.focus();
+          }, 0);
+        }
+      }
+    );
   };
 
   const handleSubmit = (e) => {
     e.preventDefault();
     if (state.editingId) {
-      handleEditSave(messages.find(m => m.messageId === state.editingId));
+      handleEditSave(messages.find((m) => m.messageId === state.editingId));
     } else {
       sendMessage(state.input);
       dispatch({ type: 'SET', payload: { input: '' } }); // Clear input immediately for responsiveness
@@ -747,6 +960,108 @@ function isHexColor(str) {
     dispatch({ type: 'SET', payload: { showEmojiPicker: false } });
   };
 
+  // Add emoji reaction handlers
+  const handleEmojiReaction = (emoji, msg) => {
+    if (!socket || !msg.messageId) return;
+
+    socket.emit(
+      'emoji_reaction',
+      {
+        sessionId,
+        messageId: msg.messageId,
+        emoji,
+        clientId,
+        displayName,
+      },
+      (response) => {
+        if (response && response.success) {
+          // Update local state immediately for optimistic UI
+          setMessageReactions((prev) => {
+            const newReactions = new Map(prev);
+            newReactions.set(msg.messageId, response.reactions);
+            return newReactions;
+          });
+        }
+      }
+    );
+
+    // Hide emoji row after reaction
+    dispatch({ type: 'SET', payload: { emojiRowMsgId: null } });
+    dispatch({
+      type: 'SET',
+      payload: { contextMenu: { ...state.contextMenu, visible: false, x: 0, y: 0, msg: null } },
+    });
+  };
+
+  const handleRemoveEmojiReaction = (emoji, msg) => {
+    if (!socket || !msg.messageId) return;
+
+    socket.emit(
+      'remove_emoji_reaction',
+      {
+        sessionId,
+        messageId: msg.messageId,
+        emoji,
+        clientId,
+      },
+      (response) => {
+        if (response && response.success) {
+          // Update local state immediately for optimistic UI
+          setMessageReactions((prev) => {
+            const newReactions = new Map(prev);
+            newReactions.set(msg.messageId, response.reactions);
+            return newReactions;
+          });
+        }
+      }
+    );
+  };
+
+  // Listen for real-time reaction updates
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleMessageReactionsUpdated = ({
+      messageId,
+      reactions,
+      addedBy,
+      removedBy,
+      joinedBy,
+    }) => {
+      setMessageReactions((prev) => {
+        const newReactions = new Map(prev);
+        if (reactions.length === 0) {
+          newReactions.delete(messageId);
+        } else {
+          newReactions.set(messageId, reactions);
+        }
+        return newReactions;
+      });
+    };
+
+    socket.on('message_reactions_updated', handleMessageReactionsUpdated);
+
+    return () => {
+      socket.off('message_reactions_updated', handleMessageReactionsUpdated);
+    };
+  }, [socket]);
+
+  // Load all reactions when socket connects and session is available
+  useEffect(() => {
+    if (!socket || !sessionId) return;
+
+    // Request all reactions for the session
+    socket.emit('get_session_reactions', { sessionId }, (response) => {
+      if (response && response.success && response.reactions) {
+        const newReactions = new Map();
+        for (const [messageId, reactions] of Object.entries(response.reactions)) {
+          newReactions.set(messageId, reactions);
+        }
+        setMessageReactions(newReactions);
+      }
+    });
+  }, [socket, sessionId]);
+
   // --- ENHANCED: Highlight own messages, subtle hover, avatars, and message grouping ---
   const getAvatar = (id) => {
     // Minimalist: white/gray circle with initial
@@ -763,7 +1078,7 @@ function isHexColor(str) {
   function sanitize(text) {
     if (!text) return '';
     return text.replace(/[&<>"]|'/g, function (c) {
-      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c];
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
     });
   }
 
@@ -771,7 +1086,7 @@ function isHexColor(str) {
   const highlightMentions = (text, clients, currentDisplayName) => {
     if (!text) return text;
     // Build regex for all displayNames
-    const names = clients.map(c => c.displayName).filter(Boolean);
+    const names = clients.map((c) => c.displayName).filter(Boolean);
     if (names.length === 0) return sanitize(text);
     // Escape regex special chars in names
     const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -785,7 +1100,14 @@ function isHexColor(str) {
       }
       const isYou = match[1].toLowerCase() === (currentDisplayName || '').toLowerCase();
       parts.push(
-        <span key={match.index} className={isYou ? 'bg-gray-400 text-black font-bold px-1 rounded' : 'bg-gray-400/30 text-gray-200 font-semibold px-1 rounded'}>
+        <span
+          key={match.index}
+          className={
+            isYou
+              ? 'bg-gray-400 text-black font-bold px-1 rounded'
+              : 'bg-gray-400/30 text-gray-200 font-semibold px-1 rounded'
+          }
+        >
           @{sanitize(match[1])}
         </span>
       );
@@ -814,22 +1136,34 @@ function isHexColor(str) {
   };
   const handleEditSave = (msg) => {
     if (!msg) {
-      dispatch({ type: 'SET', payload: { editingId: null, editValue: '', input: '', error: 'This message was deleted while you were editing.' } });
+      dispatch({
+        type: 'SET',
+        payload: {
+          editingId: null,
+          editValue: '',
+          input: '',
+          error: 'This message was deleted while you were editing.',
+        },
+      });
       return;
     }
     if (!state.input.trim() || !socket) return;
-    socket.emit('edit_message', {
-      sessionId,
-      messageId: msg.messageId,
-      newMessage: state.input,
-      clientId,
-    }, (response) => {
-      if (!response || response.error) {
-        dispatch({ type: 'SET', payload: { error: response?.error || 'Edit failed' } });
-      } else {
-        dispatch({ type: 'SET', payload: { editingId: null, editValue: '', input: '' } });
+    socket.emit(
+      'edit_message',
+      {
+        sessionId,
+        messageId: msg.messageId,
+        newMessage: state.input,
+        clientId,
+      },
+      (response) => {
+        if (!response || response.error) {
+          dispatch({ type: 'SET', payload: { error: response?.error || 'Edit failed' } });
+        } else {
+          dispatch({ type: 'SET', payload: { editingId: null, editValue: '', input: '' } });
+        }
       }
-    });
+    );
   };
   // Update handleDelete to show the dialog instead of window.confirm
   const handleDelete = (msg) => {
@@ -839,37 +1173,51 @@ function isHexColor(str) {
   // Add a function to confirm deletion
   const confirmDelete = () => {
     if (!state.deletingMsg) return;
-    socket.emit('delete_message', {
-      sessionId,
-      messageId: state.deletingMsg.messageId,
-      clientId,
-    }, (response) => {
-      if (!response || response.error) {
-        dispatch({ type: 'SET', payload: { error: response?.error || 'Delete failed' } });
+    socket.emit(
+      'delete_message',
+      {
+        sessionId,
+        messageId: state.deletingMsg.messageId,
+        clientId,
+      },
+      (response) => {
+        if (!response || response.error) {
+          dispatch({ type: 'SET', payload: { error: response?.error || 'Delete failed' } });
+        }
+        dispatch({ type: 'SET', payload: { deletingMsg: null } });
       }
-      dispatch({ type: 'SET', payload: { deletingMsg: null } });
-    });
+    );
   };
 
   // Report message handler
   const handleReport = (msg) => {
-    dispatch({ type: 'SET', payload: { reportingId: msg.messageId, reportReason: '', reportFeedback: '' } });
+    dispatch({
+      type: 'SET',
+      payload: { reportingId: msg.messageId, reportReason: '', reportFeedback: '' },
+    });
   };
   const handleReportSubmit = (msg) => {
     if (!socket) return;
-    socket.emit('report_message', {
-      sessionId,
-      messageId: msg.messageId,
-      reporterId: clientId,
-      reason: state.reportReason,
-    }, (response) => {
-      if (!response || response.error) {
-        dispatch({ type: 'SET', payload: { reportFeedback: response?.error || 'Failed to report message' } });
-      } else {
-        dispatch({ type: 'SET', payload: { reportFeedback: 'Message reported. Thank you!' } });
-        setTimeout(() => dispatch({ type: 'SET', payload: { reportingId: null } }), 1200);
+    socket.emit(
+      'report_message',
+      {
+        sessionId,
+        messageId: msg.messageId,
+        reporterId: clientId,
+        reason: state.reportReason,
+      },
+      (response) => {
+        if (!response || response.error) {
+          dispatch({
+            type: 'SET',
+            payload: { reportFeedback: response?.error || 'Failed to report message' },
+          });
+        } else {
+          dispatch({ type: 'SET', payload: { reportFeedback: 'Message reported. Thank you!' } });
+          setTimeout(() => dispatch({ type: 'SET', payload: { reportingId: null } }), 1200);
+        }
       }
-    });
+    );
   };
 
   // Notification sound
@@ -885,27 +1233,23 @@ function isHexColor(str) {
 
   // Add copy handler
   const handleCopy = (msg) => {
-    if (msg && msg.message) {
-      if (navigator.clipboard) {
-        navigator.clipboard.writeText(msg.message).then(() => {
-          dispatch({ type: 'SET', payload: { copyFeedback: true } });
-          setTimeout(() => dispatch({ type: 'SET', payload: { copyFeedback: false } }), 1000);
-        });
-      } else {
-        // Fallback for older browsers
-        const textarea = document.createElement('textarea');
-        textarea.value = msg.message;
-        document.body.appendChild(textarea);
-        textarea.select();
-        try {
-          document.execCommand('copy');
-          dispatch({ type: 'SET', payload: { copyFeedback: true } });
-          setTimeout(() => dispatch({ type: 'SET', payload: { copyFeedback: false } }), 1000);
-        } catch (err) {}
-        document.body.removeChild(textarea);
-      }
+    if (msg.message) {
+      navigator.clipboard.writeText(msg.message).then(() => {
+        dispatch({ type: 'SET', payload: { copyFeedback: true } });
+        setTimeout(() => dispatch({ type: 'SET', payload: { copyFeedback: false } }), 2000);
+      });
     }
-    dispatch({ type: 'SET', payload: { menuExiting: true } });
+  };
+
+  // Mobile touch handlers for chat bubbles
+  const handleBubbleTouchStart = (e, msg) => {
+    // Handle touch start for mobile devices
+    // Could be used for long press detection or other touch gestures
+  };
+
+  const handleBubbleTouchEnd = () => {
+    // Handle touch end for mobile devices
+    // Could be used to reset touch state or handle tap gestures
   };
 
   // Browser notification helper
@@ -926,11 +1270,19 @@ function isHexColor(str) {
 
   useEffect(() => {
     if (!state.editingId) return;
-    const editingMsg = messages.find(m => m.messageId === state.editingId);
+    const editingMsg = messages.find((m) => m.messageId === state.editingId);
     if (editingMsg && (editingMsg.deleted || !editingMsg.message)) {
-      dispatch({ type: 'SET', payload: { editingId: null, editValue: '', input: '', error: 'This message was deleted while you were editing.' } });
+      dispatch({
+        type: 'SET',
+        payload: {
+          editingId: null,
+          editValue: '',
+          input: '',
+          error: 'This message was deleted while you were editing.',
+        },
+      });
     }
-  }, [messages, state.editingId])
+  }, [messages, state.editingId]);
 
   // Play sound and show notification for new messages (not sent by self)
   useEffect(() => {
@@ -955,9 +1307,7 @@ function isHexColor(str) {
   useEffect(() => {
     if (!socket || !sessionId || !clientId) return;
     // Find the last message from another user that is not read
-    const unread = messages.filter(
-      (msg) => msg.sender !== clientId && !msg.read && msg.messageId
-    );
+    const unread = messages.filter((msg) => msg.sender !== clientId && !msg.read && msg.messageId);
     if (unread.length === 0) return;
     // Only mark as read if at bottom (user has seen the message)
     if (state.isAtBottom) {
@@ -986,7 +1336,10 @@ function isHexColor(str) {
     [clients, displayName]
   );
   // Memoize handlers
-  const memoizedHandleContextMenu = useCallback((e, msg) => handleContextMenu(e, msg), [handleContextMenu]);
+  const memoizedHandleContextMenu = useCallback(
+    (e, msg) => handleContextMenu(e, msg),
+    [handleContextMenu]
+  );
   const memoizedHandleEdit = useCallback((msg) => handleEdit(msg), [handleEdit]);
   const memoizedHandleDelete = useCallback((msg) => handleDelete(msg), [handleDelete]);
   const memoizedHandleReport = useCallback((msg) => handleReport(msg), [handleReport]);
@@ -995,8 +1348,8 @@ function isHexColor(str) {
   // --- MOBILE LAYOUT ---
   if (mobile) {
     return (
-      <div 
-        className="h-full flex flex-col relative" 
+      <div
+        className="h-full flex flex-col relative"
         ref={chatContainerRef}
         style={{
           background: state.chatBgImage
@@ -1004,9 +1357,20 @@ function isHexColor(str) {
             : state.selectedTheme.bgImage
               ? `${state.chatBgColor}${state.chatBgColor ? ',' : ''} url(${state.selectedTheme.bgImage})`
               : state.chatBgColor,
-          backgroundSize: state.chatBgImage || state.selectedTheme.bgImage ? (state.chatBgImage || state.selectedTheme.bgImage).includes('data:image/svg') ? 'auto' : 'cover' : undefined,
-          backgroundPosition: state.chatBgImage || state.selectedTheme.bgImage ? 'center' : undefined,
-          backgroundRepeat: state.chatBgImage || state.selectedTheme.bgImage ? (state.chatBgImage || state.selectedTheme.bgImage).includes('data:image/svg') ? 'repeat' : 'no-repeat' : undefined,
+          backgroundSize:
+            state.chatBgImage || state.selectedTheme.bgImage
+              ? (state.chatBgImage || state.selectedTheme.bgImage).includes('data:image/svg')
+                ? 'auto'
+                : 'cover'
+              : undefined,
+          backgroundPosition:
+            state.chatBgImage || state.selectedTheme.bgImage ? 'center' : undefined,
+          backgroundRepeat:
+            state.chatBgImage || state.selectedTheme.bgImage
+              ? (state.chatBgImage || state.selectedTheme.bgImage).includes('data:image/svg')
+                ? 'repeat'
+                : 'no-repeat'
+              : undefined,
           fontFamily: state.fontFamily,
         }}
       >
@@ -1014,13 +1378,26 @@ function isHexColor(str) {
         <div className="h-20 flex items-center px-6 border-b border-neutral-800 bg-neutral-950/95">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 bg-neutral-800 rounded-lg flex items-center justify-center">
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-400">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="text-neutral-400"
+              >
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
               </svg>
             </div>
             <div>
               <h3 className="text-xl font-bold text-white">Chat</h3>
-              <p className="text-neutral-400 text-xs">{clients.length} participant{clients.length !== 1 ? 's' : ''}</p>
+              <p className="text-neutral-400 text-xs">
+                {clients.length} participant{clients.length !== 1 ? 's' : ''}
+              </p>
             </div>
           </div>
           {/* Add a settings button to the header */}
@@ -1043,7 +1420,6 @@ function isHexColor(str) {
             displayName={displayName}
             clients={clients}
             mobile={mobile}
-            messageAnimations={messageAnimations}
             handleContextMenu={memoizedHandleContextMenu}
             ListComponent={List}
             scrollContainerRef={scrollContainerRef}
@@ -1059,7 +1435,11 @@ function isHexColor(str) {
             highlightMentions={memoizedHighlightMentions}
           />
         ) : (
-          <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-4 space-y-2 pb-36 scrollable-container" tabIndex="0">
+          <div
+            ref={scrollContainerRef}
+            className="flex-1 overflow-y-auto p-4 space-y-2 pb-36 scrollable-container"
+            tabIndex="0"
+          >
             {messages.map((msg, i) => {
               const isOwn = msg.sender === clientId;
               const groupStart = isGroupStart(messages, i);
@@ -1067,9 +1447,35 @@ function isHexColor(str) {
               return (
                 <div
                   key={msg.messageId || `${msg.sender}-${msg.timestamp}-${i}`}
-                  className={`flex items-end transition-all duration-300 group ${isOwn ? 'justify-end' : 'justify-start'} enhanced-bubble-appear ${mobile ? '' : messageAnimations[i]?.animationClass || ''} ${groupStart ? 'mt-3' : ''} ${groupEnd ? 'mb-2' : ''} ${mobile ? 'no-select-mobile' : ''}`}
+                  className={`relative flex items-end transition-all duration-300 group ${isOwn ? 'justify-end' : 'justify-start'} enhanced-bubble-appear ${mobile ? '' : ''} ${groupStart ? 'mt-3' : ''} ${groupEnd ? 'mb-4' : 'mb-2'} ${mobile ? 'no-select-mobile' : ''}`}
                   onContextMenu={(e) => memoizedHandleContextMenu(e, msg)}
+                  onTouchStart={mobile ? (e) => handleBubbleTouchStart(e, msg) : undefined}
+                  onTouchEnd={mobile ? handleBubbleTouchEnd : undefined}
                 >
+                  {/* Emoji row above bubble if active */}
+                  {(state.emojiRowMsgId === msg.messageId ||
+                    (emojiRowExiting && state.emojiRowMsgId === msg.messageId)) && (
+                    <div
+                      className={`flex gap-0.5 mb-0.5 px-0.5 py-0.5 rounded-full bg-neutral-900/90 shadow z-20 absolute -top-12 ${isOwn ? 'right-0' : 'left-0'} w-max transition-all duration-200
+                        ${emojiRowExiting ? 'animate-fade-scale-out' : 'animate-fade-scale-in'}
+                      `}
+                    >
+                      {EMOJIS.slice(0, 8).map((emoji, idx) => (
+                        <button
+                          key={emoji}
+                          className="w-5 h-5 flex items-center justify-center text-[20px] hover:scale-110 transition-transform duration-100 focus:outline-none rounded-full bg-neutral-800 hover:bg-neutral-700 emoji-pop-in"
+                          onClick={() => handleEmojiReaction(emoji, msg)}
+                          tabIndex={0}
+                          style={{
+                            animationDelay: `${idx * 40}ms`,
+                          }}
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
                   {!isOwn && groupStart && (
                     <div className="mr-2 flex-shrink-0">
                       <div className="w-8 h-8 bg-neutral-800 rounded-full flex items-center justify-center border border-neutral-700">
@@ -1079,57 +1485,154 @@ function isHexColor(str) {
                   )}
                   <div className={`max-w-xs lg:max-w-md ${isOwn ? 'order-2' : 'order-1'}`}>
                     {msg.reaction ? (
-                      <div className={`flex items-center gap-2 ${isOwn ? 'justify-end' : 'justify-start'}`}>
+                      <div
+                        className={`flex items-center gap-2 ${isOwn ? 'justify-end' : 'justify-start'}`}
+                      >
                         <div className="bg-neutral-800 rounded-lg px-3 py-2 text-lg">
                           {msg.reaction}
                         </div>
                       </div>
                     ) : (
-                      <div
-                        className={`inline-block max-w-[80vw] md:max-w-md rounded-xl p-1 px-2 pt-0 shadow-sm transition-all duration-200 group-hover:scale-[1.02] relative`}
-                        style={{
-                          background: state.bubbleColor,
-                          color: state.selectedTheme.bubbleText || '#fff',
-                          borderRadius: state.bubbleRadius,
-                          fontFamily: state.fontFamily,
-                        }}
-                      >
-                        <div className="flex items-center gap-2 mb-1">
-                        </div>
-                        <div className="flex flex-row items-end w-full">
-                          {msg.deleted || !msg.message ? (
-                            <span className="flex-1 text-sm italic text-neutral-500 bg-neutral-800/80 rounded-lg px-3 py-2 select-none cursor-default">
-                              <svg className="inline-block mr-1 mb-0.5" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
-                              This message was deleted
-                            </span>
-                          ) : (
-                            <span className={`flex-1 text-base break-words ${msg.message && msg.message.includes('@' + displayName) ? 'bg-yellow-400/20' : ''}`} style={{ color: state.selectedTheme.bubbleText || '#fff' }}>
-                              {memoizedHighlightMentions(msg.message, clients, displayName)}
-                              {msg.edited && <span className="text-xs text-neutral-400 ml-1">(edited)</span>}
-                            </span>
-                          )}
-                          <span className="flex items-end gap-1 text-[11px] opacity-70 ml-4 relative top-[4px]">
-                            <span>
-                              {msg.timestamp
-                                ? new Date(msg.timestamp).toLocaleTimeString([], {
-                                    hour: '2-digit',
-                                    minute: '2-digit',
-                                    hour12: true
-                                  })
-                                : 'now'}
-                            </span>
-                            {/* Delivery status for own messages */}
-                            {msg.sender === clientId && (
-                              msg.read ? (
-                                <span title="Read" className=""><DoubleCheckBlue /></span>
-                              ) : msg.delivered ? (
-                                <span title="Delivered" className=""><DoubleCheckGray /></span>
-                              ) : (
-                                <span title="Sent" className=""><SingleCheck /></span>
-                              )
+                      <div className="flex flex-col">
+                        <div
+                          className={`inline-block max-w-[80vw] md:max-w-md rounded-xl p-1 px-2 pt-0 shadow-sm transition-all duration-200 group-hover:scale-[1.02] relative${messageReactions.get(msg.messageId)?.length > 0 ? ' mb-4' : ''}`}
+                          style={{
+                            background: state.bubbleColor,
+                            color: state.selectedTheme.bubbleText || '#fff',
+                            borderRadius: state.bubbleRadius,
+                            fontFamily: state.fontFamily,
+                            position: 'relative',
+                          }}
+                        >
+                          <div className="flex items-center gap-2 mb-1"></div>
+                          <div className="flex flex-row items-end w-full">
+                            {msg.deleted || !msg.message ? (
+                              <span className="flex-1 text-sm italic text-neutral-500 bg-neutral-800/80 rounded-lg px-3 py-2 select-none cursor-default">
+                                <svg
+                                  className="inline-block mr-1 mb-0.5"
+                                  width="16"
+                                  height="16"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                >
+                                  <path d="M3 6h18" />
+                                  <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                                  <line x1="10" y1="11" x2="10" y2="17" />
+                                  <line x1="14" y1="11" x2="14" y2="17" />
+                                </svg>
+                                This message was deleted
+                              </span>
+                            ) : (
+                              <span
+                                className={`flex-1 text-base break-words ${msg.message && msg.message.includes('@' + displayName) ? 'bg-yellow-400/20' : ''}`}
+                                style={{ color: state.selectedTheme.bubbleText || '#fff' }}
+                              >
+                                {memoizedHighlightMentions(msg.message, clients, displayName)}
+                                {msg.edited && (
+                                  <span className="text-xs text-neutral-400 ml-1">(edited)</span>
+                                )}
+                              </span>
                             )}
-                          </span>
+                            <span className="flex items-end gap-1 text-[11px] opacity-70 ml-4 relative top-[4px]">
+                              <span>
+                                {msg.timestamp
+                                  ? new Date(msg.timestamp).toLocaleTimeString([], {
+                                      hour: '2-digit',
+                                      minute: '2-digit',
+                                      hour12: true,
+                                    })
+                                  : 'now'}
+                              </span>
+                              {/* Delivery status for own messages */}
+                              {msg.sender === clientId &&
+                                (msg.read ? (
+                                  <span title="Read" className="">
+                                    <DoubleCheckBlue />
+                                  </span>
+                                ) : msg.delivered ? (
+                                  <span title="Delivered" className="">
+                                    <DoubleCheckGray />
+                                  </span>
+                                ) : (
+                                  <span title="Sent" className="">
+                                    <SingleCheck />
+                                  </span>
+                                ))}
+                            </span>
+                          </div>
                         </div>
+
+                        {/* Emoji reactions display with absolute positioning at bottom right of bubble */}
+                        {messageReactions.get(msg.messageId) &&
+                          messageReactions.get(msg.messageId).length > 0 && (
+                            <div
+                              className={`absolute
+                              ${mobile ? 'bottom-[-12px] right-1 left-auto max-w-[90vw] px-0.5 py-0' : 'bottom-[-30px] right-0'}
+                              flex gap-0.5
+                              rounded-3xl
+                              bg-neutral-900/95
+                              backdrop-blur-sm
+                              shadow-lg
+                              border border-neutral-800/50
+                              w-max
+                              transition-all duration-200
+                              animate-fade-scale-in
+                              z-10
+                              ${mobile ? 'text-sm' : ''}
+                            `}
+                              style={mobile ? { minHeight: 8, minWidth: 0, fontSize: 14 } : {}}
+                            >
+                              {messageReactions.get(msg.messageId).map((reaction, idx) => {
+                                const hasReacted = reaction.users.includes(clientId);
+                                return (
+                                  <button
+                                    key={reaction.emoji}
+                                    className={`flex items-center gap-0.5
+                                    ${mobile ? 'px-1 py-0.5 min-w-[24px] text-sm' : 'p-0 text-xs'}
+                                    rounded-3xl
+                                    transition-all duration-200
+                                    hover:scale-110
+                                    focus:outline-none
+                                    emoji-reaction-button
+                                    emoji-pop-in
+                                    ${
+                                      hasReacted
+                                        ? 'bg-primary/20 text-primary border border-primary/30'
+                                        : 'bg-neutral-800/80 text-neutral-300 hover:bg-neutral-700/80'
+                                    }`}
+                                    onClick={() =>
+                                      hasReacted
+                                        ? handleRemoveEmojiReaction(reaction.emoji, msg)
+                                        : handleEmojiReaction(reaction.emoji, msg)
+                                    }
+                                    title={`${reaction.count} reaction${reaction.count !== 1 ? 's' : ''}${hasReacted ? ' - Click to remove' : ' - Click to add'}`}
+                                    style={{
+                                      ...(mobile
+                                        ? { fontSize: 14, minWidth: 24, minHeight: 24 }
+                                        : {}),
+                                      animationDelay: `${idx * 40}ms`,
+                                    }}
+                                  >
+                                    <span className={mobile ? 'text-sm' : 'text-sm'}>
+                                      {reaction.emoji}
+                                    </span>
+                                    {reaction.count > 1 && (
+                                      <span
+                                        className={`${mobile ? 'text-xs font-semibold ml-0.5' : 'text-xs font-medium'}`}
+                                      >
+                                        {reaction.count}
+                                      </span>
+                                    )}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
                       </div>
                     )}
                   </div>
@@ -1152,6 +1655,13 @@ function isHexColor(str) {
             New messages ↓
           </button>
         )}
+        {/* Typing indicator (now always above input) */}
+        {state.typingUsers.length > 0 && (
+          <div className="text-xs text-neutral-400 mt-1 mb-1 px-4" aria-live="polite">
+            {state.typingUsers.map((u) => u.displayName || u.clientId).join(', ')}{' '}
+            {state.typingUsers.length === 1 ? 'is' : 'are'} typing...
+          </div>
+        )}
         {/* Floating Chat Input */}
         <div className="fixed left-0 right-0 bottom-20 z-30 flex justify-center pointer-events-none">
           <div className="w-full pointer-events-auto px-2">
@@ -1166,7 +1676,9 @@ function isHexColor(str) {
                   {state.showPlusMenu && !state.editingId && (
                     <div
                       className="absolute left-0 bottom-full mb-2 z-50 min-w-[180px] bg-neutral-900 border border-neutral-800 rounded-xl shadow-xl py-2 px-0 text-sm text-white backdrop-blur-md animate-fade-scale-in flex flex-col items-stretch"
-                      style={{ boxShadow: '0 8px 32px 0 rgba(0,0,0,0.18), 0 1.5px 6px 0 rgba(0,0,0,0.10)' }}
+                      style={{
+                        boxShadow: '0 8px 32px 0 rgba(0,0,0,0.18), 0 1.5px 6px 0 rgba(0,0,0,0.10)',
+                      }}
                     >
                       {plusMenuOptions.map((opt) => (
                         <button
@@ -1188,7 +1700,15 @@ function isHexColor(str) {
                         className="flex items-center justify-center w-9 h-9 bg-neutral-800 rounded-full transition-all duration-200 focus:outline-none relative"
                         style={{ minWidth: 36, minHeight: 36 }}
                         ref={plusButtonRef}
-                        onClick={state.editingId ? handleEditCancel : () => dispatch({ type: 'SET', payload: { showPlusMenu: !state.showPlusMenu } })}
+                        onClick={
+                          state.editingId
+                            ? handleEditCancel
+                            : () =>
+                                dispatch({
+                                  type: 'SET',
+                                  payload: { showPlusMenu: !state.showPlusMenu },
+                                })
+                        }
                         tabIndex={0}
                         aria-label={state.editingId ? 'Cancel editing' : 'Add file'}
                       >
@@ -1224,7 +1744,17 @@ function isHexColor(str) {
                         </>
                       ) : (
                         <>
-                          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            width="18"
+                            height="18"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
                             <line x1="22" y1="2" x2="11" y2="13"></line>
                             <polygon points="22,2 15,22 11,13 2,9 22,2"></polygon>
                           </svg>
@@ -1235,9 +1765,7 @@ function isHexColor(str) {
                   </div>
                 </div>
                 {/* Error message */}
-                {state.error && (
-                  <div className="text-red-500 text-xs mt-1">{state.error}</div>
-                )}
+                {state.error && <div className="text-red-500 text-xs mt-1">{state.error}</div>}
                 {/* Emoji Picker Dropdown */}
                 {state.showEmojiPicker && (
                   <div className="absolute bottom-16 left-0 right-0 mx-auto w-[90vw] max-w-xs bg-neutral-900 border border-neutral-800 rounded-2xl shadow-xl p-3 flex flex-wrap gap-2 z-40 animate-fade-in pointer-events-auto">
@@ -1259,185 +1787,278 @@ function isHexColor(str) {
             </div>
           </div>
         </div>
-        {/* Typing indicator */}
-        {state.typingUsers.length > 0 && (
-          <div className="text-xs text-neutral-400 mt-1" aria-live="polite">
-            {state.typingUsers.map((u) => u.displayName || u.clientId).join(', ')} {state.typingUsers.length === 1 ? 'is' : 'are'} typing...
+        {/* Floating copy feedback popup (desktop: absolute in chat section, mobile: fixed) */}
+        {state.copyFeedback &&
+          (mobile ? (
+            <div
+              className="fixed left-1/2 -translate-x-1/2 z-50 mb-28 sm:mb-24"
+              style={{ bottom: 32 }}
+            >
+              <div className="flex items-center gap-2 px-4 py-2 rounded-full shadow-xl border border-neutral-800 bg-neutral-900/90 backdrop-blur-md animate-bottom-up-scale-in font-semibold text-xs text-white min-w-[120px] justify-center">
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 18 18"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="inline align-bottom text-green-400 animate-draw-tick"
+                  style={{
+                    strokeDasharray: 24,
+                    strokeDashoffset: 0,
+                    animation: 'draw-tick 0.5s cubic-bezier(0.4,0,0.2,1) forwards',
+                  }}
+                >
+                  <path
+                    d="M5 9.5L8 12.5L13 7.5"
+                    stroke="#4ade80"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    style={{ strokeDasharray: 24, strokeDashoffset: 24 }}
+                  />
+                </svg>
+                <span className="tracking-tight font-medium">Copied</span>
+              </div>
+            </div>
+          ) : (
+            <div className="absolute left-1/2 -translate-x-1/2 z-30" style={{ bottom: 80 }}>
+              <div className="flex items-center gap-2 px-4 py-2 rounded-full shadow-xl border border-neutral-800 bg-neutral-900/90 backdrop-blur-md animate-bottom-up-scale-in font-semibold text-xs text-white min-w-[120px] justify-center">
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 18 18"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="inline align-bottom text-green-400 animate-draw-tick"
+                  style={{
+                    strokeDasharray: 24,
+                    strokeDashoffset: 0,
+                    animation: 'draw-tick 0.5s cubic-bezier(0.4,0,0.2,1) forwards',
+                  }}
+                >
+                  <path
+                    d="M5 9.5L8 12.5L13 7.5"
+                    stroke="#4ade80"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    style={{ strokeDasharray: 24, strokeDashoffset: 24 }}
+                  />
+                </svg>
+                <span className="tracking-tight font-medium">Copied</span>
+              </div>
+            </div>
+          ))}
+        <style>
+          {`
+            @keyframes draw-tick {
+              to {
+                stroke-dashoffset: 0;
+              }
+            }
+            .animate-draw-tick path {
+              stroke-dasharray: 24;
+              stroke-dashoffset: 24;
+              animation: draw-tick 0.5s cubic-bezier(0.4,0,0.2,1) forwards;
+            }
+            @keyframes emoji-pop-in {
+              0% {
+                opacity: 0;
+                transform: scale(0.5) translateY(10px);
+              }
+              60% {
+                opacity: 1;
+                transform: scale(1.15) translateY(-2px);
+              }
+              100% {
+                opacity: 1;
+                transform: scale(1) translateY(0);
+              }
+            }
+            .emoji-pop-in {
+              animation: emoji-pop-in 0.32s cubic-bezier(0.4,0,0.2,1) both;
+            }
+          `}
+        </style>
+        {/* Delete Confirmation Modal (MOBILE) */}
+        {mobile && state.deletingMsg && (
+          <div
+            className="absolute inset-0 z-40 flex items-center justify-center bg-black/60 animate-fade-in"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Delete Message Confirmation"
+            tabIndex={-1}
+            ref={deleteModalRef}
+            onClick={(e) => {
+              if (e.target === e.currentTarget) cancelDelete();
+            }}
+          >
+            <div
+              className="bg-neutral-900/95 border border-neutral-800 rounded-xl px-6 py-5 w-full max-w-xs shadow-xl flex flex-col items-center gap-4 backdrop-blur-md transition-all duration-200 animate-scale-in"
+              tabIndex={0}
+            >
+              <div className="flex items-center justify-center w-12 h-12 rounded-full bg-red-500/10 mb-1">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="28"
+                  height="28"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="text-red-500"
+                >
+                  <path d="M3 6h18" />
+                  <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                  <line x1="10" y1="11" x2="10" y2="17" />
+                  <line x1="14" y1="11" x2="14" y2="17" />
+                </svg>
+              </div>
+              <div className="text-base text-white font-semibold text-center mb-1">
+                Delete this message?
+              </div>
+              <div className="flex gap-2 w-full mt-1">
+                <button
+                  className="flex-1 py-2 text-sm font-medium rounded-lg bg-neutral-800 text-white hover:bg-neutral-700 focus:bg-neutral-700 focus:outline-none transition-all"
+                  onClick={cancelDelete}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="flex-1 py-2 text-sm font-medium rounded-lg bg-red-500 text-white hover:bg-red-400 focus:bg-red-600 focus:outline-none transition-all"
+                  onClick={confirmDelete}
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
           </div>
         )}
-      {/* Floating copy feedback popup (desktop: absolute in chat section, mobile: fixed) */}
-      {state.copyFeedback && (
-        mobile ? (
-          <div className="fixed left-1/2 -translate-x-1/2 z-50 mb-28 sm:mb-24" style={{ bottom: 32 }}>
-            <div className="flex items-center gap-2 px-4 py-2 rounded-full shadow-xl border border-neutral-800 bg-neutral-900/90 backdrop-blur-md animate-bottom-up-scale-in font-semibold text-xs text-white min-w-[120px] justify-center">
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 18 18"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
-                className="inline align-bottom text-green-400 animate-draw-tick"
-                style={{ strokeDasharray: 24, strokeDashoffset: 0, animation: 'draw-tick 0.5s cubic-bezier(0.4,0,0.2,1) forwards' }}
-              >
-                <path
-                  d="M5 9.5L8 12.5L13 7.5"
-                  stroke="#4ade80"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  style={{ strokeDasharray: 24, strokeDashoffset: 24 }}
-                />
-              </svg>
-              <span className="tracking-tight font-medium">Copied</span>
-            </div>
-          </div>
-        ) : (
-          <div className="absolute left-1/2 -translate-x-1/2 z-30" style={{ bottom: 80 }}>
-            <div className="flex items-center gap-2 px-4 py-2 rounded-full shadow-xl border border-neutral-800 bg-neutral-900/90 backdrop-blur-md animate-bottom-up-scale-in font-semibold text-xs text-white min-w-[120px] justify-center">
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 18 18"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
-                className="inline align-bottom text-green-400 animate-draw-tick"
-                style={{ strokeDasharray: 24, strokeDashoffset: 0, animation: 'draw-tick 0.5s cubic-bezier(0.4,0,0.2,1) forwards' }}
-              >
-                <path
-                  d="M5 9.5L8 12.5L13 7.5"
-                  stroke="#4ade80"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  style={{ strokeDasharray: 24, strokeDashoffset: 24 }}
-                />
-              </svg>
-              <span className="tracking-tight font-medium">Copied</span>
-            </div>
-          </div>
-        )
-      )}
-      <style>
-        {`
-          @keyframes draw-tick {
-            to {
-              stroke-dashoffset: 0;
-            }
-          }
-          .animate-draw-tick path {
-            stroke-dasharray: 24;
-            stroke-dashoffset: 24;
-            animation: draw-tick 0.5s cubic-bezier(0.4,0,0.2,1) forwards;
-          }
-        `}
-      </style>
-              {/* Delete Confirmation Modal (MOBILE) */}
-      {mobile && state.deletingMsg && (
-        <div
-          className="absolute inset-0 z-40 flex items-center justify-center bg-black/60 animate-fade-in"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Delete Message Confirmation"
-          tabIndex={-1}
-          ref={deleteModalRef}
-          onClick={e => { if (e.target === e.currentTarget) cancelDelete(); }}
-        >
-          <div className="bg-neutral-900/95 border border-neutral-800 rounded-xl px-6 py-5 w-full max-w-xs shadow-xl flex flex-col items-center gap-4 backdrop-blur-md transition-all duration-200 animate-scale-in" tabIndex={0}>
-            <div className="flex items-center justify-center w-12 h-12 rounded-full bg-red-500/10 mb-1">
-              <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="text-red-500">
-                <path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>
-              </svg>
-            </div>
-            <div className="text-base text-white font-semibold text-center mb-1">Delete this message?</div>
-            <div className="flex gap-2 w-full mt-1">
-              <button className="flex-1 py-2 text-sm font-medium rounded-lg bg-neutral-800 text-white hover:bg-neutral-700 focus:bg-neutral-700 focus:outline-none transition-all" onClick={cancelDelete}>Cancel</button>
-              <button className="flex-1 py-2 text-sm font-medium rounded-lg bg-red-500 text-white hover:bg-red-400 focus:bg-red-600 focus:outline-none transition-all" onClick={confirmDelete}>Delete</button>
-            </div>
-          </div>
-        </div>
-      )}
         {/* Context Menu for mobile */}
         {state.contextMenu.visible && state.contextMenu.msg && (
           <>
             <div
               ref={contextMenuRef}
               className={`fixed z-50 min-w-[140px] max-w-[220px] bg-neutral-900/95 border border-neutral-800 rounded-xl shadow-2xl py-2 px-0 text-sm text-white backdrop-blur-md transition-all duration-200 ease-out ${state.menuExiting ? 'animate-fade-scale-out' : 'animate-fade-scale-in'}`}
-              style={{ top: state.contextMenu.y + 60, left: state.contextMenu.x + 50, boxShadow: '0 8px 32px 0 rgba(0,0,0,0.18), 0 1.5px 6px 0 rgba(0,0,0,0.10)' }}
-              onClick={e => e.stopPropagation()}
+              style={{
+                top: state.contextMenu.y + 60,
+                left: state.contextMenu.x + 50,
+                boxShadow: '0 8px 32px 0 rgba(0,0,0,0.18), 0 1.5px 6px 0 rgba(0,0,0,0.10)',
+              }}
+              onClick={(e) => e.stopPropagation()}
               role="menu"
               aria-label="Message options"
               tabIndex={-1}
-              onKeyDown={e => { if (e.key === 'Escape') dispatch({ type: 'SET', payload: { menuExiting: true } }); }}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') dispatch({ type: 'SET', payload: { menuExiting: true } });
+              }}
             >
-              {state.contextMenu.msg.sender === clientId && !state.contextMenu.msg.reaction && isDeletable(state.contextMenu.msg) && (
-                <button
-                  className="block w-full text-left px-4 py-2 font-medium hover:bg-neutral-800/80 focus:bg-neutral-800/90 focus:outline-none transition-colors duration-150 rounded-md flex items-center justify-between gap-2"
-                  onClick={() => { 
-                    dispatch({ type: 'SET', payload: { menuExiting: true } }); 
-                    setTimeout(() => {
-                      memoizedHandleEdit(state.contextMenu.msg);
-                      // Focus the input after the edit state is set
+              {state.contextMenu.msg.sender === clientId &&
+                !state.contextMenu.msg.reaction &&
+                isDeletable(state.contextMenu.msg) && (
+                  <button
+                    className="block w-full text-left px-4 py-2 font-medium hover:bg-neutral-800/80 focus:bg-neutral-800/90 focus:outline-none transition-colors duration-150 rounded-md flex items-center justify-between gap-2"
+                    onClick={() => {
+                      dispatch({
+                        type: 'SET',
+                        payload: { menuExiting: true, emojiRowMsgId: null },
+                      });
                       setTimeout(() => {
-                        chatInputRef.current?.focus();
-                      }, 50);
-                    }, 160); 
-                  }}
-                >
-                  <span>Edit</span>
-                  <FiEdit size={16} />
-                </button>
-              )}
+                        memoizedHandleEdit(state.contextMenu.msg);
+                        // Focus the input after the edit state is set
+                        setTimeout(() => {
+                          chatInputRef.current?.focus();
+                        }, 50);
+                      }, 160);
+                    }}
+                  >
+                    <span>Edit</span>
+                    <FiEdit size={16} />
+                  </button>
+                )}
 
               {!state.contextMenu.msg.reaction && (
                 <button
                   className="block w-full text-left px-4 py-2 hover:bg-neutral-800 flex items-center justify-between gap-2"
-                  onClick={() => { dispatch({ type: 'SET', payload: { menuExiting: true } }); setTimeout(() => memoizedHandleReport(state.contextMenu.msg), 160); }}
+                  onClick={() => {
+                    dispatch({ type: 'SET', payload: { menuExiting: true, emojiRowMsgId: null } });
+                    setTimeout(() => memoizedHandleReport(state.contextMenu.msg), 160);
+                  }}
                 >
                   <span>Report</span>
                   <FiFlag size={16} />
                 </button>
               )}
               {/* Copy option (always available if not a reaction and not deleted) */}
-              {!state.contextMenu.msg.reaction && !state.contextMenu.msg.deleted && state.contextMenu.msg.message && (
-                <button
-                  className="block w-full text-left px-4 py-2 hover:bg-neutral-800 flex items-center justify-between gap-2"
-                  onClick={() => memoizedHandleCopy(state.contextMenu.msg)}
-                >
-                  <span>Copy</span>
-                  <FiCopy size={16} />
-                </button>
-              )}
-              {state.contextMenu.msg.sender === clientId && !state.contextMenu.msg.reaction && isDeletable(state.contextMenu.msg) && (
-                <button
-                  className="block w-full text-left px-4 py-2 hover:bg-neutral-800 flex items-center justify-between gap-2 text-red-100"
-                  onClick={() => { dispatch({ type: 'SET', payload: { menuExiting: true } }); setTimeout(() => memoizedHandleDelete(state.contextMenu.msg), 160); }}
-                >
-                  <span className="text-red-300">Delete</span>
-                  <FiTrash2 size={16} className="text-red-300" />
-                </button>
-              )}
+              {!state.contextMenu.msg.reaction &&
+                !state.contextMenu.msg.deleted &&
+                state.contextMenu.msg.message && (
+                  <button
+                    className="block w-full text-left px-4 py-2 hover:bg-neutral-800 flex items-center justify-between gap-2"
+                    onClick={() => {
+                      dispatch({
+                        type: 'SET',
+                        payload: { menuExiting: true, emojiRowMsgId: null },
+                      });
+                      memoizedHandleCopy(state.contextMenu.msg);
+                      setTimeout(() => {
+                        if (contextMenuRef.current) {
+                          contextMenuRef.current.focus?.();
+                        }
+                      }, 0);
+                    }}
+                  >
+                    <span>Copy</span>
+                    <FiCopy size={16} />
+                  </button>
+                )}
+              {state.contextMenu.msg.sender === clientId &&
+                !state.contextMenu.msg.reaction &&
+                isDeletable(state.contextMenu.msg) && (
+                  <button
+                    className="block w-full text-left px-4 py-2 hover:bg-neutral-800 flex items-center justify-between gap-2 text-red-100"
+                    onClick={() => {
+                      dispatch({
+                        type: 'SET',
+                        payload: { menuExiting: true, emojiRowMsgId: null },
+                      });
+                      setTimeout(() => memoizedHandleDelete(state.contextMenu.msg), 160);
+                    }}
+                  >
+                    <span className="text-red-300">Delete</span>
+                    <FiTrash2 size={16} className="text-red-300" />
+                  </button>
+                )}
             </div>
           </>
         )}
-        
+
         {/* Chat Settings Modal for Mobile */}
         {state.showChatSettings && (
-          <div className={`z-40 flex items-center justify-center bg-black/70 animate-fade-scale-in ${
-            mobile 
-              ? 'fixed inset-0 p-2' 
-              : 'absolute inset-0'
-          }`}>
-            <div className={`bg-neutral-950 rounded-xl shadow-none flex flex-col gap-0 backdrop-blur-md transition-all duration-200 overflow-hidden relative border border-neutral-800 ${
-              mobile
-                ? 'w-full max-w-sm h-[90vh] max-h-[600px]'
-                : 'w-full max-w-sm sm:max-w-md md:max-w-lg lg:max-w-xl mx-2 sm:mx-4 md:mx-8'
-            }`} style={{ maxHeight: mobile ? '90vh' : '90vh' }}>
+          <div
+            className={`z-40 flex items-center justify-center bg-black/70 animate-fade-scale-in ${
+              mobile ? 'fixed inset-0 p-2' : 'absolute inset-0'
+            }`}
+          >
+            <div
+              className={`bg-neutral-950 rounded-xl shadow-none flex flex-col gap-0 backdrop-blur-md transition-all duration-200 overflow-hidden relative border border-neutral-800 ${
+                mobile
+                  ? 'w-full max-w-sm h-[90vh] max-h-[600px]'
+                  : 'w-full max-w-sm sm:max-w-md md:max-w-lg lg:max-w-xl mx-2 sm:mx-4 md:mx-8'
+              }`}
+              style={{ maxHeight: mobile ? '90vh' : '90vh' }}
+            >
               {/* Header */}
               <div className="flex items-center justify-between px-4 sm:px-5 py-4 sm:py-4 border-b border-neutral-800 bg-neutral-950 flex-shrink-0">
-                <span className="text-base sm:text-lg font-semibold text-white">Chat Appearance</span>
-                <button 
-                  className="p-2 rounded-full hover:bg-neutral-800 focus:bg-neutral-800 transition-colors touch-manipulation" 
-                  onClick={() => dispatch({ type: 'SET', payload: { showChatSettings: false } })} 
+                <span className="text-base sm:text-lg font-semibold text-white">
+                  Chat Appearance
+                </span>
+                <button
+                  className="p-2 rounded-full hover:bg-neutral-800 focus:bg-neutral-800 transition-colors touch-manipulation"
+                  onClick={() => dispatch({ type: 'SET', payload: { showChatSettings: false } })}
                   title="Close"
                   aria-label="Close settings"
                 >
@@ -1447,8 +2068,13 @@ function isHexColor(str) {
               {/* Live Preview */}
               <div className="px-4 sm:px-5 pt-4 sm:pt-5 pb-3 border-b border-neutral-800 flex-shrink-0">
                 <div className="mb-2 text-xs text-neutral-400 font-medium">Live Preview</div>
-                <div className="flex items-end gap-2 min-h-[44px] sm:min-h-[48px]" style={{ fontFamily: state.fontFamily }}>
-                  <div className="rounded-full w-7 h-7 sm:w-7 sm:h-7 bg-neutral-800 flex items-center justify-center text-white font-bold text-sm sm:text-base border border-neutral-700 flex-shrink-0">A</div>
+                <div
+                  className="flex items-end gap-2 min-h-[44px] sm:min-h-[48px]"
+                  style={{ fontFamily: state.fontFamily }}
+                >
+                  <div className="rounded-full w-7 h-7 sm:w-7 sm:h-7 bg-neutral-800 flex items-center justify-center text-white font-bold text-sm sm:text-base border border-neutral-700 flex-shrink-0">
+                    A
+                  </div>
                   <div
                     className="px-3 sm:px-3 py-2 sm:py-2 text-white flex items-center gap-2"
                     style={{
@@ -1460,17 +2086,31 @@ function isHexColor(str) {
                     }}
                   >
                     <span className="text-xs sm:text-sm truncate">Sample message</span>
-                    <span className="text-[10px] sm:text-xs text-neutral-400 ml-2 flex-shrink-0">12:34</span>
+                    <span className="text-[10px] sm:text-xs text-neutral-400 ml-2 flex-shrink-0">
+                      12:34
+                    </span>
                   </div>
                 </div>
                 {/* --- CONTRAST WARNINGS --- */}
                 {(bgBubbleContrast < 4.5 || bubbleTextContrast < 4.5) && (
                   <div className="mt-3 text-xs text-yellow-400 font-semibold flex items-start gap-2">
-                    <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" className="inline align-top mt-0.5 flex-shrink-0">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01M21 12c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9 9 4.03 9 9z"/>
+                    <svg
+                      width="16"
+                      height="16"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      className="inline align-top mt-0.5 flex-shrink-0"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth="2"
+                        d="M12 9v2m0 4h.01M21 12c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9 9 4.03 9 9z"
+                      />
                     </svg>
                     <span className="leading-relaxed">
-                      Warning: Your color choices may not be accessible. 
+                      Warning: Your color choices may not be accessible.
                       {bgBubbleContrast < 4.5 && 'Background and bubble contrast is too low. '}
                       {bubbleTextContrast < 4.5 && 'Bubble and text contrast is too low.'}
                     </span>
@@ -1478,15 +2118,27 @@ function isHexColor(str) {
                 )}
               </div>
               {/* Settings Sections */}
-              <div className="flex flex-col gap-4 sm:gap-6 px-4 sm:px-5 py-4 sm:py-5 bg-neutral-950 overflow-y-auto flex-1 modal-content" style={{ maxHeight: mobile ? 'calc(90vh - 200px)' : 'calc(80vh - 120px)' }}>
+              <div
+                className="flex flex-col gap-4 sm:gap-6 px-4 sm:px-5 py-4 sm:py-5 bg-neutral-950 overflow-y-auto flex-1 modal-content"
+                style={{ maxHeight: mobile ? 'calc(90vh - 200px)' : 'calc(80vh - 120px)' }}
+              >
                 {/* Themes */}
                 <div>
                   <div className="text-xs font-semibold text-white mb-2">Themes</div>
-                  <div className="text-xs text-neutral-400 mb-3">Quickly switch between preset color themes for chat background and bubbles.</div>
+                  <div className="text-xs text-neutral-400 mb-3">
+                    Quickly switch between preset color themes for chat background and bubbles.
+                  </div>
                   <div className="w-full theme-scroll-container">
-                    <div className="flex gap-3 sm:gap-3 mb-2 flex-nowrap pb-2" style={{ WebkitOverflowScrolling: 'touch', minWidth: 'max-content' }}>
+                    <div
+                      className="flex gap-3 sm:gap-3 mb-2 flex-nowrap pb-2"
+                      style={{ WebkitOverflowScrolling: 'touch', minWidth: 'max-content' }}
+                    >
                       {predefinedThemes.map((theme) => (
-                        <div key={theme.name} className="flex flex-col items-center gap-1.5 mb-2 flex-shrink-0" style={{ minWidth: mobile ? '52px' : '48px' }}>
+                        <div
+                          key={theme.name}
+                          className="flex flex-col items-center gap-1.5 mb-2 flex-shrink-0"
+                          style={{ minWidth: mobile ? '52px' : '48px' }}
+                        >
                           <button
                             className={`w-8 h-8 sm:w-7 sm:h-7 rounded-lg border-2 transition-all duration-150 focus:outline-none touch-manipulation ${state.chatBgColor === theme.bg && state.bubbleColor === theme.bubble ? 'border-white' : 'border-neutral-800'}`}
                             style={{ background: theme.bubble }}
@@ -1494,7 +2146,9 @@ function isHexColor(str) {
                             title={theme.name}
                             aria-label={theme.name}
                           />
-                          <span className="text-[9px] sm:text-[10px] text-neutral-400 text-center w-12 sm:w-12 truncate leading-tight">{theme.name}</span>
+                          <span className="text-[9px] sm:text-[10px] text-neutral-400 text-center w-12 sm:w-12 truncate leading-tight">
+                            {theme.name}
+                          </span>
                         </div>
                       ))}
                     </div>
@@ -1503,15 +2157,19 @@ function isHexColor(str) {
                 {/* Background */}
                 <div>
                   <div className="text-xs font-semibold text-white mb-2">Background</div>
-                  <div className="text-xs text-neutral-400 mb-3">Customize the chat background color or add an image (JPG, PNG, GIF).</div>
+                  <div className="text-xs text-neutral-400 mb-3">
+                    Customize the chat background color or add an image (JPG, PNG, GIF).
+                  </div>
                   <div className="flex items-center gap-3 sm:gap-3 mb-2 flex-wrap">
                     <div className="flex flex-col items-center gap-1.5">
-                      <input 
-                        type="color" 
-                        value={state.chatBgColor} 
-                        onChange={e => dispatch({ type: 'SET', payload: { chatBgColor: e.target.value } })} 
-                        className="w-8 h-8 sm:w-8 sm:h-8 p-0 border-none rounded-full bg-transparent cursor-pointer touch-manipulation" 
-                        aria-label="Chat background color" 
+                      <input
+                        type="color"
+                        value={state.chatBgColor}
+                        onChange={(e) =>
+                          dispatch({ type: 'SET', payload: { chatBgColor: e.target.value } })
+                        }
+                        className="w-8 h-8 sm:w-8 sm:h-8 p-0 border-none rounded-full bg-transparent cursor-pointer touch-manipulation"
+                        aria-label="Chat background color"
                       />
                       <span className="text-[9px] sm:text-[10px] text-neutral-400">Color</span>
                     </div>
@@ -1519,20 +2177,29 @@ function isHexColor(str) {
                       <input
                         type="file"
                         accept="image/*"
-                        onChange={e => {
+                        onChange={(e) => {
                           dispatch({ type: 'SET', payload: { fileUploadError: '' } });
                           const file = e.target.files[0];
                           if (file) {
                             if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
-                              dispatch({ type: 'SET', payload: { fileUploadError: 'Only JPG, PNG, or GIF images are allowed.' } });
+                              dispatch({
+                                type: 'SET',
+                                payload: {
+                                  fileUploadError: 'Only JPG, PNG, or GIF images are allowed.',
+                                },
+                              });
                               return;
                             }
                             if (file.size > MAX_IMAGE_SIZE_MB * 1024 * 1024) {
-                              dispatch({ type: 'SET', payload: { fileUploadError: 'Image is too large (max 3MB).' } });
+                              dispatch({
+                                type: 'SET',
+                                payload: { fileUploadError: 'Image is too large (max 3MB).' },
+                              });
                               return;
                             }
                             const reader = new FileReader();
-                            reader.onload = (ev) => dispatch({ type: 'SET', payload: { chatBgImage: ev.target.result } });
+                            reader.onload = (ev) =>
+                              dispatch({ type: 'SET', payload: { chatBgImage: ev.target.result } });
                             reader.readAsDataURL(file);
                           }
                         }}
@@ -1541,11 +2208,15 @@ function isHexColor(str) {
                       />
                       <span className="text-[9px] sm:text-[10px] text-neutral-400">Image</span>
                     </div>
-                    {state.fileUploadError && <div className="text-xs text-red-500 mt-2 w-full">{state.fileUploadError}</div>}
+                    {state.fileUploadError && (
+                      <div className="text-xs text-red-500 mt-2 w-full">
+                        {state.fileUploadError}
+                      </div>
+                    )}
                     {state.chatBgImage && (
-                      <button 
-                        className="ml-1 p-2 rounded-full bg-neutral-800 hover:bg-neutral-700 transition touch-manipulation" 
-                        onClick={() => dispatch({ type: 'SET', payload: { chatBgImage: '' } })} 
+                      <button
+                        className="ml-1 p-2 rounded-full bg-neutral-800 hover:bg-neutral-700 transition touch-manipulation"
+                        onClick={() => dispatch({ type: 'SET', payload: { chatBgImage: '' } })}
                         title="Remove image"
                         aria-label="Remove background image"
                       >
@@ -1555,47 +2226,68 @@ function isHexColor(str) {
                   </div>
                   {state.chatBgImage && (
                     <div className="relative mt-2">
-                      <img src={state.chatBgImage} alt="Chat background preview" className="rounded-lg max-h-14 sm:max-h-16 w-full object-cover border border-neutral-800" />
-                      <span className="absolute top-1 right-2 bg-black/70 text-[9px] sm:text-[10px] text-white px-2 py-0.5 rounded-full">Preview</span>
+                      <img
+                        src={state.chatBgImage}
+                        alt="Chat background preview"
+                        className="rounded-lg max-h-14 sm:max-h-16 w-full object-cover border border-neutral-800"
+                      />
+                      <span className="absolute top-1 right-2 bg-black/70 text-[9px] sm:text-[10px] text-white px-2 py-0.5 rounded-full">
+                        Preview
+                      </span>
                     </div>
                   )}
                 </div>
                 {/* Bubble Style */}
                 <div>
                   <div className="text-xs font-semibold text-white mb-2">Bubble Style</div>
-                  <div className="text-xs text-neutral-400 mb-3">Adjust the color and roundness of chat bubbles for better readability.</div>
+                  <div className="text-xs text-neutral-400 mb-3">
+                    Adjust the color and roundness of chat bubbles for better readability.
+                  </div>
                   <div className="flex items-center gap-3 sm:gap-3 flex-wrap">
                     <div className="flex flex-col items-center gap-1.5">
-                      <input 
-                        type="color" 
-                        value={state.bubbleColor} 
-                        onChange={e => dispatch({ type: 'SET', payload: { bubbleColor: e.target.value } })} 
-                        className="w-8 h-8 sm:w-8 sm:h-8 p-0 border-none rounded-full bg-transparent cursor-pointer touch-manipulation" 
-                        aria-label="Bubble color" 
+                      <input
+                        type="color"
+                        value={state.bubbleColor}
+                        onChange={(e) =>
+                          dispatch({ type: 'SET', payload: { bubbleColor: e.target.value } })
+                        }
+                        className="w-8 h-8 sm:w-8 sm:h-8 p-0 border-none rounded-full bg-transparent cursor-pointer touch-manipulation"
+                        aria-label="Bubble color"
                       />
                       <span className="text-[9px] sm:text-[10px] text-neutral-400">Color</span>
                     </div>
                     <div className="flex flex-col items-center gap-1.5">
-                      <input 
-                        type="range" 
-                        min={8} 
-                        max={32} 
-                        value={state.bubbleRadius} 
-                        onChange={e => dispatch({ type: 'SET', payload: { bubbleRadius: Number(e.target.value) } })} 
-                        className="w-24 sm:w-24 accent-neutral-700 touch-manipulation" 
-                        aria-label="Bubble border radius" 
+                      <input
+                        type="range"
+                        min={8}
+                        max={32}
+                        value={state.bubbleRadius}
+                        onChange={(e) =>
+                          dispatch({
+                            type: 'SET',
+                            payload: { bubbleRadius: Number(e.target.value) },
+                          })
+                        }
+                        className="w-24 sm:w-24 accent-neutral-700 touch-manipulation"
+                        aria-label="Bubble border radius"
                       />
-                      <span className="text-[9px] sm:text-[10px] text-neutral-400">{state.bubbleRadius}px</span>
+                      <span className="text-[9px] sm:text-[10px] text-neutral-400">
+                        {state.bubbleRadius}px
+                      </span>
                     </div>
                   </div>
                 </div>
                 {/* Font */}
                 <div>
                   <div className="text-xs font-semibold text-white mb-2">Font</div>
-                  <div className="text-xs text-neutral-400 mb-3">Choose a font for chat messages. Affects readability and style.</div>
+                  <div className="text-xs text-neutral-400 mb-3">
+                    Choose a font for chat messages. Affects readability and style.
+                  </div>
                   <select
                     value={state.fontFamily}
-                    onChange={e => dispatch({ type: 'SET', payload: { fontFamily: e.target.value } })}
+                    onChange={(e) =>
+                      dispatch({ type: 'SET', payload: { fontFamily: e.target.value } })
+                    }
                     className="w-full bg-neutral-900 border border-neutral-800 rounded-lg p-3 sm:p-2 text-xs sm:text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/10 transition-all touch-manipulation"
                     aria-label="Chat font"
                   >
@@ -1644,9 +2336,19 @@ function isHexColor(str) {
           : state.selectedTheme.bgImage
             ? `${state.chatBgColor}${state.chatBgColor ? ',' : ''} url(${state.selectedTheme.bgImage})`
             : state.chatBgColor,
-        backgroundSize: state.chatBgImage || state.selectedTheme.bgImage ? (state.chatBgImage || state.selectedTheme.bgImage).includes('data:image/svg') ? 'auto' : 'cover' : undefined,
+        backgroundSize:
+          state.chatBgImage || state.selectedTheme.bgImage
+            ? (state.chatBgImage || state.selectedTheme.bgImage).includes('data:image/svg')
+              ? 'auto'
+              : 'cover'
+            : undefined,
         backgroundPosition: state.chatBgImage || state.selectedTheme.bgImage ? 'center' : undefined,
-        backgroundRepeat: state.chatBgImage || state.selectedTheme.bgImage ? (state.chatBgImage || state.selectedTheme.bgImage).includes('data:image/svg') ? 'repeat' : 'no-repeat' : undefined,
+        backgroundRepeat:
+          state.chatBgImage || state.selectedTheme.bgImage
+            ? (state.chatBgImage || state.selectedTheme.bgImage).includes('data:image/svg')
+              ? 'repeat'
+              : 'no-repeat'
+            : undefined,
         fontFamily: state.fontFamily,
       }}
     >
@@ -1654,13 +2356,26 @@ function isHexColor(str) {
       <div className="flex items-center px-6 py-3 border-b border-neutral-800 bg-neutral-950/95">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 bg-neutral-800 rounded-lg flex items-center justify-center">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-400">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="text-neutral-400"
+            >
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
             </svg>
           </div>
-          <div className='flex items-center gap-4'>
+          <div className="flex items-center gap-4">
             <h3 className="text-xl font-bold text-white">Chat</h3>
-            <p className="text-neutral-400 text-xs">{clients.length} participant{clients.length !== 1 ? 's' : ''}</p>
+            <p className="text-neutral-400 text-xs">
+              {clients.length} participant{clients.length !== 1 ? 's' : ''}
+            </p>
           </div>
         </div>
         {/* Add a settings button to the header */}
@@ -1684,7 +2399,6 @@ function isHexColor(str) {
           displayName={displayName}
           clients={clients}
           mobile={mobile}
-          messageAnimations={messageAnimations}
           handleContextMenu={memoizedHandleContextMenu}
           ListComponent={List}
           scrollContainerRef={scrollContainerRef}
@@ -1700,7 +2414,11 @@ function isHexColor(str) {
           highlightMentions={memoizedHighlightMentions}
         />
       ) : (
-        <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-4 space-y-2 pb-36 scrollable-container" tabIndex="0">
+        <div
+          ref={scrollContainerRef}
+          className="flex-1 overflow-y-auto p-4 space-y-2 pb-36 scrollable-container"
+          tabIndex="0"
+        >
           {messages.map((msg, i) => {
             const isOwn = msg.sender === clientId;
             const groupStart = isGroupStart(messages, i);
@@ -1708,9 +2426,35 @@ function isHexColor(str) {
             return (
               <div
                 key={msg.messageId || `${msg.sender}-${msg.timestamp}-${i}`}
-                className={`flex items-end transition-all duration-300 group ${isOwn ? 'justify-end' : 'justify-start'} enhanced-bubble-appear ${mobile ? '' : messageAnimations[i]?.animationClass || ''} ${groupStart ? 'mt-3' : ''} ${groupEnd ? 'mb-2' : ''} ${mobile ? 'no-select-mobile' : ''}`}
+                className={`relative flex items-end transition-all duration-300 group ${isOwn ? 'justify-end' : 'justify-start'} enhanced-bubble-appear ${mobile ? '' : ''} ${groupStart ? 'mt-3' : ''} ${groupEnd ? 'mb-4' : 'mb-2'} ${mobile ? 'no-select-mobile' : ''}`}
                 onContextMenu={(e) => memoizedHandleContextMenu(e, msg)}
+                onTouchStart={mobile ? (e) => handleBubbleTouchStart(e, msg) : undefined}
+                onTouchEnd={mobile ? handleBubbleTouchEnd : undefined}
               >
+                {/* Emoji row above bubble if active */}
+                {(state.emojiRowMsgId === msg.messageId ||
+                  (emojiRowExiting && state.emojiRowMsgId === msg.messageId)) && (
+                  <div
+                    className={`flex gap-2 mb-1 px-2 py-1 rounded-full bg-neutral-900/90 shadow z-20 absolute -top-12 ${isOwn ? 'right-0' : 'left-0'} w-max transition-all duration-200
+                      ${emojiRowExiting ? 'animate-fade-scale-out' : 'animate-fade-scale-in'}
+                    `}
+                  >
+                    {EMOJIS.slice(0, 8).map((emoji, idx) => (
+                      <button
+                        key={emoji}
+                        className="w-8 h-8 flex items-center justify-center text-xl transition-colors transition-shadow duration-200 focus:outline-none rounded-full bg-neutral-800 hover:bg-white hover:text-black hover:shadow-lg emoji-pop-in"
+                        onClick={() => handleEmojiReaction(emoji, msg)}
+                        tabIndex={0}
+                        style={{
+                          animationDelay: `${idx * 40}ms`,
+                        }}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
                 {!isOwn && groupStart && (
                   <div className="mr-2 flex-shrink-0">
                     <div className="w-8 h-8 bg-neutral-800 rounded-full flex items-center justify-center border border-neutral-700">
@@ -1720,56 +2464,122 @@ function isHexColor(str) {
                 )}
                 <div className={`max-w-xs lg:max-w-md ${isOwn ? 'order-2' : 'order-1'}`}>
                   {msg.reaction ? (
-                    <div className={`flex items-center gap-2 ${isOwn ? 'justify-end' : 'justify-start'}`}>
+                    <div
+                      className={`flex items-center gap-2 ${isOwn ? 'justify-end' : 'justify-start'}`}
+                    >
                       <div className="bg-neutral-800 rounded-lg px-3 py-2 text-lg">
                         {msg.reaction}
                       </div>
                     </div>
                   ) : (
-                    <div
-                      className={`inline-block max-w-[80vw] md:max-w-md rounded-xl p-1 px-2 pt-0 shadow-sm transition-all duration-200 group-hover:scale-[1.02] relative`}
-                      style={{
-                        background: state.bubbleColor,
-                        color: state.selectedTheme.bubbleText || '#fff',
-                        borderRadius: state.bubbleRadius,
-                        fontFamily: state.fontFamily,
-                      }}
-                    >
-                      <div className="flex items-center gap-2 mb-1">
-                      </div>
-                      <div className="flex flex-row items-end w-full">
-                        {msg.deleted || !msg.message ? (
-                          <span className="flex-1 text-sm italic text-neutral-500 bg-neutral-800/80 rounded-lg px-3 py-2 select-none cursor-default">
-                            <svg className="inline-block mr-1 mb-0.5" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
-                            This message was deleted
-                          </span>
-                        ) : (
-                          <span className={`flex-1 text-base break-words ${msg.message && msg.message.includes('@' + displayName) ? 'bg-yellow-400/20' : ''}`} style={{ color: state.selectedTheme.bubbleText || '#fff' }}>
-                            {memoizedHighlightMentions(msg.message, clients, displayName)}
-                            {msg.edited && <span className="text-xs text-neutral-400 ml-1">(edited)</span>}
-                          </span>
-                        )}
-                        <span className="flex items-end gap-1 text-[11px] opacity-70 ml-4 relative top-[4px]">
-                          <span>
-                            {msg.timestamp
-                              ? new Date(msg.timestamp).toLocaleTimeString([], {
-                                  hour: '2-digit',
-                                  minute: '2-digit',
-                                  hour12: true
-                                })
-                              : 'now'}
-                          </span>
-                          {/* Delivery status for own messages */}
-                          {msg.sender === clientId && (
-                            msg.read ? (
-                              <span title="Read" className=""><DoubleCheckBlue /></span>
-                            ) : msg.delivered ? (
-                              <span title="Delivered" className=""><DoubleCheckGray /></span>
-                            ) : (
-                              <span title="Sent" className=""><SingleCheck /></span>
-                            )
+                    <div className="flex flex-col">
+                      <div
+                        className={`inline-block max-w-[80vw] md:max-w-md rounded-xl p-1 px-2 pt-0 shadow-sm transition-all duration-200 group-hover:scale-[1.02] relative${messageReactions.get(msg.messageId)?.length > 0 ? ' mb-5' : ''}`}
+                        style={{
+                          background: state.bubbleColor,
+                          color: state.selectedTheme.bubbleText || '#fff',
+                          borderRadius: state.bubbleRadius,
+                          fontFamily: state.fontFamily,
+                          position: 'relative',
+                        }}
+                      >
+                        <div className="flex items-center gap-2 mb-1"></div>
+                        <div className="flex flex-row items-end w-full">
+                          {msg.deleted || !msg.message ? (
+                            <span className="flex-1 text-sm italic text-neutral-500 bg-neutral-800/80 rounded-lg px-3 py-2 select-none cursor-default">
+                              <svg
+                                className="inline-block mr-1 mb-0.5"
+                                width="16"
+                                height="16"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                <path d="M3 6h18" />
+                                <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                                <line x1="10" y1="11" x2="10" y2="17" />
+                                <line x1="14" y1="11" x2="14" y2="17" />
+                              </svg>
+                              This message was deleted
+                            </span>
+                          ) : (
+                            <span
+                              className={`flex-1 text-base break-words ${msg.message && msg.message.includes('@' + displayName) ? 'bg-yellow-400/20' : ''}`}
+                              style={{ color: state.selectedTheme.bubbleText || '#fff' }}
+                            >
+                              {memoizedHighlightMentions(msg.message, clients, displayName)}
+                              {msg.edited && (
+                                <span className="text-xs text-neutral-400 ml-1">(edited)</span>
+                              )}
+                            </span>
                           )}
-                        </span>
+                          <span className="flex items-end gap-1 text-[11px] opacity-70 ml-4 relative top-[4px]">
+                            <span>
+                              {msg.timestamp
+                                ? new Date(msg.timestamp).toLocaleTimeString([], {
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                    hour12: true,
+                                  })
+                                : 'now'}
+                            </span>
+                            {/* Delivery status for own messages */}
+                            {msg.sender === clientId &&
+                              (msg.read ? (
+                                <span title="Read" className="">
+                                  <DoubleCheckBlue />
+                                </span>
+                              ) : msg.delivered ? (
+                                <span title="Delivered" className="">
+                                  <DoubleCheckGray />
+                                </span>
+                              ) : (
+                                <span title="Sent" className="">
+                                  <SingleCheck />
+                                </span>
+                              ))}
+                          </span>
+                        </div>
+
+                        {/* Emoji reactions display with absolute positioning at bottom right of bubble */}
+                        {messageReactions.get(msg.messageId) &&
+                          messageReactions.get(msg.messageId).length > 0 && (
+                            <div
+                              className={`absolute bottom-[-25px] right-0 flex gap-0.5 px-0.5 py-0.5 rounded-full bg-neutral-900/95 backdrop-blur-sm shadow-lg border border-neutral-800/50 w-max transition-all duration-200 animate-fade-scale-in z-10`}
+                            >
+                              {messageReactions.get(msg.messageId).map((reaction, idx) => {
+                                const hasReacted = reaction.users.includes(clientId);
+                                return (
+                                  <button
+                                    key={reaction.emoji}
+                                    className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs transition-all duration-200 hover:scale-110 focus:outline-none emoji-reaction-button emoji-pop-in ${
+                                      hasReacted
+                                        ? 'bg-primary/20 text-primary border border-primary/30'
+                                        : 'bg-neutral-800/80 text-neutral-300 hover:bg-neutral-700/80'
+                                    }`}
+                                    onClick={() =>
+                                      hasReacted
+                                        ? handleRemoveEmojiReaction(reaction.emoji, msg)
+                                        : handleEmojiReaction(reaction.emoji, msg)
+                                    }
+                                    title={`${reaction.count} reaction${reaction.count !== 1 ? 's' : ''}${hasReacted ? ' - Click to remove' : ' - Click to add'}`}
+                                    style={{
+                                      animationDelay: `${idx * 40}ms`,
+                                    }}
+                                  >
+                                    <span className="text-sm">{reaction.emoji}</span>
+                                    {reaction.count > 1 && (
+                                      <span className="text-xs font-medium">{reaction.count}</span>
+                                    )}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
                       </div>
                     </div>
                   )}
@@ -1794,8 +2604,18 @@ function isHexColor(str) {
           New messages ↓
         </button>
       )}
+      {/* Typing indicator (now always above input) */}
+      {state.typingUsers.length > 0 && (
+        <div className="text-xs text-neutral-400 mt-1 mb-1 px-4" aria-live="polite">
+          {state.typingUsers.map((u) => u.displayName || u.clientId).join(', ')}{' '}
+          {state.typingUsers.length === 1 ? 'is' : 'are'} typing...
+        </div>
+      )}
       {/* Input Area */}
-      <form onSubmit={handleSubmit} className="flex items-center gap-2 p-4 bg-neutral-950 border-t border-neutral-800 sticky bottom-0 z-10 w-full">
+      <form
+        onSubmit={handleSubmit}
+        className="flex items-center gap-2 p-4 bg-neutral-950 border-t border-neutral-800 sticky bottom-0 z-10 w-full"
+      >
         <div className="relative w-full">
           {/* Dropdown menu for plus icon, above the input area */}
           {state.showPlusMenu && !state.editingId && (
@@ -1823,7 +2643,12 @@ function isHexColor(str) {
                 className="flex items-center justify-center w-9 h-9 bg-neutral-800 rounded-full transition-all duration-200 focus:outline-none relative"
                 style={{ minWidth: 36, minHeight: 36 }}
                 ref={plusButtonRef}
-                onClick={state.editingId ? handleEditCancel : () => dispatch({ type: 'SET', payload: { showPlusMenu: !state.showPlusMenu } })}
+                onClick={
+                  state.editingId
+                    ? handleEditCancel
+                    : () =>
+                        dispatch({ type: 'SET', payload: { showPlusMenu: !state.showPlusMenu } })
+                }
                 tabIndex={0}
                 aria-label={state.editingId ? 'Cancel editing' : 'Add file'}
               >
@@ -1859,7 +2684,17 @@ function isHexColor(str) {
                 </>
               ) : (
                 <>
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
                     <line x1="22" y1="2" x2="11" y2="13"></line>
                     <polygon points="22,2 15,22 11,13 2,9 22,2"></polygon>
                   </svg>
@@ -1870,16 +2705,13 @@ function isHexColor(str) {
           </div>
         </div>
       </form>
-      {/* Typing indicator */}
-      {state.typingUsers.length > 0 && (
-        <div className="text-xs text-neutral-400 mt-1" aria-live="polite">
-          {state.typingUsers.map((u) => u.displayName || u.clientId).join(', ')} {state.typingUsers.length === 1 ? 'is' : 'are'} typing...
-        </div>
-      )}
       {/* Floating copy feedback popup (desktop: absolute in chat section, mobile: fixed) */}
-      {state.copyFeedback && (
-        mobile ? (
-          <div className="fixed left-1/2 -translate-x-1/2 z-50 mb-28 sm:mb-24" style={{ bottom: 32 }}>
+      {state.copyFeedback &&
+        (mobile ? (
+          <div
+            className="fixed left-1/2 -translate-x-1/2 z-50 mb-28 sm:mb-24"
+            style={{ bottom: 32 }}
+          >
             <div className="flex items-center gap-2 px-4 py-2 rounded-full shadow-xl border border-neutral-800 bg-neutral-900/90 backdrop-blur-md animate-bottom-up-scale-in font-semibold text-xs text-white min-w-[120px] justify-center">
               <svg
                 width="18"
@@ -1888,7 +2720,11 @@ function isHexColor(str) {
                 fill="none"
                 xmlns="http://www.w3.org/2000/svg"
                 className="inline align-bottom text-green-400 animate-draw-tick"
-                style={{ strokeDasharray: 24, strokeDashoffset: 0, animation: 'draw-tick 0.5s cubic-bezier(0.4,0,0.2,1) forwards' }}
+                style={{
+                  strokeDasharray: 24,
+                  strokeDashoffset: 0,
+                  animation: 'draw-tick 0.5s cubic-bezier(0.4,0,0.2,1) forwards',
+                }}
               >
                 <path
                   d="M5 9.5L8 12.5L13 7.5"
@@ -1912,7 +2748,11 @@ function isHexColor(str) {
                 fill="none"
                 xmlns="http://www.w3.org/2000/svg"
                 className="inline align-bottom text-green-400 animate-draw-tick"
-                style={{ strokeDasharray: 24, strokeDashoffset: 0, animation: 'draw-tick 0.5s cubic-bezier(0.4,0,0.2,1) forwards' }}
+                style={{
+                  strokeDasharray: 24,
+                  strokeDashoffset: 0,
+                  animation: 'draw-tick 0.5s cubic-bezier(0.4,0,0.2,1) forwards',
+                }}
               >
                 <path
                   d="M5 9.5L8 12.5L13 7.5"
@@ -1926,8 +2766,7 @@ function isHexColor(str) {
               <span className="tracking-tight font-medium">Copied</span>
             </div>
           </div>
-        )
-      )}
+        ))}
       <style>
         {`
           @keyframes draw-tick {
@@ -1940,6 +2779,23 @@ function isHexColor(str) {
             stroke-dashoffset: 24;
             animation: draw-tick 0.5s cubic-bezier(0.4,0,0.2,1) forwards;
           }
+          @keyframes emoji-pop-in {
+            0% {
+              opacity: 0;
+              transform: scale(0.5) translateY(10px);
+            }
+            60% {
+              opacity: 1;
+              transform: scale(1.15) translateY(-2px);
+            }
+            100% {
+              opacity: 1;
+              transform: scale(1) translateY(0);
+            }
+          }
+          .emoji-pop-in {
+            animation: emoji-pop-in 0.32s cubic-bezier(0.4,0,0.2,1) both;
+          }
         `}
       </style>
       {/* Report Modal */}
@@ -1951,96 +2807,149 @@ function isHexColor(str) {
           aria-label="Report Message"
           tabIndex={-1}
           ref={reportModalRef}
-          onClick={e => { if (e.target === e.currentTarget) handleReportCancel(); }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) handleReportCancel();
+          }}
         >
-          <div className="bg-black/95 border border-white/10 rounded-2xl p-7 w-full max-w-sm shadow-2xl flex flex-col gap-5 backdrop-blur-md transition-all duration-200" tabIndex={0}>
+          <div
+            className="bg-black/95 border border-white/10 rounded-2xl p-7 w-full max-w-sm shadow-2xl flex flex-col gap-5 backdrop-blur-md transition-all duration-200"
+            tabIndex={0}
+          >
             <h4 className="text-xl font-bold text-white mb-1 tracking-tight">Report Message</h4>
-            <p className="text-sm text-neutral-400 mb-2">Let us know why you think this message is inappropriate. Your report is anonymous.</p>
+            <p className="text-sm text-neutral-400 mb-2">
+              Let us know why you think this message is inappropriate. Your report is anonymous.
+            </p>
             <textarea
               className="w-full bg-neutral-900 border border-white/10 rounded-lg p-3 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-white/30 transition-all min-h-[80px] resize-none"
               rows={3}
               placeholder="Add a reason (e.g. spam, abuse, etc) — optional"
               value={state.reportReason}
-              onChange={e => dispatch({ type: 'SET', payload: { reportReason: e.target.value } })}
+              onChange={(e) => dispatch({ type: 'SET', payload: { reportReason: e.target.value } })}
               maxLength={200}
               autoFocus
             />
-            {state.reportFeedback && <div className="text-xs text-green-400 font-medium text-center py-1">{state.reportFeedback}</div>}
+            {state.reportFeedback && (
+              <div className="text-xs text-green-400 font-medium text-center py-1">
+                {state.reportFeedback}
+              </div>
+            )}
             <div className="flex gap-2 justify-end mt-2">
-              <button className="px-4 py-2 text-xs font-semibold rounded-lg bg-neutral-800 text-white hover:bg-neutral-700 focus:bg-neutral-700 focus:outline-none transition-all" onClick={handleReportCancel}>Cancel</button>
-              <button className="px-4 py-2 text-xs font-semibold rounded-lg bg-white text-black hover:bg-neutral-200 focus:bg-neutral-300 focus:outline-none transition-all border border-white/10" onClick={() => memoizedHandleReport(messages.find(m => m.messageId === state.reportingId))} disabled={!!state.reportFeedback}>Back</button>
-              <button className="px-4 py-2 text-xs font-semibold rounded-lg bg-red-500 text-white hover:bg-red-400 focus:bg-red-600 focus:outline-none transition-all" onClick={() => handleReportSubmit(messages.find(m => m.messageId === state.reportingId))} disabled={!!state.reportFeedback}>Report</button>
+              <button
+                className="px-4 py-2 text-xs font-semibold rounded-lg bg-neutral-800 text-white hover:bg-neutral-700 focus:bg-neutral-700 focus:outline-none transition-all"
+                onClick={handleReportCancel}
+              >
+                Cancel
+              </button>
+              <button
+                className="px-4 py-2 text-xs font-semibold rounded-lg bg-white text-black hover:bg-neutral-200 focus:bg-neutral-300 focus:outline-none transition-all border border-white/10"
+                onClick={() =>
+                  memoizedHandleReport(messages.find((m) => m.messageId === state.reportingId))
+                }
+                disabled={!!state.reportFeedback}
+              >
+                Back
+              </button>
+              <button
+                className="px-4 py-2 text-xs font-semibold rounded-lg bg-red-500 text-white hover:bg-red-400 focus:bg-red-600 focus:outline-none transition-all"
+                onClick={() =>
+                  handleReportSubmit(messages.find((m) => m.messageId === state.reportingId))
+                }
+                disabled={!!state.reportFeedback}
+              >
+                Report
+              </button>
             </div>
           </div>
         </div>
       )}
       {state.contextMenu.visible && state.contextMenu.msg && (
-          <>
+        <>
           <div
-            ref={el => { contextMenuRef.current = el; contextMenuTrapRef.current = el; }}
+            ref={(el) => {
+              contextMenuRef.current = el;
+              contextMenuTrapRef.current = el;
+            }}
             className={`fixed z-50 min-w-[140px] max-w-[220px] bg-neutral-900/95 border border-neutral-800 rounded-xl shadow-2xl py-2 px-0 text-sm text-white backdrop-blur-md transition-all duration-200 ease-out ${state.menuExiting ? 'animate-fade-scale-out' : 'animate-fade-scale-in'}`}
-            style={{ top: state.contextMenu.y, left: state.contextMenu.x + 50, boxShadow: '0 8px 32px 0 rgba(0,0,0,0.18), 0 1.5px 6px 0 rgba(0,0,0,0.10)' }}
+            style={{
+              top: state.contextMenu.y,
+              left: state.contextMenu.x + 50,
+              boxShadow: '0 8px 32px 0 rgba(0,0,0,0.18), 0 1.5px 6px 0 rgba(0,0,0,0.10)',
+            }}
             role="menu"
             aria-label="Message options"
             tabIndex={-1}
-            onKeyDown={e => { if (e.key === 'Escape') dispatch({ type: 'SET', payload: { menuExiting: true } }); }}
-            onClick={e => e.stopPropagation()}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') dispatch({ type: 'SET', payload: { menuExiting: true } });
+            }}
+            onClick={(e) => e.stopPropagation()}
           >
-            {state.contextMenu.msg.sender === clientId && !state.contextMenu.msg.reaction && isDeletable(state.contextMenu.msg) && (
-              <button
-                className="block w-full text-left px-4 py-2 font-medium hover:bg-neutral-800/80 focus:bg-neutral-800/90 focus:outline-none transition-colors duration-150 rounded-md flex items-center justify-between gap-2"
-                onClick={() => { 
-                  dispatch({ type: 'SET', payload: { menuExiting: true } }); 
-                  setTimeout(() => {
-                    memoizedHandleEdit(state.contextMenu.msg);
-                    // Focus the input after the edit state is set
+            {state.contextMenu.msg.sender === clientId &&
+              !state.contextMenu.msg.reaction &&
+              isDeletable(state.contextMenu.msg) && (
+                <button
+                  className="block w-full text-left px-4 py-2 font-medium hover:bg-neutral-800/80 focus:bg-neutral-800/90 focus:outline-none transition-colors duration-150 rounded-md flex items-center justify-between gap-2"
+                  onClick={() => {
+                    dispatch({ type: 'SET', payload: { menuExiting: true, emojiRowMsgId: null } });
                     setTimeout(() => {
-                      chatInputRef.current?.focus();
-                    }, 50);
-                  }, 160); 
-                }}
-              >
-                <span>Edit</span>
-                <FiEdit size={16} />
-              </button>
-            )}
+                      memoizedHandleEdit(state.contextMenu.msg);
+                      // Focus the input after the edit state is set
+                      setTimeout(() => {
+                        chatInputRef.current?.focus();
+                      }, 50);
+                    }, 160);
+                  }}
+                >
+                  <span>Edit</span>
+                  <FiEdit size={16} />
+                </button>
+              )}
 
             {!state.contextMenu.msg.reaction && (
               <button
                 className="block w-full text-left px-4 py-2 hover:bg-neutral-800 flex items-center justify-between gap-2"
-                onClick={() => { dispatch({ type: 'SET', payload: { menuExiting: true } }); setTimeout(() => memoizedHandleReport(state.contextMenu.msg), 160); }}
+                onClick={() => {
+                  dispatch({ type: 'SET', payload: { menuExiting: true, emojiRowMsgId: null } });
+                  setTimeout(() => memoizedHandleReport(state.contextMenu.msg), 160);
+                }}
               >
                 <span>Report</span>
                 <FiFlag size={16} />
               </button>
             )}
             {/* Copy option (always available if not a reaction and not deleted) */}
-            {!state.contextMenu.msg.reaction && !state.contextMenu.msg.deleted && state.contextMenu.msg.message && (
-              <button
-                className="block w-full text-left px-4 py-2 hover:bg-neutral-800 flex items-center justify-between gap-2"
-                onClick={() => {
-                  memoizedHandleCopy(state.contextMenu.msg);
-                  // Move focus away from button to allow feedback to show
-                  setTimeout(() => {
-                    if (contextMenuRef.current) {
-                      contextMenuRef.current.focus?.();
-                    }
-                  }, 0);
-                }}
-              >
-                <span>Copy</span>
-                <FiCopy size={16} />
-              </button>
-            )}
-            {state.contextMenu.msg.sender === clientId && !state.contextMenu.msg.reaction && isDeletable(state.contextMenu.msg) && (
-              <button
-                className="block w-full text-left px-4 py-2 hover:bg-neutral-800 flex items-center justify-between gap-2 text-red-500"
-                onClick={() => { dispatch({ type: 'SET', payload: { menuExiting: true } }); setTimeout(() => memoizedHandleDelete(state.contextMenu.msg), 160); }}
-              >
-                <span className="text-red-300">Delete</span>
-                <FiTrash2 size={16} className="text-red-300" />
-              </button>
-            )}
+            {!state.contextMenu.msg.reaction &&
+              !state.contextMenu.msg.deleted &&
+              state.contextMenu.msg.message && (
+                <button
+                  className="block w-full text-left px-4 py-2 hover:bg-neutral-800 flex items-center justify-between gap-2"
+                  onClick={() => {
+                    dispatch({ type: 'SET', payload: { menuExiting: true, emojiRowMsgId: null } });
+                    memoizedHandleCopy(state.contextMenu.msg);
+                    setTimeout(() => {
+                      if (contextMenuRef.current) {
+                        contextMenuRef.current.focus?.();
+                      }
+                    }, 0);
+                  }}
+                >
+                  <span>Copy</span>
+                  <FiCopy size={16} />
+                </button>
+              )}
+            {state.contextMenu.msg.sender === clientId &&
+              !state.contextMenu.msg.reaction &&
+              isDeletable(state.contextMenu.msg) && (
+                <button
+                  className="block w-full text-left px-4 py-2 hover:bg-neutral-800 flex items-center justify-between gap-2 text-red-500"
+                  onClick={() => {
+                    dispatch({ type: 'SET', payload: { menuExiting: true, emojiRowMsgId: null } });
+                    setTimeout(() => memoizedHandleDelete(state.contextMenu.msg), 160);
+                  }}
+                >
+                  <span className="text-red-300">Delete</span>
+                  <FiTrash2 size={16} className="text-red-300" />
+                </button>
+              )}
           </div>
         </>
       )}
@@ -2052,39 +2961,74 @@ function isHexColor(str) {
           aria-label="Delete Message Confirmation"
           tabIndex={-1}
           ref={deleteModalRef}
-          onClick={e => { if (e.target === e.currentTarget) cancelDelete(); }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget) cancelDelete();
+          }}
         >
-          <div className="bg-neutral-900/95 border border-neutral-800 rounded-xl px-6 py-5 w-full max-w-xs shadow-xl flex flex-col items-center gap-4 backdrop-blur-md transition-all duration-200 animate-scale-in" tabIndex={0}>
+          <div
+            className="bg-neutral-900/95 border border-neutral-800 rounded-xl px-6 py-5 w-full max-w-xs shadow-xl flex flex-col items-center gap-4 backdrop-blur-md transition-all duration-200 animate-scale-in"
+            tabIndex={0}
+          >
             <div className="flex items-center justify-center w-12 h-12 rounded-full bg-red-500/10 mb-1">
-              <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="text-red-500">
-                <path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="28"
+                height="28"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="text-red-500"
+              >
+                <path d="M3 6h18" />
+                <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                <line x1="10" y1="11" x2="10" y2="17" />
+                <line x1="14" y1="11" x2="14" y2="17" />
               </svg>
             </div>
-            <div className="text-base text-white font-semibold text-center mb-1">Delete this message?</div>
+            <div className="text-base text-white font-semibold text-center mb-1">
+              Delete this message?
+            </div>
             <div className="flex gap-2 w-full mt-1">
-              <button className="flex-1 py-2 text-sm font-medium rounded-lg bg-neutral-800 text-white hover:bg-neutral-700 focus:bg-neutral-700 focus:outline-none transition-all" onClick={cancelDelete}>Cancel</button>
-              <button className="flex-1 py-2 text-sm font-medium rounded-lg bg-red-500 text-white hover:bg-red-400 focus:bg-red-600 focus:outline-none transition-all" onClick={confirmDelete}>Delete</button>
+              <button
+                className="flex-1 py-2 text-sm font-medium rounded-lg bg-neutral-800 text-white hover:bg-neutral-700 focus:bg-neutral-700 focus:outline-none transition-all"
+                onClick={cancelDelete}
+              >
+                Cancel
+              </button>
+              <button
+                className="flex-1 py-2 text-sm font-medium rounded-lg bg-red-500 text-white hover:bg-red-400 focus:bg-red-600 focus:outline-none transition-all"
+                onClick={confirmDelete}
+              >
+                Delete
+              </button>
             </div>
           </div>
         </div>
       )}
       {state.showChatSettings && (
-        <div className={`z-40 flex items-center justify-center bg-black/70 animate-fade-scale-in ${
-          mobile 
-            ? 'fixed inset-0 p-2' 
-            : 'absolute inset-0'
-        }`}>
-          <div className={`bg-neutral-950 rounded-xl shadow-none flex flex-col gap-0 backdrop-blur-md transition-all duration-200 overflow-hidden relative border border-neutral-800 ${
-            mobile
-              ? 'w-full max-w-sm h-[90vh] max-h-[600px]'
-              : 'w-full max-w-sm sm:max-w-md md:max-w-lg lg:max-w-xl mx-2 sm:mx-4 md:mx-8'
-          }`} style={{ maxHeight: mobile ? '90vh' : '90vh' }}>
+        <div
+          className={`z-40 flex items-center justify-center bg-black/70 animate-fade-scale-in ${
+            mobile ? 'fixed inset-0 p-2' : 'absolute inset-0'
+          }`}
+        >
+          <div
+            className={`bg-neutral-950 rounded-xl shadow-none flex flex-col gap-0 backdrop-blur-md transition-all duration-200 overflow-hidden relative border border-neutral-800 ${
+              mobile
+                ? 'w-full max-w-sm h-[90vh] max-h-[600px]'
+                : 'w-full max-w-sm sm:max-w-md md:max-w-lg lg:max-w-xl mx-2 sm:mx-4 md:mx-8'
+            }`}
+            style={{ maxHeight: mobile ? '90vh' : '90vh' }}
+          >
             {/* Header */}
             <div className="flex items-center justify-between px-4 sm:px-5 py-4 sm:py-4 border-b border-neutral-800 bg-neutral-950 flex-shrink-0">
               <span className="text-base sm:text-lg font-semibold text-white">Chat Appearance</span>
-              <button 
-                className="p-2 rounded-full hover:bg-neutral-800 focus:bg-neutral-800 transition-colors touch-manipulation" 
-                onClick={() => dispatch({ type: 'SET', payload: { showChatSettings: false } })} 
+              <button
+                className="p-2 rounded-full hover:bg-neutral-800 focus:bg-neutral-800 transition-colors touch-manipulation"
+                onClick={() => dispatch({ type: 'SET', payload: { showChatSettings: false } })}
                 title="Close"
                 aria-label="Close settings"
               >
@@ -2094,8 +3038,13 @@ function isHexColor(str) {
             {/* Live Preview */}
             <div className="px-4 sm:px-5 pt-4 sm:pt-5 pb-3 border-b border-neutral-800 flex-shrink-0">
               <div className="mb-2 text-xs text-neutral-400 font-medium">Live Preview</div>
-              <div className="flex items-end gap-2 min-h-[44px] sm:min-h-[48px]" style={{ fontFamily: state.fontFamily }}>
-                <div className="rounded-full w-7 h-7 sm:w-7 sm:h-7 bg-neutral-800 flex items-center justify-center text-white font-bold text-sm sm:text-base border border-neutral-700 flex-shrink-0">A</div>
+              <div
+                className="flex items-end gap-2 min-h-[44px] sm:min-h-[48px]"
+                style={{ fontFamily: state.fontFamily }}
+              >
+                <div className="rounded-full w-7 h-7 sm:w-7 sm:h-7 bg-neutral-800 flex items-center justify-center text-white font-bold text-sm sm:text-base border border-neutral-700 flex-shrink-0">
+                  A
+                </div>
                 <div
                   className="px-3 sm:px-3 py-2 sm:py-2 text-white flex items-center gap-2"
                   style={{
@@ -2107,17 +3056,31 @@ function isHexColor(str) {
                   }}
                 >
                   <span className="text-xs sm:text-sm truncate">Sample message</span>
-                  <span className="text-[10px] sm:text-xs text-neutral-400 ml-2 flex-shrink-0">12:34</span>
+                  <span className="text-[10px] sm:text-xs text-neutral-400 ml-2 flex-shrink-0">
+                    12:34
+                  </span>
                 </div>
               </div>
               {/* --- CONTRAST WARNINGS --- */}
               {(bgBubbleContrast < 4.5 || bubbleTextContrast < 4.5) && (
                 <div className="mt-3 text-xs text-yellow-400 font-semibold flex items-start gap-2">
-                  <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" className="inline align-top mt-0.5 flex-shrink-0">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01M21 12c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9 9 4.03 9 9z"/>
+                  <svg
+                    width="16"
+                    height="16"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    className="inline align-top mt-0.5 flex-shrink-0"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth="2"
+                      d="M12 9v2m0 4h.01M21 12c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9 9 4.03 9 9z"
+                    />
                   </svg>
                   <span className="leading-relaxed">
-                    Warning: Your color choices may not be accessible. 
+                    Warning: Your color choices may not be accessible.
                     {bgBubbleContrast < 4.5 && 'Background and bubble contrast is too low. '}
                     {bubbleTextContrast < 4.5 && 'Bubble and text contrast is too low.'}
                   </span>
@@ -2125,15 +3088,27 @@ function isHexColor(str) {
               )}
             </div>
             {/* Settings Sections */}
-            <div className="flex flex-col gap-4 sm:gap-6 px-4 sm:px-5 py-4 sm:py-5 bg-neutral-950 overflow-y-auto flex-1 modal-content" style={{ maxHeight: mobile ? 'calc(90vh - 200px)' : 'calc(80vh - 120px)' }}>
+            <div
+              className="flex flex-col gap-4 sm:gap-6 px-4 sm:px-5 py-4 sm:py-5 bg-neutral-950 overflow-y-auto flex-1 modal-content"
+              style={{ maxHeight: mobile ? 'calc(90vh - 200px)' : 'calc(80vh - 120px)' }}
+            >
               {/* Themes */}
               <div>
                 <div className="text-xs font-semibold text-white mb-2">Themes</div>
-                <div className="text-xs text-neutral-400 mb-3">Quickly switch between preset color themes for chat background and bubbles.</div>
+                <div className="text-xs text-neutral-400 mb-3">
+                  Quickly switch between preset color themes for chat background and bubbles.
+                </div>
                 <div className="w-full theme-scroll-container">
-                  <div className="flex gap-3 sm:gap-3 mb-2 flex-nowrap pb-2" style={{ WebkitOverflowScrolling: 'touch', minWidth: 'max-content' }}>
+                  <div
+                    className="flex gap-3 sm:gap-3 mb-2 flex-nowrap pb-2"
+                    style={{ WebkitOverflowScrolling: 'touch', minWidth: 'max-content' }}
+                  >
                     {predefinedThemes.map((theme) => (
-                      <div key={theme.name} className="flex flex-col items-center gap-1.5 mb-2 flex-shrink-0" style={{ minWidth: mobile ? '52px' : '48px' }}>
+                      <div
+                        key={theme.name}
+                        className="flex flex-col items-center gap-1.5 mb-2 flex-shrink-0"
+                        style={{ minWidth: mobile ? '52px' : '48px' }}
+                      >
                         <button
                           className={`w-8 h-8 sm:w-7 sm:h-7 rounded-lg border-2 transition-all duration-150 focus:outline-none touch-manipulation ${state.chatBgColor === theme.bg && state.bubbleColor === theme.bubble ? 'border-white' : 'border-neutral-800'}`}
                           style={{ background: theme.bubble }}
@@ -2141,7 +3116,9 @@ function isHexColor(str) {
                           title={theme.name}
                           aria-label={theme.name}
                         />
-                        <span className="text-[9px] sm:text-[10px] text-neutral-400 text-center w-12 sm:w-12 truncate leading-tight">{theme.name}</span>
+                        <span className="text-[9px] sm:text-[10px] text-neutral-400 text-center w-12 sm:w-12 truncate leading-tight">
+                          {theme.name}
+                        </span>
                       </div>
                     ))}
                   </div>
@@ -2150,15 +3127,19 @@ function isHexColor(str) {
               {/* Background */}
               <div>
                 <div className="text-xs font-semibold text-white mb-2">Background</div>
-                <div className="text-xs text-neutral-400 mb-3">Customize the chat background color or add an image (JPG, PNG, GIF).</div>
+                <div className="text-xs text-neutral-400 mb-3">
+                  Customize the chat background color or add an image (JPG, PNG, GIF).
+                </div>
                 <div className="flex items-center gap-3 sm:gap-3 mb-2 flex-wrap">
                   <div className="flex flex-col items-center gap-1.5">
-                    <input 
-                      type="color" 
-                      value={state.chatBgColor} 
-                      onChange={e => dispatch({ type: 'SET', payload: { chatBgColor: e.target.value } })} 
-                      className="w-8 h-8 sm:w-8 sm:h-8 p-0 border-none rounded-full bg-transparent cursor-pointer touch-manipulation" 
-                      aria-label="Chat background color" 
+                    <input
+                      type="color"
+                      value={state.chatBgColor}
+                      onChange={(e) =>
+                        dispatch({ type: 'SET', payload: { chatBgColor: e.target.value } })
+                      }
+                      className="w-8 h-8 sm:w-8 sm:h-8 p-0 border-none rounded-full bg-transparent cursor-pointer touch-manipulation"
+                      aria-label="Chat background color"
                     />
                     <span className="text-[9px] sm:text-[10px] text-neutral-400">Color</span>
                   </div>
@@ -2166,20 +3147,29 @@ function isHexColor(str) {
                     <input
                       type="file"
                       accept="image/*"
-                      onChange={e => {
+                      onChange={(e) => {
                         dispatch({ type: 'SET', payload: { fileUploadError: '' } });
                         const file = e.target.files[0];
                         if (file) {
                           if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
-                            dispatch({ type: 'SET', payload: { fileUploadError: 'Only JPG, PNG, or GIF images are allowed.' } });
+                            dispatch({
+                              type: 'SET',
+                              payload: {
+                                fileUploadError: 'Only JPG, PNG, or GIF images are allowed.',
+                              },
+                            });
                             return;
                           }
                           if (file.size > MAX_IMAGE_SIZE_MB * 1024 * 1024) {
-                            dispatch({ type: 'SET', payload: { fileUploadError: 'Image is too large (max 3MB).' } });
+                            dispatch({
+                              type: 'SET',
+                              payload: { fileUploadError: 'Image is too large (max 3MB).' },
+                            });
                             return;
                           }
                           const reader = new FileReader();
-                          reader.onload = (ev) => dispatch({ type: 'SET', payload: { chatBgImage: ev.target.result } });
+                          reader.onload = (ev) =>
+                            dispatch({ type: 'SET', payload: { chatBgImage: ev.target.result } });
                           reader.readAsDataURL(file);
                         }
                       }}
@@ -2188,11 +3178,13 @@ function isHexColor(str) {
                     />
                     <span className="text-[9px] sm:text-[10px] text-neutral-400">Image</span>
                   </div>
-                  {state.fileUploadError && <div className="text-xs text-red-500 mt-2 w-full">{state.fileUploadError}</div>}
+                  {state.fileUploadError && (
+                    <div className="text-xs text-red-500 mt-2 w-full">{state.fileUploadError}</div>
+                  )}
                   {state.chatBgImage && (
-                    <button 
-                      className="ml-1 p-2 rounded-full bg-neutral-800 hover:bg-neutral-700 transition touch-manipulation" 
-                      onClick={() => dispatch({ type: 'SET', payload: { chatBgImage: '' } })} 
+                    <button
+                      className="ml-1 p-2 rounded-full bg-neutral-800 hover:bg-neutral-700 transition touch-manipulation"
+                      onClick={() => dispatch({ type: 'SET', payload: { chatBgImage: '' } })}
                       title="Remove image"
                       aria-label="Remove background image"
                     >
@@ -2202,47 +3194,65 @@ function isHexColor(str) {
                 </div>
                 {state.chatBgImage && (
                   <div className="relative mt-2">
-                    <img src={state.chatBgImage} alt="Chat background preview" className="rounded-lg max-h-14 sm:max-h-16 w-full object-cover border border-neutral-800" />
-                    <span className="absolute top-1 right-2 bg-black/70 text-[9px] sm:text-[10px] text-white px-2 py-0.5 rounded-full">Preview</span>
+                    <img
+                      src={state.chatBgImage}
+                      alt="Chat background preview"
+                      className="rounded-lg max-h-14 sm:max-h-16 w-full object-cover border border-neutral-800"
+                    />
+                    <span className="absolute top-1 right-2 bg-black/70 text-[9px] sm:text-[10px] text-white px-2 py-0.5 rounded-full">
+                      Preview
+                    </span>
                   </div>
                 )}
               </div>
               {/* Bubble Style */}
               <div>
                 <div className="text-xs font-semibold text-white mb-2">Bubble Style</div>
-                <div className="text-xs text-neutral-400 mb-3">Adjust the color and roundness of chat bubbles for better readability.</div>
+                <div className="text-xs text-neutral-400 mb-3">
+                  Adjust the color and roundness of chat bubbles for better readability.
+                </div>
                 <div className="flex items-center gap-3 sm:gap-3 flex-wrap">
                   <div className="flex flex-col items-center gap-1.5">
-                    <input 
-                      type="color" 
-                      value={state.bubbleColor} 
-                      onChange={e => dispatch({ type: 'SET', payload: { bubbleColor: e.target.value } })} 
-                      className="w-8 h-8 sm:w-8 sm:h-8 p-0 border-none rounded-full bg-transparent cursor-pointer touch-manipulation" 
-                      aria-label="Bubble color" 
+                    <input
+                      type="color"
+                      value={state.bubbleColor}
+                      onChange={(e) =>
+                        dispatch({ type: 'SET', payload: { bubbleColor: e.target.value } })
+                      }
+                      className="w-8 h-8 sm:w-8 sm:h-8 p-0 border-none rounded-full bg-transparent cursor-pointer touch-manipulation"
+                      aria-label="Bubble color"
                     />
                     <span className="text-[9px] sm:text-[10px] text-neutral-400">Color</span>
                   </div>
                   <div className="flex flex-col items-center gap-1.5">
-                    <input 
-                      type="range" 
-                      min={8} 
-                      max={32} 
-                      value={state.bubbleRadius} 
-                      onChange={e => dispatch({ type: 'SET', payload: { bubbleRadius: Number(e.target.value) } })} 
-                      className="w-24 sm:w-24 accent-neutral-700 touch-manipulation" 
-                      aria-label="Bubble border radius" 
+                    <input
+                      type="range"
+                      min={8}
+                      max={32}
+                      value={state.bubbleRadius}
+                      onChange={(e) =>
+                        dispatch({ type: 'SET', payload: { bubbleRadius: Number(e.target.value) } })
+                      }
+                      className="w-24 sm:w-24 accent-neutral-700 touch-manipulation"
+                      aria-label="Bubble border radius"
                     />
-                    <span className="text-[9px] sm:text-[10px] text-neutral-400">{state.bubbleRadius}px</span>
+                    <span className="text-[9px] sm:text-[10px] text-neutral-400">
+                      {state.bubbleRadius}px
+                    </span>
                   </div>
                 </div>
               </div>
               {/* Font */}
               <div>
                 <div className="text-xs font-semibold text-white mb-2">Font</div>
-                <div className="text-xs text-neutral-400 mb-3">Choose a font for chat messages. Affects readability and style.</div>
+                <div className="text-xs text-neutral-400 mb-3">
+                  Choose a font for chat messages. Affects readability and style.
+                </div>
                 <select
                   value={state.fontFamily}
-                  onChange={e => dispatch({ type: 'SET', payload: { fontFamily: e.target.value } })}
+                  onChange={(e) =>
+                    dispatch({ type: 'SET', payload: { fontFamily: e.target.value } })
+                  }
                   className="w-full bg-neutral-900 border border-neutral-800 rounded-lg p-3 sm:p-2 text-xs sm:text-sm text-white focus:outline-none focus:ring-2 focus:ring-white/10 transition-all touch-manipulation"
                   aria-label="Chat font"
                 >
