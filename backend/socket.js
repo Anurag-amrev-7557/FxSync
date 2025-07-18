@@ -52,6 +52,28 @@ function getSessionMessages(sessionId) {
   return session.messages;
 }
 
+// Add message reaction storage per session
+function getSessionReactions(sessionId) {
+  const session = getSession(sessionId);
+  if (!session) return null;
+  if (!session.reactions) session.reactions = new Map(); // messageId -> { emoji: { count: number, users: Set } }
+  return session.reactions;
+}
+
+// Helper to aggregate reactions for a message
+function aggregateReactions(reactions) {
+  if (!reactions) return [];
+  const aggregated = [];
+  for (const [emoji, data] of reactions.entries()) {
+    aggregated.push({
+      emoji,
+      count: data.count,
+      users: Array.from(data.users)
+    });
+  }
+  return aggregated.sort((a, b) => b.count - a.count); // Sort by count descending
+}
+
 // --- Validation helpers ---
 function isValidSessionId(id) {
   return typeof id === 'string' && id.length >= 1 && id.length <= 64 && /^[a-zA-Z0-9_-]+$/.test(id);
@@ -156,6 +178,21 @@ export function setupSocket(io) {
       
       // Send current queue to the joining client
       socket.emit('queue_update', getQueue(sessionId));
+      
+      // Send all reactions for the session to the joining client
+      const sessionReactions = getSessionReactions(sessionId);
+      if (sessionReactions && sessionReactions.size > 0) {
+        for (const [messageId, messageReactions] of sessionReactions.entries()) {
+          const aggregatedReactions = aggregateReactions(messageReactions);
+          if (aggregatedReactions.length > 0) {
+            socket.emit('message_reactions_updated', {
+              messageId,
+              reactions: aggregatedReactions,
+              joinedBy: clientId
+            });
+          }
+        }
+      }
       
       io.to(sessionId).emit('clients_update', getClients(sessionId));
       if (becameController) {
@@ -605,18 +642,165 @@ export function setupSocket(io) {
       callback && callback({ success: true });
     });
 
-    socket.on('reaction', ({ sessionId, reaction, sender } = {}) => {
-      if (!sessionId || !reaction || typeof reaction !== 'string') {
-        return;
+    // Replace the existing reaction handler with comprehensive emoji reaction system
+    socket.on('emoji_reaction', ({ sessionId, messageId, emoji, clientId, displayName } = {}, callback) => {
+      if (!sessionId || !messageId || !emoji || !clientId) {
+        return typeof callback === "function" && callback({ error: 'Missing required fields' });
       }
+      
       const session = getSession(sessionId);
       if (!session) {
-        return;
+        return typeof callback === "function" && callback({ error: 'Session not found' });
       }
-      log('Reaction in session', sessionId, ':', reaction);
-      const formattedReaction = formatReaction(sender || socket.id, reaction);
-     
-      io.to(sessionId).emit('reaction', formattedReaction);
+      
+      // Get or create reactions for this session
+      const sessionReactions = getSessionReactions(sessionId);
+      if (!sessionReactions) {
+        return typeof callback === "function" && callback({ error: 'Failed to get session reactions' });
+      }
+      
+      // Get or create reactions for this message
+      if (!sessionReactions.has(messageId)) {
+        sessionReactions.set(messageId, new Map());
+      }
+      const messageReactions = sessionReactions.get(messageId);
+      
+      // Get or create reaction data for this emoji
+      if (!messageReactions.has(emoji)) {
+        messageReactions.set(emoji, { count: 0, users: new Set() });
+      }
+      const reactionData = messageReactions.get(emoji);
+      
+      // Add user to this reaction
+      reactionData.users.add(clientId);
+      reactionData.count = reactionData.users.size;
+      
+      // Aggregate all reactions for this message
+      const aggregatedReactions = aggregateReactions(messageReactions);
+      
+      // Broadcast to all clients in the session
+      io.to(sessionId).emit('message_reactions_updated', {
+        messageId,
+        reactions: aggregatedReactions,
+        addedBy: clientId,
+        addedEmoji: emoji
+      });
+      
+      log('Emoji reaction added:', { sessionId, messageId, emoji, clientId, count: reactionData.count });
+      
+      if (typeof callback === "function") {
+        callback({ 
+          success: true, 
+          reactions: aggregatedReactions,
+          addedEmoji: emoji
+        });
+      }
+    });
+
+    // Remove emoji reaction
+    socket.on('remove_emoji_reaction', ({ sessionId, messageId, emoji, clientId } = {}, callback) => {
+      if (!sessionId || !messageId || !emoji || !clientId) {
+        return typeof callback === "function" && callback({ error: 'Missing required fields' });
+      }
+      
+      const session = getSession(sessionId);
+      if (!session) {
+        return typeof callback === "function" && callback({ error: 'Session not found' });
+      }
+      
+      const sessionReactions = getSessionReactions(sessionId);
+      if (!sessionReactions) {
+        return typeof callback === "function" && callback({ error: 'Failed to get session reactions' });
+      }
+      
+      const messageReactions = sessionReactions.get(messageId);
+      if (!messageReactions || !messageReactions.has(emoji)) {
+        return typeof callback === "function" && callback({ error: 'Reaction not found' });
+      }
+      
+      const reactionData = messageReactions.get(emoji);
+      reactionData.users.delete(clientId);
+      reactionData.count = reactionData.users.size;
+      
+      // Remove emoji if no users left
+      if (reactionData.count === 0) {
+        messageReactions.delete(emoji);
+      }
+      
+      // Remove message reactions if empty
+      if (messageReactions.size === 0) {
+        sessionReactions.delete(messageId);
+      }
+      
+      // Aggregate remaining reactions
+      const aggregatedReactions = aggregateReactions(messageReactions);
+      
+      // Broadcast to all clients
+      io.to(sessionId).emit('message_reactions_updated', {
+        messageId,
+        reactions: aggregatedReactions,
+        removedBy: clientId,
+        removedEmoji: emoji
+      });
+      
+      log('Emoji reaction removed:', { sessionId, messageId, emoji, clientId });
+      
+      if (typeof callback === "function") {
+        callback({ 
+          success: true, 
+          reactions: aggregatedReactions,
+          removedEmoji: emoji
+        });
+      }
+    });
+
+    // Get reactions for a specific message
+    socket.on('get_message_reactions', ({ sessionId, messageId } = {}, callback) => {
+      if (!sessionId || !messageId) {
+        return typeof callback === "function" && callback({ error: 'Missing required fields' });
+      }
+      
+      const sessionReactions = getSessionReactions(sessionId);
+      if (!sessionReactions) {
+        return typeof callback === "function" && callback({ error: 'Session not found' });
+      }
+      
+      const messageReactions = sessionReactions.get(messageId);
+      const aggregatedReactions = aggregateReactions(messageReactions);
+      
+      if (typeof callback === "function") {
+        callback({ 
+          success: true, 
+          reactions: aggregatedReactions
+        });
+      }
+    });
+
+    // Get all reactions for a session
+    socket.on('get_session_reactions', ({ sessionId } = {}, callback) => {
+      if (!sessionId) {
+        return typeof callback === "function" && callback({ error: 'Missing sessionId' });
+      }
+      
+      const sessionReactions = getSessionReactions(sessionId);
+      if (!sessionReactions) {
+        return typeof callback === "function" && callback({ error: 'Session not found' });
+      }
+      
+      const allReactions = {};
+      for (const [messageId, messageReactions] of sessionReactions.entries()) {
+        const aggregatedReactions = aggregateReactions(messageReactions);
+        if (aggregatedReactions.length > 0) {
+          allReactions[messageId] = aggregatedReactions;
+        }
+      }
+      
+      if (typeof callback === "function") {
+        callback({ 
+          success: true, 
+          reactions: allReactions
+        });
+      }
     });
 
     /**

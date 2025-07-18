@@ -6,6 +6,9 @@ import { addSessionFile } from '../managers/fileManager.js';
 import dotenv from 'dotenv';
 import { body, query, validationResult } from 'express-validator';
 import * as mm from 'music-metadata';
+import crypto from 'crypto';
+import { promises as fsp } from 'fs';
+import sharp from 'sharp';
 dotenv.config();
 
 const router = express.Router();
@@ -19,11 +22,46 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
+// Ensure album_art directory exists
+const albumArtDir = path.join(uploadsDir, 'album_art');
+if (!fs.existsSync(albumArtDir)) {
+  fs.mkdirSync(albumArtDir, { recursive: true });
+}
+
+// Path for metadata cache
+const TRACK_METADATA_CACHE_PATH = path.join(uploadsDir, '.track_metadata_cache.json');
+const TRACK_METADATA_DB_PATH = path.join(uploadsDir, '.track_metadata_db.json');
+
 // Helper to sanitize clientId for filenames
 function safeClientId(id) {
   if (typeof id !== 'string') return 'unknown';
   const sanitized = id.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64);
   return sanitized.length > 0 ? sanitized : 'unknown';
+}
+
+// Helper to get file info for cache validation
+function getFileInfo(dir, file) {
+  const stat = fs.statSync(path.join(dir, file));
+  return {
+    name: file,
+    mtimeMs: stat.mtimeMs,
+    size: stat.size
+  };
+}
+
+// Helper to load/save metadata DB
+async function loadMetadataDB() {
+  try {
+    const data = await fsp.readFile(TRACK_METADATA_DB_PATH, 'utf8');
+    return JSON.parse(data);
+  } catch (e) {
+    return {};
+  }
+}
+async function saveMetadataDB(db) {
+  try {
+    await fsp.writeFile(TRACK_METADATA_DB_PATH, JSON.stringify(db), 'utf8');
+  } catch (e) {}
 }
 
 // Set up multer for file uploads
@@ -71,7 +109,7 @@ router.post(
     query('clientId').optional().isString().isLength({ min: 1, max: 64 }).matches(/^[a-zA-Z0-9_-]+$/),
     query('sessionId').optional().isString().isLength({ min: 1, max: 64 }).matches(/^[a-zA-Z0-9_-]+$/),
   ],
-  (req, res) => {
+  async (req, res) => {
     // Handle file size limit error
     if (req.fileValidationError) {
       return res.status(400).json({ error: req.fileValidationError });
@@ -90,6 +128,41 @@ router.post(
     const clientId = req.body.clientId || req.query.clientId || 'unknown';
     const sessionId = req.body.sessionId || req.query.sessionId || 'unknown';
     addSessionFile(sessionId, clientId, req.file.filename);
+    // Extract metadata and save to DB
+    let albumArtUrl = null;
+    let albumArtFilename = null;
+    try {
+      const metadata = await mm.parseFile(req.file.path);
+      if (metadata.common.picture && metadata.common.picture.length > 0) {
+        const pic = metadata.common.picture[0];
+        // Save album art as a file (jpg or png)
+        const ext = pic.format.includes('png') ? 'png' : 'jpg';
+        albumArtFilename = `${req.file.filename.replace(/\.mp3$/i, '')}_art.${ext}`;
+        const albumArtPath = path.join(albumArtDir, albumArtFilename);
+        // Clean up old album art if exists
+        const db = await loadMetadataDB();
+        if (db[req.file.filename]?.albumArtFilename) {
+          try { await fsp.unlink(path.join(albumArtDir, db[req.file.filename].albumArtFilename)); } catch (e) {}
+        }
+        await fsp.writeFile(albumArtPath, pic.data);
+        // Optionally, convert to jpg for consistency
+        if (ext === 'png') {
+          const jpgPath = albumArtPath.replace(/\.png$/, '.jpg');
+          await sharp(albumArtPath).jpeg().toFile(jpgPath);
+          await fsp.unlink(albumArtPath);
+          albumArtFilename = albumArtFilename.replace(/\.png$/, '.jpg');
+        }
+        albumArtUrl = `${AUDIO_BASE_PATH}/uploads/album_art/${albumArtFilename}`;
+      }
+    } catch (e) {}
+    const db = await loadMetadataDB();
+    db[req.file.filename] = {
+      title: req.file.originalname.replace(/\.mp3$/i, ''),
+      albumArtUrl,
+      albumArtFilename,
+      uploaded: Date.now()
+    };
+    await saveMetadataDB(db);
     // Return the file URL to the client
     const fileUrl = `${AUDIO_BASE_PATH}/uploads/${req.file.filename}`;
     res.json({ url: fileUrl, filename: req.file.filename });
@@ -123,41 +196,41 @@ router.use('/uploads/samples', (req, res, next) => {
   immutable: true
 }));
 
-// List all tracks (user uploads + samples)
+// Serve album art statically
+router.use('/uploads/album_art', express.static(albumArtDir, {
+  etag: true,
+  maxAge: ONE_YEAR * 1000,
+  immutable: true
+}));
+
+// List all tracks (user uploads + samples) using metadata DB and album art URLs
 router.get('/all-tracks', async (req, res) => {
   const uploadsDir = path.join(process.cwd(), 'uploads');
   const samplesDir = path.join(uploadsDir, 'samples');
-  let tracks = [];
-
-  async function addTracksFromDir(dir, type, urlPrefix) {
-    if (!fs.existsSync(dir)) return;
-    const files = fs.readdirSync(dir);
-    for (const file of files) {
-      if (file.endsWith('.mp3')) {
-        let albumArt = null;
-        try {
-          const metadata = await mm.parseFile(path.join(dir, file));
-          if (metadata.common.picture && metadata.common.picture.length > 0) {
-            const pic = metadata.common.picture[0];
-            albumArt = `data:${pic.format};base64,${pic.data.toString('base64')}`;
-          }
-        } catch (e) {
-          // ignore errors
-        }
-        tracks.push({
-          title: file.replace(/\.mp3$/i, ''),
-          url: `${AUDIO_BASE_PATH}${urlPrefix}/${file}`,
-          type,
-          albumArt
-        });
-      }
-    }
+  const db = await loadMetadataDB();
+  async function getMp3Files(dir) {
+    try {
+      const files = await fsp.readdir(dir);
+      return files.filter(f => f.endsWith('.mp3'));
+    } catch (e) { return []; }
   }
-
-  await addTracksFromDir(uploadsDir, 'user', '/uploads');
-  await addTracksFromDir(samplesDir, 'sample', '/uploads/samples');
-
-  res.json(tracks);
+  const [userFiles, sampleFiles] = await Promise.all([
+    getMp3Files(uploadsDir),
+    getMp3Files(samplesDir)
+  ]);
+  const userTracks = userFiles.map(file => ({
+    title: (db[file]?.title) || file.replace(/\.mp3$/i, ''),
+    url: `${AUDIO_BASE_PATH}/uploads/${file}`,
+    type: 'user',
+    albumArt: db[file]?.albumArtUrl || null
+  }));
+  const sampleTracks = sampleFiles.map(file => ({
+    title: file.replace(/\.mp3$/i, ''),
+    url: `${AUDIO_BASE_PATH}/uploads/samples/${file}`,
+    type: 'sample',
+    albumArt: null // Could be precomputed if needed
+  }));
+  res.json([...userTracks, ...sampleTracks]);
 });
 
 export default router;

@@ -22,7 +22,7 @@ import MessageList from './MessageList';
 import PropTypes from 'prop-types';
 
 const EMOJIS = [
-  '🎵', '👏', '🔥', '😂', '😍', '👍', '❤️', '🎉',
+  '👏', '🔥', '😂', '😍', '👍', '❤️', '🎉',
   '😎', '🤔', '🥳', '😅', '😭', '🙌', '🤩', '😡',
   '😇', '😱', '🤗', '😜', '😏', '😴', '🤓', '🥰',
   '😃', '😆', '😋', '😢', '😤', '😬', '😮', '😐',
@@ -267,6 +267,7 @@ const initialState = {
   showPlusMenu: false,
   copyFeedback: false,
   fileUploadError: '',
+  emojiRowMsgId: null, // messageId of the bubble showing emoji row
 };
 function reducer(state, action) {
   switch (action.type) {
@@ -320,11 +321,59 @@ const ChatBox = React.memo(function ChatBox({
   // Scroll position tracking (debounced)
   const scrollDebounceRef = useRef(null);
   const chatListRef = useRef();
+  const emojiRowRef = useRef(null);
+  const [emojiRowStyle, setEmojiRowStyle] = useState({});
 
   // Add MAX_LENGTH constant
   const MAX_LENGTH = 500;
   const LONG_PRESS_DURATION = 500; // ms
   const LONG_PRESS_MOVE_THRESHOLD = 10; // px
+
+  // Add with other hooks at the top of ChatBox
+  const [emojiRowExiting, setEmojiRowExiting] = useState(false);
+  const [emojiRowVisible, setEmojiRowVisible] = useState(false);
+
+  // Add message reactions state
+  const [messageReactions, setMessageReactions] = useState(new Map()); // messageId -> reactions array
+
+  useEffect(() => {
+    if (state.emojiRowMsgId) {
+      setEmojiRowVisible(false);
+      const timer = setTimeout(() => setEmojiRowVisible(true), 10); // allow DOM to layout
+      return () => clearTimeout(timer);
+    } else {
+      setEmojiRowVisible(false);
+    }
+  }, [state.emojiRowMsgId]);
+
+  useEffect(() => {
+    if (!state.contextMenu.visible && state.emojiRowMsgId) {
+      setEmojiRowExiting(true);
+      const timeout = setTimeout(() => {
+        dispatch({ type: 'SET', payload: { emojiRowMsgId: null } });
+        setEmojiRowExiting(false);
+      }, 160); // match fade-scale-out duration
+      return () => clearTimeout(timeout);
+    }
+  }, [state.contextMenu.visible, state.emojiRowMsgId]);
+
+  useEffect(() => {
+    if (state.emojiRowMsgId && emojiRowRef.current) {
+      // Render offscreen first
+      setEmojiRowStyle({ left: -9999, visibility: 'hidden' });
+      requestAnimationFrame(() => {
+        const width = emojiRowRef.current.offsetWidth;
+        setEmojiRowStyle({
+          left: '50%',
+          transform: 'translateX(-50%)',
+          visibility: 'visible',
+          minWidth: width,
+        });
+      });
+    } else {
+      setEmojiRowStyle({});
+    }
+  }, [state.emojiRowMsgId]);
 
   // Handler functions
   const handleReportCancel = () => {
@@ -448,7 +497,7 @@ const ChatBox = React.memo(function ChatBox({
   useEffect(() => {
     if (!state.contextMenu.visible) return;
     const handleClick = () => {
-      dispatch({ type: 'SET', payload: { menuExiting: true } });
+      dispatch({ type: 'SET', payload: { menuExiting: true, emojiRowMsgId: null } });
     };
     window.addEventListener('click', handleClick);
     return () => window.removeEventListener('click', handleClick);
@@ -458,8 +507,7 @@ const ChatBox = React.memo(function ChatBox({
   useEffect(() => {
     if (!state.menuExiting) return;
     const timeout = setTimeout(() => {
-      dispatch({ type: 'SET', payload: { contextMenu: { ...state.contextMenu, visible: false, x: 0, y: 0, msg: null } } });
-      dispatch({ type: 'SET', payload: { menuExiting: false } });
+      dispatch({ type: 'SET', payload: { contextMenu: { ...state.contextMenu, visible: false, x: 0, y: 0, msg: null }, emojiRowMsgId: null, menuExiting: false } });
     }, 160); // match fade-scale-out duration
     return () => clearTimeout(timeout);
   }, [state.menuExiting]);
@@ -471,49 +519,33 @@ const ChatBox = React.memo(function ChatBox({
       e.preventDefault?.();
       e.stopPropagation?.();
     }
-
+    
+    const isOwn = msg.sender === clientId;
+    
+    // Get the bubble element for consistent positioning
+    const bubbleElement = e.target.closest('.relative') || e.target;
+    const bubbleRect = bubbleElement.getBoundingClientRect();
+    
+    // Use consistent spacing like emoji row (-top-10 equivalent)
+    const consistentOffset = -20; // Moved down from -40 to -20 (20px above bubble)
     let x = 0, y = 0;
-
-    // Mouse right-click or keyboard context menu (Shift+F10 or ContextMenu key)
-    if (e.type === 'contextmenu' || e.type === 'click') {
-      x = e.clientX;
-      y = e.clientY;
-    } 
-    // Touch long-press
-    else if (e.touches && e.touches.length > 0) {
-      x = e.touches[0].clientX;
-      y = e.touches[0].clientY;
-    } 
-    // Keyboard context menu key
-    else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
-      // Try to get bounding rect of the target
-      const rect = e.target.getBoundingClientRect();
-      x = rect.left + rect.width / 2;
-      y = rect.top + rect.height / 2;
-    } 
-    // Accessibility: focus/enter/space on message (simulate context menu)
-    else if (e.type === 'keydown' && (e.key === 'Enter' || e.key === ' ')) {
-      const rect = e.target.getBoundingClientRect();
-      x = rect.left + rect.width / 2;
-      y = rect.top + rect.height / 2;
+    
+    // Position horizontally based on message ownership (like emoji row)
+    if (isOwn) {
+      x = bubbleRect.right - 160 - 30; // Moved 20px to the left
+    } else {
+      x = bubbleRect.left - 30; // Moved 20px to the left
     }
-    // Fallback to mouse position or center of window
-    else {
-      x = e.clientX || window.innerWidth / 2;
-      y = e.clientY || window.innerHeight / 2;
-    }
-
-    // Clamp position to viewport (prevents menu from being offscreen on initial open)
-    const menuWidth = 160, menuHeight = 120; // Approximate, will be corrected after render
+    
+    // Position vertically with consistent spacing above the bubble
+    y = bubbleRect.top + consistentOffset;
+    
+    // Ensure menu stays within viewport
+    const menuWidth = 160;
     const maxX = window.innerWidth - menuWidth - 8;
-    const maxY = window.innerHeight - menuHeight - 8;
     x = Math.max(8, Math.min(x, maxX));
-    y = Math.max(8, Math.min(y, maxY));
-
-    // Set context menu state; will be further adjusted after render
-    dispatch({ type: 'SET', payload: { contextMenu: { ...state.contextMenu, visible: true, x: x - 53, y: y - 45, msg } } });
-    dispatch({ type: 'SET', payload: { menuExiting: false } });
-    // console.log('setContextMenu called', { visible: true, x: x - 53, y: y - 45, msg });
+    
+    dispatch({ type: 'SET', payload: { contextMenu: { ...state.contextMenu, visible: true, x, y, msg }, menuExiting: false, emojiRowMsgId: msg.messageId } });
   };
 
   // Adjust context menu position to stay within chat section
@@ -580,6 +612,8 @@ const ChatBox = React.memo(function ChatBox({
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     typingTimeoutRef.current = setTimeout(() => {
       socket.emit('stop_typing', { sessionId, clientId });
+      // Remove self from typingUsers immediately
+      dispatch({ type: 'REMOVE_TYPING_USER', payload: { clientId } });
     }, 2000);
   };
 
@@ -747,6 +781,91 @@ function isHexColor(str) {
     dispatch({ type: 'SET', payload: { showEmojiPicker: false } });
   };
 
+  // Add emoji reaction handlers
+  const handleEmojiReaction = (emoji, msg) => {
+    if (!socket || !msg.messageId) return;
+    
+    socket.emit('emoji_reaction', {
+      sessionId,
+      messageId: msg.messageId,
+      emoji,
+      clientId,
+      displayName
+    }, (response) => {
+      if (response && response.success) {
+        // Update local state immediately for optimistic UI
+        setMessageReactions(prev => {
+          const newReactions = new Map(prev);
+          newReactions.set(msg.messageId, response.reactions);
+          return newReactions;
+        });
+      }
+    });
+    
+    // Hide emoji row after reaction
+    dispatch({ type: 'SET', payload: { emojiRowMsgId: null } });
+    dispatch({ type: 'SET', payload: { contextMenu: { ...state.contextMenu, visible: false, x: 0, y: 0, msg: null } } });
+  };
+
+  const handleRemoveEmojiReaction = (emoji, msg) => {
+    if (!socket || !msg.messageId) return;
+    
+    socket.emit('remove_emoji_reaction', {
+      sessionId,
+      messageId: msg.messageId,
+      emoji,
+      clientId
+    }, (response) => {
+      if (response && response.success) {
+        // Update local state immediately for optimistic UI
+        setMessageReactions(prev => {
+          const newReactions = new Map(prev);
+          newReactions.set(msg.messageId, response.reactions);
+          return newReactions;
+        });
+      }
+    });
+  };
+
+  // Listen for real-time reaction updates
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleMessageReactionsUpdated = ({ messageId, reactions, addedBy, removedBy, joinedBy }) => {
+      setMessageReactions(prev => {
+        const newReactions = new Map(prev);
+        if (reactions.length === 0) {
+          newReactions.delete(messageId);
+        } else {
+          newReactions.set(messageId, reactions);
+        }
+        return newReactions;
+      });
+    };
+
+    socket.on('message_reactions_updated', handleMessageReactionsUpdated);
+
+    return () => {
+      socket.off('message_reactions_updated', handleMessageReactionsUpdated);
+    };
+  }, [socket]);
+
+  // Load all reactions when socket connects and session is available
+  useEffect(() => {
+    if (!socket || !sessionId) return;
+
+    // Request all reactions for the session
+    socket.emit('get_session_reactions', { sessionId }, (response) => {
+      if (response && response.success && response.reactions) {
+        const newReactions = new Map();
+        for (const [messageId, reactions] of Object.entries(response.reactions)) {
+          newReactions.set(messageId, reactions);
+        }
+        setMessageReactions(newReactions);
+      }
+    });
+  }, [socket, sessionId]);
+
   // --- ENHANCED: Highlight own messages, subtle hover, avatars, and message grouping ---
   const getAvatar = (id) => {
     // Minimalist: white/gray circle with initial
@@ -885,27 +1004,23 @@ function isHexColor(str) {
 
   // Add copy handler
   const handleCopy = (msg) => {
-    if (msg && msg.message) {
-      if (navigator.clipboard) {
-        navigator.clipboard.writeText(msg.message).then(() => {
-          dispatch({ type: 'SET', payload: { copyFeedback: true } });
-          setTimeout(() => dispatch({ type: 'SET', payload: { copyFeedback: false } }), 1000);
-        });
-      } else {
-        // Fallback for older browsers
-        const textarea = document.createElement('textarea');
-        textarea.value = msg.message;
-        document.body.appendChild(textarea);
-        textarea.select();
-        try {
-          document.execCommand('copy');
-          dispatch({ type: 'SET', payload: { copyFeedback: true } });
-          setTimeout(() => dispatch({ type: 'SET', payload: { copyFeedback: false } }), 1000);
-        } catch (err) {}
-        document.body.removeChild(textarea);
-      }
+    if (msg.message) {
+      navigator.clipboard.writeText(msg.message).then(() => {
+        dispatch({ type: 'SET', payload: { copyFeedback: true } });
+        setTimeout(() => dispatch({ type: 'SET', payload: { copyFeedback: false } }), 2000);
+      });
     }
-    dispatch({ type: 'SET', payload: { menuExiting: true } });
+  };
+
+  // Mobile touch handlers for chat bubbles
+  const handleBubbleTouchStart = (e, msg) => {
+    // Handle touch start for mobile devices
+    // Could be used for long press detection or other touch gestures
+  };
+
+  const handleBubbleTouchEnd = () => {
+    // Handle touch end for mobile devices
+    // Could be used to reset touch state or handle tap gestures
   };
 
   // Browser notification helper
@@ -1067,9 +1182,34 @@ function isHexColor(str) {
               return (
                 <div
                   key={msg.messageId || `${msg.sender}-${msg.timestamp}-${i}`}
-                  className={`flex items-end transition-all duration-300 group ${isOwn ? 'justify-end' : 'justify-start'} enhanced-bubble-appear ${mobile ? '' : messageAnimations[i]?.animationClass || ''} ${groupStart ? 'mt-3' : ''} ${groupEnd ? 'mb-2' : ''} ${mobile ? 'no-select-mobile' : ''}`}
+                  className={`relative flex items-end transition-all duration-300 group ${isOwn ? 'justify-end' : 'justify-start'} enhanced-bubble-appear ${mobile ? '' : messageAnimations[i]?.animationClass || ''} ${groupStart ? 'mt-3' : ''} ${groupEnd ? 'mb-4' : 'mb-2'} ${mobile ? 'no-select-mobile' : ''}`}
                   onContextMenu={(e) => memoizedHandleContextMenu(e, msg)}
+                  onTouchStart={mobile ? (e) => handleBubbleTouchStart(e, msg) : undefined}
+                  onTouchEnd={mobile ? handleBubbleTouchEnd : undefined}
                 >
+                  {/* Emoji row above bubble if active */}
+                  {(state.emojiRowMsgId === msg.messageId || (emojiRowExiting && state.emojiRowMsgId === msg.messageId)) && (
+                    <div
+                      className={`flex gap-0.5 mb-0.5 px-0.5 py-0.5 rounded-full bg-neutral-900/90 shadow z-20 absolute -top-12 ${isOwn ? 'right-0' : 'left-0'} w-max transition-all duration-200
+                        ${emojiRowExiting ? 'animate-fade-scale-out' : 'animate-fade-scale-in'}
+                      `}
+                    >
+                      {EMOJIS.slice(0, 8).map((emoji, idx) => (
+                        <button
+                          key={emoji}
+                          className="w-5 h-5 flex items-center justify-center text-[20px] hover:scale-110 transition-transform duration-100 focus:outline-none rounded-full bg-neutral-800 hover:bg-neutral-700 emoji-pop-in"
+                          onClick={() => handleEmojiReaction(emoji, msg)}
+                          tabIndex={0}
+                          style={{
+                            animationDelay: `${idx * 40}ms`,
+                          }}
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  
                   {!isOwn && groupStart && (
                     <div className="mr-2 flex-shrink-0">
                       <div className="w-8 h-8 bg-neutral-800 rounded-full flex items-center justify-center border border-neutral-700">
@@ -1085,51 +1225,112 @@ function isHexColor(str) {
                         </div>
                       </div>
                     ) : (
-                      <div
-                        className={`inline-block max-w-[80vw] md:max-w-md rounded-xl p-1 px-2 pt-0 shadow-sm transition-all duration-200 group-hover:scale-[1.02] relative`}
-                        style={{
-                          background: state.bubbleColor,
-                          color: state.selectedTheme.bubbleText || '#fff',
-                          borderRadius: state.bubbleRadius,
-                          fontFamily: state.fontFamily,
-                        }}
-                      >
-                        <div className="flex items-center gap-2 mb-1">
-                        </div>
-                        <div className="flex flex-row items-end w-full">
-                          {msg.deleted || !msg.message ? (
-                            <span className="flex-1 text-sm italic text-neutral-500 bg-neutral-800/80 rounded-lg px-3 py-2 select-none cursor-default">
-                              <svg className="inline-block mr-1 mb-0.5" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
-                              This message was deleted
-                            </span>
-                          ) : (
-                            <span className={`flex-1 text-base break-words ${msg.message && msg.message.includes('@' + displayName) ? 'bg-yellow-400/20' : ''}`} style={{ color: state.selectedTheme.bubbleText || '#fff' }}>
-                              {memoizedHighlightMentions(msg.message, clients, displayName)}
-                              {msg.edited && <span className="text-xs text-neutral-400 ml-1">(edited)</span>}
-                            </span>
-                          )}
-                          <span className="flex items-end gap-1 text-[11px] opacity-70 ml-4 relative top-[4px]">
-                            <span>
-                              {msg.timestamp
-                                ? new Date(msg.timestamp).toLocaleTimeString([], {
-                                    hour: '2-digit',
-                                    minute: '2-digit',
-                                    hour12: true
-                                  })
-                                : 'now'}
-                            </span>
-                            {/* Delivery status for own messages */}
-                            {msg.sender === clientId && (
-                              msg.read ? (
-                                <span title="Read" className=""><DoubleCheckBlue /></span>
-                              ) : msg.delivered ? (
-                                <span title="Delivered" className=""><DoubleCheckGray /></span>
-                              ) : (
-                                <span title="Sent" className=""><SingleCheck /></span>
-                              )
+                      <div className="flex flex-col">
+                        <div
+                          className={`inline-block max-w-[80vw] md:max-w-md rounded-xl p-1 px-2 pt-0 shadow-sm transition-all duration-200 group-hover:scale-[1.02] relative${messageReactions.get(msg.messageId)?.length > 0 ? ' mb-4' : ''}`}
+                          style={{
+                            background: state.bubbleColor,
+                            color: state.selectedTheme.bubbleText || '#fff',
+                            borderRadius: state.bubbleRadius,
+                            fontFamily: state.fontFamily,
+                            position: 'relative',
+                          }}
+                        >
+                          <div className="flex items-center gap-2 mb-1">
+                          </div>
+                          <div className="flex flex-row items-end w-full">
+                            {msg.deleted || !msg.message ? (
+                              <span className="flex-1 text-sm italic text-neutral-500 bg-neutral-800/80 rounded-lg px-3 py-2 select-none cursor-default">
+                                <svg className="inline-block mr-1 mb-0.5" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                                This message was deleted
+                              </span>
+                            ) : (
+                              <span className={`flex-1 text-base break-words ${msg.message && msg.message.includes('@' + displayName) ? 'bg-yellow-400/20' : ''}`} style={{ color: state.selectedTheme.bubbleText || '#fff' }}>
+                                {memoizedHighlightMentions(msg.message, clients, displayName)}
+                                {msg.edited && <span className="text-xs text-neutral-400 ml-1">(edited)</span>}
+                              </span>
                             )}
-                          </span>
+                            <span className="flex items-end gap-1 text-[11px] opacity-70 ml-4 relative top-[4px]">
+                              <span>
+                                {msg.timestamp
+                                  ? new Date(msg.timestamp).toLocaleTimeString([], {
+                                      hour: '2-digit',
+                                      minute: '2-digit',
+                                      hour12: true
+                                    })
+                                  : 'now'}
+                              </span>
+                              {/* Delivery status for own messages */}
+                              {msg.sender === clientId && (
+                                msg.read ? (
+                                  <span title="Read" className=""><DoubleCheckBlue /></span>
+                                ) : msg.delivered ? (
+                                  <span title="Delivered" className=""><DoubleCheckGray /></span>
+                                ) : (
+                                  <span title="Sent" className=""><SingleCheck /></span>
+                                )
+                              )}
+                            </span>
+                          </div>
                         </div>
+                        
+                        {/* Emoji reactions display with absolute positioning at bottom right of bubble */}
+                        {messageReactions.get(msg.messageId) && messageReactions.get(msg.messageId).length > 0 && (
+                          <div
+                            className={`absolute
+                              ${mobile ? 'bottom-[-12px] right-1 left-auto max-w-[90vw] px-0.5 py-0' : 'bottom-[-30px] right-0'}
+                              flex gap-0.5
+                              rounded-3xl
+                              bg-neutral-900/95
+                              backdrop-blur-sm
+                              shadow-lg
+                              border border-neutral-800/50
+                              w-max
+                              transition-all duration-200
+                              animate-fade-scale-in
+                              z-10
+                              ${mobile ? 'text-sm' : ''}
+                            `}
+                            style={mobile ? { minHeight: 8, minWidth: 0, fontSize: 14 } : {}}
+                          >
+                            {messageReactions.get(msg.messageId).map((reaction, idx) => {
+                              const hasReacted = reaction.users.includes(clientId);
+                              return (
+                                <button
+                                  key={reaction.emoji}
+                                  className={
+                                    `flex items-center gap-0.5
+                                    ${mobile ? 'px-1 py-0.5 min-w-[24px] text-sm' : 'p-0 text-xs'}
+                                    rounded-3xl
+                                    transition-all duration-200
+                                    hover:scale-110
+                                    focus:outline-none
+                                    emoji-reaction-button
+                                    emoji-pop-in
+                                    ${hasReacted 
+                                      ? 'bg-primary/20 text-primary border border-primary/30' 
+                                      : 'bg-neutral-800/80 text-neutral-300 hover:bg-neutral-700/80'
+                                    }`
+                                  }
+                                  onClick={() => hasReacted 
+                                    ? handleRemoveEmojiReaction(reaction.emoji, msg)
+                                    : handleEmojiReaction(reaction.emoji, msg)
+                                  }
+                                  title={`${reaction.count} reaction${reaction.count !== 1 ? 's' : ''}${hasReacted ? ' - Click to remove' : ' - Click to add'}`}
+                                  style={{
+                                    ...(mobile ? { fontSize: 14, minWidth: 24, minHeight: 24 } : {}),
+                                    animationDelay: `${idx * 40}ms`,
+                                  }}
+                                >
+                                  <span className={mobile ? "text-sm" : "text-sm"}>{reaction.emoji}</span>
+                                  {reaction.count > 1 && (
+                                    <span className={`${mobile ? "text-xs font-semibold ml-0.5" : "text-xs font-medium"}`}>{reaction.count}</span>
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1151,6 +1352,12 @@ function isHexColor(str) {
           >
             New messages ↓
           </button>
+        )}
+        {/* Typing indicator (now always above input) */}
+        {state.typingUsers.length > 0 && (
+          <div className="text-xs text-neutral-400 mt-1 mb-1 px-4" aria-live="polite">
+            {state.typingUsers.map((u) => u.displayName || u.clientId).join(', ')} {state.typingUsers.length === 1 ? 'is' : 'are'} typing...
+          </div>
         )}
         {/* Floating Chat Input */}
         <div className="fixed left-0 right-0 bottom-20 z-30 flex justify-center pointer-events-none">
@@ -1259,103 +1466,114 @@ function isHexColor(str) {
             </div>
           </div>
         </div>
-        {/* Typing indicator */}
-        {state.typingUsers.length > 0 && (
-          <div className="text-xs text-neutral-400 mt-1" aria-live="polite">
-            {state.typingUsers.map((u) => u.displayName || u.clientId).join(', ')} {state.typingUsers.length === 1 ? 'is' : 'are'} typing...
+        {/* Floating copy feedback popup (desktop: absolute in chat section, mobile: fixed) */}
+        {state.copyFeedback && (
+          mobile ? (
+            <div className="fixed left-1/2 -translate-x-1/2 z-50 mb-28 sm:mb-24" style={{ bottom: 32 }}>
+              <div className="flex items-center gap-2 px-4 py-2 rounded-full shadow-xl border border-neutral-800 bg-neutral-900/90 backdrop-blur-md animate-bottom-up-scale-in font-semibold text-xs text-white min-w-[120px] justify-center">
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 18 18"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="inline align-bottom text-green-400 animate-draw-tick"
+                  style={{ strokeDasharray: 24, strokeDashoffset: 0, animation: 'draw-tick 0.5s cubic-bezier(0.4,0,0.2,1) forwards' }}
+                >
+                  <path
+                    d="M5 9.5L8 12.5L13 7.5"
+                    stroke="#4ade80"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    style={{ strokeDasharray: 24, strokeDashoffset: 24 }}
+                  />
+                </svg>
+                <span className="tracking-tight font-medium">Copied</span>
+              </div>
+            </div>
+          ) : (
+            <div className="absolute left-1/2 -translate-x-1/2 z-30" style={{ bottom: 80 }}>
+              <div className="flex items-center gap-2 px-4 py-2 rounded-full shadow-xl border border-neutral-800 bg-neutral-900/90 backdrop-blur-md animate-bottom-up-scale-in font-semibold text-xs text-white min-w-[120px] justify-center">
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 18 18"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="inline align-bottom text-green-400 animate-draw-tick"
+                  style={{ strokeDasharray: 24, strokeDashoffset: 0, animation: 'draw-tick 0.5s cubic-bezier(0.4,0,0.2,1) forwards' }}
+                >
+                  <path
+                    d="M5 9.5L8 12.5L13 7.5"
+                    stroke="#4ade80"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    style={{ strokeDasharray: 24, strokeDashoffset: 24 }}
+                  />
+                </svg>
+                <span className="tracking-tight font-medium">Copied</span>
+              </div>
+            </div>
+          )
+        )}
+        <style>
+          {`
+            @keyframes draw-tick {
+              to {
+                stroke-dashoffset: 0;
+              }
+            }
+            .animate-draw-tick path {
+              stroke-dasharray: 24;
+              stroke-dashoffset: 24;
+              animation: draw-tick 0.5s cubic-bezier(0.4,0,0.2,1) forwards;
+            }
+            @keyframes emoji-pop-in {
+              0% {
+                opacity: 0;
+                transform: scale(0.5) translateY(10px);
+              }
+              60% {
+                opacity: 1;
+                transform: scale(1.15) translateY(-2px);
+              }
+              100% {
+                opacity: 1;
+                transform: scale(1) translateY(0);
+              }
+            }
+            .emoji-pop-in {
+              animation: emoji-pop-in 0.32s cubic-bezier(0.4,0,0.2,1) both;
+            }
+          `}
+        </style>
+        {/* Delete Confirmation Modal (MOBILE) */}
+        {mobile && state.deletingMsg && (
+          <div
+            className="absolute inset-0 z-40 flex items-center justify-center bg-black/60 animate-fade-in"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Delete Message Confirmation"
+            tabIndex={-1}
+            ref={deleteModalRef}
+            onClick={e => { if (e.target === e.currentTarget) cancelDelete(); }}
+          >
+            <div className="bg-neutral-900/95 border border-neutral-800 rounded-xl px-6 py-5 w-full max-w-xs shadow-xl flex flex-col items-center gap-4 backdrop-blur-md transition-all duration-200 animate-scale-in" tabIndex={0}>
+              <div className="flex items-center justify-center w-12 h-12 rounded-full bg-red-500/10 mb-1">
+                <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="text-red-500">
+                  <path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>
+                </svg>
+              </div>
+              <div className="text-base text-white font-semibold text-center mb-1">Delete this message?</div>
+              <div className="flex gap-2 w-full mt-1">
+                <button className="flex-1 py-2 text-sm font-medium rounded-lg bg-neutral-800 text-white hover:bg-neutral-700 focus:bg-neutral-700 focus:outline-none transition-all" onClick={cancelDelete}>Cancel</button>
+                <button className="flex-1 py-2 text-sm font-medium rounded-lg bg-red-500 text-white hover:bg-red-400 focus:bg-red-600 focus:outline-none transition-all" onClick={confirmDelete}>Delete</button>
+              </div>
+            </div>
           </div>
         )}
-      {/* Floating copy feedback popup (desktop: absolute in chat section, mobile: fixed) */}
-      {state.copyFeedback && (
-        mobile ? (
-          <div className="fixed left-1/2 -translate-x-1/2 z-50 mb-28 sm:mb-24" style={{ bottom: 32 }}>
-            <div className="flex items-center gap-2 px-4 py-2 rounded-full shadow-xl border border-neutral-800 bg-neutral-900/90 backdrop-blur-md animate-bottom-up-scale-in font-semibold text-xs text-white min-w-[120px] justify-center">
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 18 18"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
-                className="inline align-bottom text-green-400 animate-draw-tick"
-                style={{ strokeDasharray: 24, strokeDashoffset: 0, animation: 'draw-tick 0.5s cubic-bezier(0.4,0,0.2,1) forwards' }}
-              >
-                <path
-                  d="M5 9.5L8 12.5L13 7.5"
-                  stroke="#4ade80"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  style={{ strokeDasharray: 24, strokeDashoffset: 24 }}
-                />
-              </svg>
-              <span className="tracking-tight font-medium">Copied</span>
-            </div>
-          </div>
-        ) : (
-          <div className="absolute left-1/2 -translate-x-1/2 z-30" style={{ bottom: 80 }}>
-            <div className="flex items-center gap-2 px-4 py-2 rounded-full shadow-xl border border-neutral-800 bg-neutral-900/90 backdrop-blur-md animate-bottom-up-scale-in font-semibold text-xs text-white min-w-[120px] justify-center">
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 18 18"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
-                className="inline align-bottom text-green-400 animate-draw-tick"
-                style={{ strokeDasharray: 24, strokeDashoffset: 0, animation: 'draw-tick 0.5s cubic-bezier(0.4,0,0.2,1) forwards' }}
-              >
-                <path
-                  d="M5 9.5L8 12.5L13 7.5"
-                  stroke="#4ade80"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  style={{ strokeDasharray: 24, strokeDashoffset: 24 }}
-                />
-              </svg>
-              <span className="tracking-tight font-medium">Copied</span>
-            </div>
-          </div>
-        )
-      )}
-      <style>
-        {`
-          @keyframes draw-tick {
-            to {
-              stroke-dashoffset: 0;
-            }
-          }
-          .animate-draw-tick path {
-            stroke-dasharray: 24;
-            stroke-dashoffset: 24;
-            animation: draw-tick 0.5s cubic-bezier(0.4,0,0.2,1) forwards;
-          }
-        `}
-      </style>
-              {/* Delete Confirmation Modal (MOBILE) */}
-      {mobile && state.deletingMsg && (
-        <div
-          className="absolute inset-0 z-40 flex items-center justify-center bg-black/60 animate-fade-in"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Delete Message Confirmation"
-          tabIndex={-1}
-          ref={deleteModalRef}
-          onClick={e => { if (e.target === e.currentTarget) cancelDelete(); }}
-        >
-          <div className="bg-neutral-900/95 border border-neutral-800 rounded-xl px-6 py-5 w-full max-w-xs shadow-xl flex flex-col items-center gap-4 backdrop-blur-md transition-all duration-200 animate-scale-in" tabIndex={0}>
-            <div className="flex items-center justify-center w-12 h-12 rounded-full bg-red-500/10 mb-1">
-              <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="text-red-500">
-                <path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>
-              </svg>
-            </div>
-            <div className="text-base text-white font-semibold text-center mb-1">Delete this message?</div>
-            <div className="flex gap-2 w-full mt-1">
-              <button className="flex-1 py-2 text-sm font-medium rounded-lg bg-neutral-800 text-white hover:bg-neutral-700 focus:bg-neutral-700 focus:outline-none transition-all" onClick={cancelDelete}>Cancel</button>
-              <button className="flex-1 py-2 text-sm font-medium rounded-lg bg-red-500 text-white hover:bg-red-400 focus:bg-red-600 focus:outline-none transition-all" onClick={confirmDelete}>Delete</button>
-            </div>
-          </div>
-        </div>
-      )}
         {/* Context Menu for mobile */}
         {state.contextMenu.visible && state.contextMenu.msg && (
           <>
@@ -1373,7 +1591,7 @@ function isHexColor(str) {
                 <button
                   className="block w-full text-left px-4 py-2 font-medium hover:bg-neutral-800/80 focus:bg-neutral-800/90 focus:outline-none transition-colors duration-150 rounded-md flex items-center justify-between gap-2"
                   onClick={() => { 
-                    dispatch({ type: 'SET', payload: { menuExiting: true } }); 
+                    dispatch({ type: 'SET', payload: { menuExiting: true, emojiRowMsgId: null } }); 
                     setTimeout(() => {
                       memoizedHandleEdit(state.contextMenu.msg);
                       // Focus the input after the edit state is set
@@ -1391,7 +1609,10 @@ function isHexColor(str) {
               {!state.contextMenu.msg.reaction && (
                 <button
                   className="block w-full text-left px-4 py-2 hover:bg-neutral-800 flex items-center justify-between gap-2"
-                  onClick={() => { dispatch({ type: 'SET', payload: { menuExiting: true } }); setTimeout(() => memoizedHandleReport(state.contextMenu.msg), 160); }}
+                  onClick={() => { 
+                    dispatch({ type: 'SET', payload: { menuExiting: true, emojiRowMsgId: null } }); 
+                    setTimeout(() => memoizedHandleReport(state.contextMenu.msg), 160); 
+                  }}
                 >
                   <span>Report</span>
                   <FiFlag size={16} />
@@ -1401,7 +1622,15 @@ function isHexColor(str) {
               {!state.contextMenu.msg.reaction && !state.contextMenu.msg.deleted && state.contextMenu.msg.message && (
                 <button
                   className="block w-full text-left px-4 py-2 hover:bg-neutral-800 flex items-center justify-between gap-2"
-                  onClick={() => memoizedHandleCopy(state.contextMenu.msg)}
+                  onClick={() => {
+                    dispatch({ type: 'SET', payload: { menuExiting: true, emojiRowMsgId: null } });
+                    memoizedHandleCopy(state.contextMenu.msg);
+                    setTimeout(() => {
+                      if (contextMenuRef.current) {
+                        contextMenuRef.current.focus?.();
+                      }
+                    }, 0);
+                  }}
                 >
                   <span>Copy</span>
                   <FiCopy size={16} />
@@ -1410,7 +1639,7 @@ function isHexColor(str) {
               {state.contextMenu.msg.sender === clientId && !state.contextMenu.msg.reaction && isDeletable(state.contextMenu.msg) && (
                 <button
                   className="block w-full text-left px-4 py-2 hover:bg-neutral-800 flex items-center justify-between gap-2 text-red-100"
-                  onClick={() => { dispatch({ type: 'SET', payload: { menuExiting: true } }); setTimeout(() => memoizedHandleDelete(state.contextMenu.msg), 160); }}
+                  onClick={() => { dispatch({ type: 'SET', payload: { menuExiting: true, emojiRowMsgId: null } }); setTimeout(() => memoizedHandleDelete(state.contextMenu.msg), 160); }}
                 >
                   <span className="text-red-300">Delete</span>
                   <FiTrash2 size={16} className="text-red-300" />
@@ -1708,9 +1937,34 @@ function isHexColor(str) {
             return (
               <div
                 key={msg.messageId || `${msg.sender}-${msg.timestamp}-${i}`}
-                className={`flex items-end transition-all duration-300 group ${isOwn ? 'justify-end' : 'justify-start'} enhanced-bubble-appear ${mobile ? '' : messageAnimations[i]?.animationClass || ''} ${groupStart ? 'mt-3' : ''} ${groupEnd ? 'mb-2' : ''} ${mobile ? 'no-select-mobile' : ''}`}
+                className={`relative flex items-end transition-all duration-300 group ${isOwn ? 'justify-end' : 'justify-start'} enhanced-bubble-appear ${mobile ? '' : messageAnimations[i]?.animationClass || ''} ${groupStart ? 'mt-3' : ''} ${groupEnd ? 'mb-4' : 'mb-2'} ${mobile ? 'no-select-mobile' : ''}`}
                 onContextMenu={(e) => memoizedHandleContextMenu(e, msg)}
+                onTouchStart={mobile ? (e) => handleBubbleTouchStart(e, msg) : undefined}
+                onTouchEnd={mobile ? handleBubbleTouchEnd : undefined}
               >
+                {/* Emoji row above bubble if active */}
+                {(state.emojiRowMsgId === msg.messageId || (emojiRowExiting && state.emojiRowMsgId === msg.messageId)) && (
+                  <div
+                    className={`flex gap-2 mb-1 px-2 py-1 rounded-full bg-neutral-900/90 shadow z-20 absolute -top-12 ${isOwn ? 'right-0' : 'left-0'} w-max transition-all duration-200
+                      ${emojiRowExiting ? 'animate-fade-scale-out' : 'animate-fade-scale-in'}
+                    `}
+                  >
+                    {EMOJIS.slice(0, 8).map((emoji, idx) => (
+                      <button
+                        key={emoji}
+                        className="w-8 h-8 flex items-center justify-center text-xl transition-colors transition-shadow duration-200 focus:outline-none rounded-full bg-neutral-800 hover:bg-white hover:text-black hover:shadow-lg emoji-pop-in"
+                        onClick={() => handleEmojiReaction(emoji, msg)}
+                        tabIndex={0}
+                        style={{
+                          animationDelay: `${idx * 40}ms`,
+                        }}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                
                 {!isOwn && groupStart && (
                   <div className="mr-2 flex-shrink-0">
                     <div className="w-8 h-8 bg-neutral-800 rounded-full flex items-center justify-center border border-neutral-700">
@@ -1726,50 +1980,87 @@ function isHexColor(str) {
                       </div>
                     </div>
                   ) : (
-                    <div
-                      className={`inline-block max-w-[80vw] md:max-w-md rounded-xl p-1 px-2 pt-0 shadow-sm transition-all duration-200 group-hover:scale-[1.02] relative`}
-                      style={{
-                        background: state.bubbleColor,
-                        color: state.selectedTheme.bubbleText || '#fff',
-                        borderRadius: state.bubbleRadius,
-                        fontFamily: state.fontFamily,
-                      }}
-                    >
-                      <div className="flex items-center gap-2 mb-1">
-                      </div>
-                      <div className="flex flex-row items-end w-full">
-                        {msg.deleted || !msg.message ? (
-                          <span className="flex-1 text-sm italic text-neutral-500 bg-neutral-800/80 rounded-lg px-3 py-2 select-none cursor-default">
-                            <svg className="inline-block mr-1 mb-0.5" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
-                            This message was deleted
-                          </span>
-                        ) : (
-                          <span className={`flex-1 text-base break-words ${msg.message && msg.message.includes('@' + displayName) ? 'bg-yellow-400/20' : ''}`} style={{ color: state.selectedTheme.bubbleText || '#fff' }}>
-                            {memoizedHighlightMentions(msg.message, clients, displayName)}
-                            {msg.edited && <span className="text-xs text-neutral-400 ml-1">(edited)</span>}
-                          </span>
-                        )}
-                        <span className="flex items-end gap-1 text-[11px] opacity-70 ml-4 relative top-[4px]">
-                          <span>
-                            {msg.timestamp
-                              ? new Date(msg.timestamp).toLocaleTimeString([], {
-                                  hour: '2-digit',
-                                  minute: '2-digit',
-                                  hour12: true
-                                })
-                              : 'now'}
-                          </span>
-                          {/* Delivery status for own messages */}
-                          {msg.sender === clientId && (
-                            msg.read ? (
-                              <span title="Read" className=""><DoubleCheckBlue /></span>
-                            ) : msg.delivered ? (
-                              <span title="Delivered" className=""><DoubleCheckGray /></span>
-                            ) : (
-                              <span title="Sent" className=""><SingleCheck /></span>
-                            )
+                    <div className="flex flex-col">
+                      <div
+                        className={`inline-block max-w-[80vw] md:max-w-md rounded-xl p-1 px-2 pt-0 shadow-sm transition-all duration-200 group-hover:scale-[1.02] relative${messageReactions.get(msg.messageId)?.length > 0 ? ' mb-5' : ''}`}
+                        style={{
+                          background: state.bubbleColor,
+                          color: state.selectedTheme.bubbleText || '#fff',
+                          borderRadius: state.bubbleRadius,
+                          fontFamily: state.fontFamily,
+                          position: 'relative',
+                        }}
+                      >
+                        <div className="flex items-center gap-2 mb-1">
+                        </div>
+                        <div className="flex flex-row items-end w-full">
+                          {msg.deleted || !msg.message ? (
+                            <span className="flex-1 text-sm italic text-neutral-500 bg-neutral-800/80 rounded-lg px-3 py-2 select-none cursor-default">
+                              <svg className="inline-block mr-1 mb-0.5" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                              This message was deleted
+                            </span>
+                          ) : (
+                            <span className={`flex-1 text-base break-words ${msg.message && msg.message.includes('@' + displayName) ? 'bg-yellow-400/20' : ''}`} style={{ color: state.selectedTheme.bubbleText || '#fff' }}>
+                              {memoizedHighlightMentions(msg.message, clients, displayName)}
+                              {msg.edited && <span className="text-xs text-neutral-400 ml-1">(edited)</span>}
+                            </span>
                           )}
-                        </span>
+                          <span className="flex items-end gap-1 text-[11px] opacity-70 ml-4 relative top-[4px]">
+                            <span>
+                              {msg.timestamp
+                                ? new Date(msg.timestamp).toLocaleTimeString([], {
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                    hour12: true
+                                  })
+                                : 'now'}
+                            </span>
+                            {/* Delivery status for own messages */}
+                            {msg.sender === clientId && (
+                              msg.read ? (
+                                <span title="Read" className=""><DoubleCheckBlue /></span>
+                              ) : msg.delivered ? (
+                                <span title="Delivered" className=""><DoubleCheckGray /></span>
+                              ) : (
+                                <span title="Sent" className=""><SingleCheck /></span>
+                              )
+                            )}
+                          </span>
+                        </div>
+                        
+                        {/* Emoji reactions display with absolute positioning at bottom right of bubble */}
+                        {messageReactions.get(msg.messageId) && messageReactions.get(msg.messageId).length > 0 && (
+                          <div
+                            className={`absolute bottom-[-25px] right-0 flex gap-0.5 px-0.5 py-0.5 rounded-full bg-neutral-900/95 backdrop-blur-sm shadow-lg border border-neutral-800/50 w-max transition-all duration-200 animate-fade-scale-in z-10`}
+                          >
+                            {messageReactions.get(msg.messageId).map((reaction, idx) => {
+                              const hasReacted = reaction.users.includes(clientId);
+                              return (
+                                <button
+                                  key={reaction.emoji}
+                                  className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs transition-all duration-200 hover:scale-110 focus:outline-none emoji-reaction-button emoji-pop-in ${
+                                    hasReacted 
+                                      ? 'bg-primary/20 text-primary border border-primary/30' 
+                                      : 'bg-neutral-800/80 text-neutral-300 hover:bg-neutral-700/80'
+                                  }`}
+                                  onClick={() => hasReacted 
+                                    ? handleRemoveEmojiReaction(reaction.emoji, msg)
+                                    : handleEmojiReaction(reaction.emoji, msg)
+                                  }
+                                  title={`${reaction.count} reaction${reaction.count !== 1 ? 's' : ''}${hasReacted ? ' - Click to remove' : ' - Click to add'}`}
+                                  style={{
+                                    animationDelay: `${idx * 40}ms`,
+                                  }}
+                                >
+                                  <span className="text-sm">{reaction.emoji}</span>
+                                  {reaction.count > 1 && (
+                                    <span className="text-xs font-medium">{reaction.count}</span>
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -1793,6 +2084,12 @@ function isHexColor(str) {
         >
           New messages ↓
         </button>
+      )}
+      {/* Typing indicator (now always above input) */}
+      {state.typingUsers.length > 0 && (
+        <div className="text-xs text-neutral-400 mt-1 mb-1 px-4" aria-live="polite">
+          {state.typingUsers.map((u) => u.displayName || u.clientId).join(', ')} {state.typingUsers.length === 1 ? 'is' : 'are'} typing...
+        </div>
       )}
       {/* Input Area */}
       <form onSubmit={handleSubmit} className="flex items-center gap-2 p-4 bg-neutral-950 border-t border-neutral-800 sticky bottom-0 z-10 w-full">
@@ -1870,12 +2167,6 @@ function isHexColor(str) {
           </div>
         </div>
       </form>
-      {/* Typing indicator */}
-      {state.typingUsers.length > 0 && (
-        <div className="text-xs text-neutral-400 mt-1" aria-live="polite">
-          {state.typingUsers.map((u) => u.displayName || u.clientId).join(', ')} {state.typingUsers.length === 1 ? 'is' : 'are'} typing...
-        </div>
-      )}
       {/* Floating copy feedback popup (desktop: absolute in chat section, mobile: fixed) */}
       {state.copyFeedback && (
         mobile ? (
@@ -1940,6 +2231,23 @@ function isHexColor(str) {
             stroke-dashoffset: 24;
             animation: draw-tick 0.5s cubic-bezier(0.4,0,0.2,1) forwards;
           }
+          @keyframes emoji-pop-in {
+            0% {
+              opacity: 0;
+              transform: scale(0.5) translateY(10px);
+            }
+            60% {
+              opacity: 1;
+              transform: scale(1.15) translateY(-2px);
+            }
+            100% {
+              opacity: 1;
+              transform: scale(1) translateY(0);
+            }
+          }
+          .emoji-pop-in {
+            animation: emoji-pop-in 0.32s cubic-bezier(0.4,0,0.2,1) both;
+          }
         `}
       </style>
       {/* Report Modal */}
@@ -1990,7 +2298,7 @@ function isHexColor(str) {
               <button
                 className="block w-full text-left px-4 py-2 font-medium hover:bg-neutral-800/80 focus:bg-neutral-800/90 focus:outline-none transition-colors duration-150 rounded-md flex items-center justify-between gap-2"
                 onClick={() => { 
-                  dispatch({ type: 'SET', payload: { menuExiting: true } }); 
+                  dispatch({ type: 'SET', payload: { menuExiting: true, emojiRowMsgId: null } }); 
                   setTimeout(() => {
                     memoizedHandleEdit(state.contextMenu.msg);
                     // Focus the input after the edit state is set
@@ -2008,7 +2316,10 @@ function isHexColor(str) {
             {!state.contextMenu.msg.reaction && (
               <button
                 className="block w-full text-left px-4 py-2 hover:bg-neutral-800 flex items-center justify-between gap-2"
-                onClick={() => { dispatch({ type: 'SET', payload: { menuExiting: true } }); setTimeout(() => memoizedHandleReport(state.contextMenu.msg), 160); }}
+                onClick={() => { 
+                  dispatch({ type: 'SET', payload: { menuExiting: true, emojiRowMsgId: null } }); 
+                  setTimeout(() => memoizedHandleReport(state.contextMenu.msg), 160); 
+                }}
               >
                 <span>Report</span>
                 <FiFlag size={16} />
@@ -2019,8 +2330,8 @@ function isHexColor(str) {
               <button
                 className="block w-full text-left px-4 py-2 hover:bg-neutral-800 flex items-center justify-between gap-2"
                 onClick={() => {
+                  dispatch({ type: 'SET', payload: { menuExiting: true, emojiRowMsgId: null } });
                   memoizedHandleCopy(state.contextMenu.msg);
-                  // Move focus away from button to allow feedback to show
                   setTimeout(() => {
                     if (contextMenuRef.current) {
                       contextMenuRef.current.focus?.();
@@ -2035,7 +2346,7 @@ function isHexColor(str) {
             {state.contextMenu.msg.sender === clientId && !state.contextMenu.msg.reaction && isDeletable(state.contextMenu.msg) && (
               <button
                 className="block w-full text-left px-4 py-2 hover:bg-neutral-800 flex items-center justify-between gap-2 text-red-500"
-                onClick={() => { dispatch({ type: 'SET', payload: { menuExiting: true } }); setTimeout(() => memoizedHandleDelete(state.contextMenu.msg), 160); }}
+                onClick={() => { dispatch({ type: 'SET', payload: { menuExiting: true, emojiRowMsgId: null } }); setTimeout(() => memoizedHandleDelete(state.contextMenu.msg), 160); }}
               >
                 <span className="text-red-300">Delete</span>
                 <FiTrash2 size={16} className="text-red-300" />

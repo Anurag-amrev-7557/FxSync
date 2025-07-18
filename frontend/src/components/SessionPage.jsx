@@ -8,6 +8,7 @@ import ChatBox from './ChatBox';
 import Playlist from './Playlist';
 import ResizableLayout from './ResizableLayout';
 import ExitRoomModal from './ExitRoomModal';
+import ClearDataModal from './ClearDataModal';
 import BottomTabBar from './BottomTabBar';
 import useSmoothAppearance from '../hooks/useSmoothAppearance';
 import {
@@ -296,6 +297,19 @@ function SessionPage({
     closeExitModal()
   }
 
+  const confirmClearData = () => {
+    if (currentSessionId) {
+      clearSessionData(currentSessionId)
+      // Reset the React state to reflect the cleared data
+      setMessages([])
+      setQueue([])
+      setSelectedTrackIdx(0)
+      setCurrentTrackOverride(null)
+    }
+    // Close the modal after clearing data
+    closeClearDataModal()
+  }
+
   // Enhanced handler for Playlist selection with improved robustness, logging, and user experience
   const handleSelectTrack = useCallback((idx, trackObj) => {
     // If a custom track object is provided (e.g., preview or external), override
@@ -377,6 +391,9 @@ function SessionPage({
 
   // Ensure showExitModal is always defined before use
   const [showExitModal, openExitModal, closeExitModal] = useModalState(false);
+  
+  // Clear data modal state
+  const [showClearDataModal, openClearDataModal, closeClearDataModal] = useModalState(false);
 
   // Ensure socket.sessionId is always set for AudioPlayer and related consumers
   useEffect(() => {
@@ -462,13 +479,7 @@ function SessionPage({
                 )}
                 
                 <button
-                  onClick={() => {
-                    if (currentSessionId && window.confirm('Clear all saved data for this session?')) {
-                      clearSessionData(currentSessionId)
-                      // setMessages([]) // This will be handled by useChatMessages
-                      // setQueue([]) // This will be handled by useQueue
-                    }
-                  }}
+                  onClick={openClearDataModal}
                   className="flex items-center gap-2 px-3 py-1.5 text-xs text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-lg transition-all duration-200 hover:shadow-md"
                   title="Clear saved data"
                 >
@@ -626,6 +637,20 @@ function SessionPage({
                 </span>
               </button>
               <button
+                onClick={openClearDataModal}
+                className="flex items-center gap-1 px-2 py-1 text-[11px] text-neutral-400 hover:text-neutral-300 hover:bg-neutral-500/10 border border-neutral-500/30 hover:border-neutral-500/50 rounded transition-all duration-200"
+                title="Clear data"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 6h18"></path>
+                  <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
+                  <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
+                  <line x1="10" y1="11" x2="10" y2="17"></line>
+                  <line x1="14" y1="11" x2="14" y2="17"></line>
+                </svg>
+                Clear
+              </button>
+              <button
                 onClick={handleExitRoom}
                 className="flex items-center gap-1 px-2 py-1 text-[11px] text-red-400 hover:text-red-300 hover:bg-red-500/10 border border-red-500/30 hover:border-red-500/50 rounded transition-all duration-200"
                 title="Exit room"
@@ -769,6 +794,12 @@ function SessionPage({
         onClose={closeExitModal}
         onConfirm={confirmExitRoom}
         roomName={currentSessionId}
+      />
+      <ClearDataModal
+        isOpen={showClearDataModal}
+        onClose={closeClearDataModal}
+        onConfirm={confirmClearData}
+        sessionId={currentSessionId}
       />
     </div>
   )
