@@ -9,11 +9,18 @@
  */
 import React from 'react';
 
-export default function DisplayNameField({ displayName, isRegenerating, nameAnimation, onRegenerate }) {
+export default function DisplayNameField({
+  displayName,
+  isRegenerating,
+  nameAnimation,
+  onRegenerate,
+}) {
   const displayNameId = 'display-name-value';
   return (
     <div className="flex items-center gap-3">
-      <label htmlFor={displayNameId} className="sr-only">Display Name</label>
+      <label htmlFor={displayNameId} className="sr-only">
+        Display Name
+      </label>
       <div className="relative">
         <span
           id={displayNameId}
@@ -23,7 +30,9 @@ export default function DisplayNameField({ displayName, isRegenerating, nameAnim
           {displayName}
         </span>
         {/* Animated underline */}
-        <div className={`absolute -bottom-1 left-0 h-0.5 bg-gradient-to-r from-transparent via-white to-transparent transition-all duration-500 ${nameAnimation ? 'w-full opacity-100' : 'w-0 opacity-0 group-hover:w-full group-hover:opacity-100'}`}></div>
+        <div
+          className={`absolute -bottom-1 left-0 h-0.5 bg-gradient-to-r from-transparent via-white to-transparent transition-all duration-500 ${nameAnimation ? 'w-full opacity-100' : 'w-0 opacity-0 group-hover:w-full group-hover:opacity-100'}`}
+        ></div>
       </div>
       <button
         type="button"
@@ -32,7 +41,18 @@ export default function DisplayNameField({ displayName, isRegenerating, nameAnim
         aria-label="Regenerate display name"
         className={`p-2 text-neutral-500 hover:text-white hover:bg-neutral-700/50 rounded-lg transition-all duration-300 hover:scale-110 hover:shadow-lg relative overflow-hidden group/btn ${isRegenerating ? 'animate-spin' : 'hover:rotate-180'}`}
       >
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="transition-transform duration-300 sm:w-4 sm:h-4">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="transition-transform duration-300 sm:w-4 sm:h-4"
+        >
           <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"></path>
           <path d="M21 3v5h-5"></path>
           <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"></path>
@@ -43,4 +63,4 @@ export default function DisplayNameField({ displayName, isRegenerating, nameAnim
       </button>
     </div>
   );
-} 
+}

@@ -50,7 +50,8 @@ function UploadForm({
           <label className="block text-xs font-medium text-neutral-400 mb-2">
             Add Audio URL or Upload MP3
           </label>
-          <div className={`flex flex-row items-stretch sm:items-center gap-x-2 w-full relative ${dragActive ? 'ring-2 ring-primary' : ''}`}
+          <div
+            className={`flex flex-row items-stretch sm:items-center gap-x-2 w-full relative ${dragActive ? 'ring-2 ring-primary' : ''}`}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
@@ -61,7 +62,7 @@ function UploadForm({
                 className="flex-1 bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 sm:py-3 text-sm text-white placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary/50 transition-all duration-200 w-full pr-12 sm:pr-3 h-9"
                 type="text"
                 value={input}
-                onChange={e => setInput(e.target.value)}
+                onChange={(e) => setInput(e.target.value)}
                 placeholder="https://example.com/audio.mp3"
                 disabled={loading}
               />
@@ -145,4 +146,4 @@ function UploadForm({
   );
 }
 
-export default UploadForm; 
+export default UploadForm;

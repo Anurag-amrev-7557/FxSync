@@ -1,6 +1,7 @@
 /* @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap'); */
 
-html, body {
+html,
+body {
   scroll-behavior: smooth;
 }
 
@@ -14,16 +15,24 @@ html, body {
   scrollbar-color: #404040 #262626;
 }
 
-
-
 * {
   box-sizing: border-box;
 }
 
 body {
   margin: 0;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+  font-family:
+    'Inter',
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    'Roboto',
+    'Oxygen',
+    'Ubuntu',
+    'Cantarell',
+    'Fira Sans',
+    'Droid Sans',
+    'Helvetica Neue',
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -76,7 +85,9 @@ body {
 
 /* Smooth transitions for all elements */
 * {
-  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke, opacity, box-shadow, transform, filter, backdrop-filter;
+  transition-property:
+    color, background-color, border-color, text-decoration-color, fill, stroke, opacity, box-shadow,
+    transform, filter, backdrop-filter;
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
   transition-duration: 150ms;
 }
@@ -185,7 +196,8 @@ body {
 }
 
 @keyframes float {
-  0%, 100% {
+  0%,
+  100% {
     transform: translateY(0px) rotate(0deg);
     opacity: 0.1;
   }
@@ -200,13 +212,21 @@ body {
 }
 
 @keyframes shake {
-  0%, 100% {
+  0%,
+  100% {
     transform: translateX(0);
   }
-  10%, 30%, 50%, 70%, 90% {
+  10%,
+  30%,
+  50%,
+  70%,
+  90% {
     transform: translateX(-2px);
   }
-  20%, 40%, 60%, 80% {
+  20%,
+  40%,
+  60%,
+  80% {
     transform: translateX(2px);
   }
 }
@@ -266,7 +286,9 @@ body {
 
 /* Hover effects */
 .hover-lift {
-  transition: transform 0.3s ease, box-shadow 0.3s ease;
+  transition:
+    transform 0.3s ease,
+    box-shadow 0.3s ease;
 }
 
 .hover-lift:hover {
@@ -295,8 +317,13 @@ body {
 }
 
 @keyframes typing {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.3; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
 }
 
 /* Glow effects */
@@ -306,8 +333,12 @@ body {
 }
 
 @keyframes glow {
-  from { box-shadow: 0 0 20px rgba(255, 255, 255, 0.3); }
-  to { box-shadow: 0 0 30px rgba(255, 255, 255, 0.5); }
+  from {
+    box-shadow: 0 0 20px rgba(255, 255, 255, 0.3);
+  }
+  to {
+    box-shadow: 0 0 30px rgba(255, 255, 255, 0.5);
+  }
 }
 
 /* Particle effects */
@@ -318,7 +349,8 @@ body {
 }
 
 @keyframes particle-float {
-  0%, 100% {
+  0%,
+  100% {
     transform: translateY(0px) rotate(0deg);
     opacity: 0.1;
   }
@@ -365,9 +397,15 @@ body {
 }
 
 @keyframes text-reveal {
-  0% { transform: translateX(-100%); }
-  50% { transform: translateX(100%); }
-  100% { transform: translateX(100%); }
+  0% {
+    transform: translateX(-100%);
+  }
+  50% {
+    transform: translateX(100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -385,8 +423,14 @@ body {
 }
 
 @keyframes fade-in-up {
-  from { opacity: 0; transform: translateY(16px);}
-  to   { opacity: 1; transform: translateY(0);}
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 .animate-fade-in-up {
   animation: fade-in-up 0.4s cubic-bezier(0.22, 1, 0.36, 1);
@@ -476,24 +520,43 @@ body {
   animation: fadeBounceIn 0.4s cubic-bezier(0.22, 1, 0.36, 1);
 }
 @keyframes fadeBounceIn {
-  0% { opacity: 0; transform: translateY(30px) scale(0.95); }
-  60% { opacity: 1; transform: translateY(-8px) scale(1.03); }
-  80% { transform: translateY(2px) scale(0.98); }
-  100% { opacity: 1; transform: translateY(0) scale(1); }
+  0% {
+    opacity: 0;
+    transform: translateY(30px) scale(0.95);
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(-8px) scale(1.03);
+  }
+  80% {
+    transform: translateY(2px) scale(0.98);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 .animate-float {
   animation: floatY 2s ease-in-out infinite alternate;
 }
 @keyframes floatY {
-  0% { transform: translateY(0); }
-  100% { transform: translateY(-10px); }
+  0% {
+    transform: translateY(0);
+  }
+  100% {
+    transform: translateY(-10px);
+  }
 }
 .animate-fade-in {
   animation: fadeIn 1.2s cubic-bezier(0.22, 1, 0.36, 1);
 }
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .enhanced-bubble-appear {
@@ -542,7 +605,8 @@ body {
 }
 
 /* Remove blue outline on button focus */
-button:focus, button:focus-visible {
+button:focus,
+button:focus-visible {
   outline: none !important;
   box-shadow: none !important;
 }
@@ -551,6 +615,33 @@ button:focus, button:focus-visible {
   animation: blink-cursor 1s steps(1) infinite;
 }
 @keyframes blink-cursor {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+
+/* Accessibility: Reduce motion for users who prefer it */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .animate-float,
+  .animate-float-slow,
+  .animate-float-slower,
+  .animate-bounce,
+  .animate-pulse,
+  .animate-spin,
+  .animate-spin-slow,
+  .animate-twinkle,
+  .animate-ping,
+  .animate-wiggle {
+    animation: none !important;
+  }
 }

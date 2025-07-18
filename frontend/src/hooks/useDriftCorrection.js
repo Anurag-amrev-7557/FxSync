@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import SYNC_CONFIG from '../utils/syncConfig';
 import { createEMA } from '../utils/syncConfig'; // Import EMA utility
+import DriftWorker from './driftWorker.js?worker';
 
 // Helper: Smoothly fade audio volume in/out
 export function fadeAudio(audio, targetVolume, duration = 200) {
@@ -82,6 +83,18 @@ export default function useDriftCorrection({
   const driftEMARef = useRef(createEMA(0.18, 0));
   // --- Drift buffer for median filter ---
   const driftBufferRef = useRef([]);
+  // --- Web Worker for drift analysis ---
+  const driftWorkerRef = useRef();
+  const [workerDrift, setWorkerDrift] = useState({ ema: 0, median: 0 });
+  useEffect(() => {
+    driftWorkerRef.current = new DriftWorker();
+    driftWorkerRef.current.onmessage = (e) => {
+      setWorkerDrift(e.data);
+    };
+    return () => {
+      driftWorkerRef.current.terminate();
+    };
+  }, []);
 
   // --- Adaptive thresholds based on jitter ---
   let adaptiveMin = MICRO_DRIFT_MIN;
@@ -91,7 +104,7 @@ export default function useDriftCorrection({
     const jitterVal = sessionSyncState.jitter;
     if (jitterVal > 30) {
       adaptiveMin = 0.025; // 25ms
-      adaptiveMax = 0.25;  // 250ms
+      adaptiveMax = 0.25; // 250ms
     } else if (jitterVal > 15) {
       adaptiveMin = 0.015;
       adaptiveMax = 0.15;
@@ -115,6 +128,8 @@ export default function useDriftCorrection({
     let pausedByVisibility = false;
     driftEMARef.current.reset(0); // Reset EMA on effect re-run
     driftBufferRef.current = [];
+    // Reset worker state
+    if (driftWorkerRef.current) driftWorkerRef.current.postMessage({ reset: true });
     function correctMicroDriftRAF() {
       if (!running || pausedByVisibility) return;
       if (!audio || isController) return;
@@ -127,40 +142,65 @@ export default function useDriftCorrection({
       }
       const now = getServerTime ? getServerTime() : Date.now();
       const rttComp = rtt ? rtt / 2000 : 0;
-      const expected = (sessionSyncState && typeof sessionSyncState.timestamp === 'number' && typeof sessionSyncState.lastUpdated === 'number')
-        ? sessionSyncState.timestamp + (now - sessionSyncState.lastUpdated) / 1000 - audioLatency + rttComp + smoothedOffset
-        : null;
+      const expected =
+        sessionSyncState &&
+        typeof sessionSyncState.timestamp === 'number' &&
+        typeof sessionSyncState.lastUpdated === 'number'
+          ? sessionSyncState.timestamp +
+            (now - sessionSyncState.lastUpdated) / 1000 -
+            audioLatency +
+            rttComp +
+            smoothedOffset
+          : null;
       if (!isFiniteNumber(expected)) {
         requestAnimationFrame(correctMicroDriftRAF);
         return;
       }
       const drift = audio.currentTime - expected;
-      // --- Use EMA for smoothing drift ---
-      const smoothedDrift = driftEMARef.current.next(drift);
-      // --- Median filter ---
-      driftBufferRef.current.push(smoothedDrift);
-      if (driftBufferRef.current.length > 9) driftBufferRef.current.shift();
-      const medianDrift = median(driftBufferRef.current);
+      // --- Use Web Worker for smoothing drift ---
+      if (driftWorkerRef.current) {
+        driftWorkerRef.current.postMessage({ drift });
+      }
+      const medianDrift = workerDrift.median;
       // --- Micro-nudging for sub-10ms drift ---
-      if (Math.abs(medianDrift) > 0.002 && Math.abs(medianDrift) < 0.010) { // 2ms < drift < 10ms
+      if (Math.abs(medianDrift) > 0.002 && Math.abs(medianDrift) < 0.01) {
+        // 2ms < drift < 10ms
         audio.currentTime += -medianDrift * 0.5; // Nudge toward expected
         if (!microActive && typeof onMicroCorrection === 'function') onMicroCorrection(true);
         microActive = true;
         if (import.meta.env.MODE === 'development') {
           window._driftAnalytics = window._driftAnalytics || [];
-          window._driftAnalytics.push({ type: 'nudge', drift: medianDrift, time: Date.now(), current: audio.currentTime, expected });
+          window._driftAnalytics.push({
+            type: 'nudge',
+            drift: medianDrift,
+            time: Date.now(),
+            current: audio.currentTime,
+            expected,
+          });
         }
       } else if (Math.abs(medianDrift) > adaptiveMin && Math.abs(medianDrift) < adaptiveMax) {
         // Use playbackRate micro-correction
         if (!microActive && typeof onMicroCorrection === 'function') onMicroCorrection(true);
         microActive = true;
-        let rateAdj = 1 - Math.max(-MICRO_RATE_CAP_MICRO, Math.min(MICRO_RATE_CAP_MICRO, medianDrift / adaptiveMax * MICRO_RATE_CAP_MICRO));
+        let rateAdj =
+          1 -
+          Math.max(
+            -MICRO_RATE_CAP_MICRO,
+            Math.min(MICRO_RATE_CAP_MICRO, (medianDrift / adaptiveMax) * MICRO_RATE_CAP_MICRO)
+          );
         rateAdj = Math.max(1 - MICRO_RATE_CAP_MICRO, Math.min(1 + MICRO_RATE_CAP_MICRO, rateAdj));
         if (Math.abs(audio.playbackRate - rateAdj) > 0.0005) {
           audio.playbackRate = rateAdj;
           if (import.meta.env.MODE === 'development') {
             window._driftAnalytics = window._driftAnalytics || [];
-            window._driftAnalytics.push({ type: 'micro', drift: medianDrift, rateAdj, time: Date.now(), current: audio.currentTime, expected });
+            window._driftAnalytics.push({
+              type: 'micro',
+              drift: medianDrift,
+              rateAdj,
+              time: Date.now(),
+              current: audio.currentTime,
+              expected,
+            });
           }
         }
       } else {
@@ -191,11 +231,14 @@ export default function useDriftCorrection({
 
   // maybeCorrectDrift function (unchanged)
   function maybeCorrectDrift(audio, expected) {
-    if (!audio || typeof audio.currentTime !== 'number') return { corrected: false, reason: 'audio_invalid' };
-    if (!isFiniteNumber(expected) || expected < 0) return { corrected: false, reason: 'expected_invalid' };
+    if (!audio || typeof audio.currentTime !== 'number')
+      return { corrected: false, reason: 'audio_invalid' };
+    if (!isFiniteNumber(expected) || expected < 0)
+      return { corrected: false, reason: 'expected_invalid' };
     if (correctionInProgressRef.current) return { corrected: false, reason: 'in_progress' };
     const now = Date.now();
-    if (now - lastCorrectionRef.current < CORRECTION_COOLDOWN) return { corrected: false, reason: 'cooldown' };
+    if (now - lastCorrectionRef.current < CORRECTION_COOLDOWN)
+      return { corrected: false, reason: 'cooldown' };
     correctionInProgressRef.current = true;
     if (!audio.paused) {
       const before = audio.currentTime;
@@ -210,7 +253,14 @@ export default function useDriftCorrection({
         // Log micro-correction
         if (import.meta.env.MODE === 'development') {
           window._driftAnalytics = window._driftAnalytics || [];
-          window._driftAnalytics.push({ type: 'micro', drift, rate, time: Date.now(), before, after: expected });
+          window._driftAnalytics.push({
+            type: 'micro',
+            drift,
+            rate,
+            time: Date.now(),
+            before,
+            after: expected,
+          });
         }
         return { corrected: true, micro: true, before, after: expected, drift, rate };
       } else {
@@ -228,7 +278,13 @@ export default function useDriftCorrection({
         // Log large correction
         if (import.meta.env.MODE === 'development') {
           window._driftAnalytics = window._driftAnalytics || [];
-          window._driftAnalytics.push({ type: 'large', drift, time: Date.now(), before, after: expected });
+          window._driftAnalytics.push({
+            type: 'large',
+            drift,
+            time: Date.now(),
+            before,
+            after: expected,
+          });
         }
         return { corrected: true, before, after: expected, at: now };
       }
@@ -239,4 +295,4 @@ export default function useDriftCorrection({
   }
 
   return { maybeCorrectDrift };
-} 
+}

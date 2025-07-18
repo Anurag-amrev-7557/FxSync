@@ -4,7 +4,14 @@
 
 /* Custom styles for Beatsync UI */
 :root {
-  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-family:
+    'Inter',
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
   line-height: 1.5;
   font-weight: 400;
   color-scheme: dark;
@@ -14,6 +21,15 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* Animation duration and delay variables */
+  --anim-duration-fast: 0.2s;
+  --anim-duration: 0.4s;
+  --anim-duration-slow: 1.2s;
+  --anim-duration-bounce: 0.3s;
+  --anim-duration-glow: 2s;
+  --anim-duration-gradient: 2s;
+  --anim-delay-stagger: 60ms;
+  --anim-duration-infinite: infinite;
 }
 
 * {
@@ -27,7 +43,8 @@ body {
   color: #ffffff;
 }
 
-html, body {
+html,
+body {
   scroll-behavior: smooth;
 }
 
@@ -111,41 +128,41 @@ html, body {
     touch-action: manipulation;
     -webkit-tap-highlight-color: transparent;
   }
-  
+
   /* Improved modal scrolling */
   .modal-content {
     -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;
   }
-  
+
   /* Better button sizing for mobile */
   button {
     min-height: 44px;
     min-width: 44px;
   }
-  
+
   /* Improved input sizing */
-  input[type="color"] {
+  input[type='color'] {
     min-height: 44px;
     min-width: 44px;
   }
-  
+
   /* Better range slider for mobile */
-  input[type="range"] {
+  input[type='range'] {
     min-height: 44px;
     -webkit-appearance: none;
     appearance: none;
     background: transparent;
     cursor: pointer;
   }
-  
-  input[type="range"]::-webkit-slider-track {
+
+  input[type='range']::-webkit-slider-track {
     background: #262626;
     height: 8px;
     border-radius: 4px;
   }
-  
-  input[type="range"]::-webkit-slider-thumb {
+
+  input[type='range']::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
     height: 20px;
@@ -155,16 +172,16 @@ html, body {
     cursor: pointer;
     border: none;
   }
-  
-  input[type="range"]::-webkit-slider-thumb:hover {
+
+  input[type='range']::-webkit-slider-thumb:hover {
     background: #737373;
   }
-  
+
   /* Better file input styling for mobile */
-  input[type="file"] {
+  input[type='file'] {
     min-height: 44px;
   }
-  
+
   /* Improved select dropdown for mobile */
   select {
     min-height: 44px;
@@ -211,20 +228,20 @@ input {
 }
 
 /* Custom range slider styles */
-input[type="range"] {
+input[type='range'] {
   -webkit-appearance: none;
   appearance: none;
   background: transparent;
   cursor: pointer;
 }
 
-input[type="range"]::-webkit-slider-track {
+input[type='range']::-webkit-slider-track {
   background: #262626;
   height: 8px;
   border-radius: 4px;
 }
 
-input[type="range"]::-webkit-slider-thumb {
+input[type='range']::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
   height: 16px;
@@ -235,14 +252,14 @@ input[type="range"]::-webkit-slider-thumb {
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
-input[type="range"]::-moz-range-track {
+input[type='range']::-moz-range-track {
   background: #262626;
   height: 8px;
   border-radius: 4px;
   border: none;
 }
 
-input[type="range"]::-moz-range-thumb {
+input[type='range']::-moz-range-thumb {
   height: 16px;
   width: 16px;
   border-radius: 50%;
@@ -253,13 +270,13 @@ input[type="range"]::-moz-range-thumb {
 }
 
 /* Audio player specific range slider */
-.audio-player input[type="range"]::-webkit-slider-track {
+.audio-player input[type='range']::-webkit-slider-track {
   background: #262626;
   height: 8px;
   border-radius: 4px;
 }
 
-.audio-player input[type="range"]::-webkit-slider-thumb {
+.audio-player input[type='range']::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
   height: 16px;
@@ -270,14 +287,14 @@ input[type="range"]::-moz-range-thumb {
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
-.audio-player input[type="range"]::-moz-range-track {
+.audio-player input[type='range']::-moz-range-track {
   background: #262626;
   height: 8px;
   border-radius: 4px;
   border: none;
 }
 
-.audio-player input[type="range"]::-moz-range-thumb {
+.audio-player input[type='range']::-moz-range-thumb {
   height: 16px;
   width: 16px;
   border-radius: 50%;
@@ -414,13 +431,21 @@ input[type="range"]::-moz-range-thumb {
 }
 
 @keyframes shake {
-  0%, 100% {
+  0%,
+  100% {
     transform: translateX(0);
   }
-  10%, 30%, 50%, 70%, 90% {
+  10%,
+  30%,
+  50%,
+  70%,
+  90% {
     transform: translateX(-2px);
   }
-  20%, 40%, 60%, 80% {
+  20%,
+  40%,
+  60%,
+  80% {
     transform: translateX(2px);
   }
 }
@@ -482,7 +507,8 @@ input[type="range"]::-moz-range-thumb {
 /* End of Selection */
 
 @keyframes glow-pulse {
-  0%, 100% {
+  0%,
+  100% {
     box-shadow: 0 0 5px rgba(255, 255, 255, 0.1);
   }
   50% {
@@ -504,82 +530,43 @@ input[type="range"]::-moz-range-thumb {
 
 /* Animation utility classes */
 .animate-slide-in-right {
-  animation: slide-in-right 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: slide-in-right var(--anim-duration) cubic-bezier(0.22, 1, 0.36, 1);
 }
 .animate-fade-in-scale {
-  animation: fade-in-scale 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: fade-in-scale var(--anim-duration) cubic-bezier(0.22, 1, 0.36, 1);
 }
 .animate-bounce-in {
-  animation: bounce-in 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: bounce-in var(--anim-duration) cubic-bezier(0.22, 1, 0.36, 1);
 }
 .animate-shake {
-  animation: shake 0.3s ease-out;
+  animation: shake var(--anim-duration-bounce) ease-out;
 }
 .animate-fade-in {
-  animation: fade-in 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: fade-in var(--anim-duration) cubic-bezier(0.22, 1, 0.36, 1);
 }
 .animate-scale-in {
-  animation: scale-in 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: scale-in var(--anim-duration) cubic-bezier(0.22, 1, 0.36, 1);
 }
 .animate-slide-in-left {
-  animation: slide-in-left 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: slide-in-left var(--anim-duration) cubic-bezier(0.22, 1, 0.36, 1);
 }
 .animate-slide-up-from-bottom {
-  animation: slide-up-from-bottom 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: slide-up-from-bottom var(--anim-duration) cubic-bezier(0.22, 1, 0.36, 1);
 }
 .animate-slide-down-from-top {
-  animation: slide-down-from-top 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: slide-down-from-top var(--anim-duration) cubic-bezier(0.22, 1, 0.36, 1);
 }
 .animate-glow-pulse {
-  animation: glow-pulse 2s ease-in-out infinite;
+  animation: glow-pulse var(--anim-duration-glow) ease-in-out var(--anim-duration-infinite);
 }
 .animate-gradient-shift {
-  animation: gradient-shift 2s ease-in-out infinite;
-}
-.animate-float-up {
-  animation: float-up 2s ease-in-out infinite;
-}
-.animate-particle-burst {
-  animation: particle-burst 0.3s ease-out;
-}
-.animate-magnetic-pull {
-  animation: magnetic-pull 0.3s ease-out;
-}
-.animate-ripple {
-  animation: ripple 0.3s ease-out;
-}
-.animate-glow-pulse-enhanced {
-  animation: glow-pulse-enhanced 2s ease-in-out infinite;
-}
-.animate-text-reveal {
-  animation: text-reveal 0.4s cubic-bezier(0.22, 1, 0.36, 1);
-}
-.animate-stagger-in {
-  animation: stagger-in 0.4s cubic-bezier(0.22, 1, 0.36, 1);
-}
-.animate-cursor-blink {
-  animation: cursor-blink 2s ease-in-out infinite;
-}
-.animate-hover-lift-enhanced {
-  animation: hover-lift-enhanced 0.4s cubic-bezier(0.22, 1, 0.36, 1);
-}
-.animate-parallax-float {
-  animation: parallax-float 2s ease-in-out infinite;
-}
-.animate-wave {
-  animation: wave-animation 2s ease-in-out infinite;
-}
-.animate-bounce-rotate {
-  animation: bounce-rotate 2s ease-in-out infinite;
-}
-.animate-shimmer {
-  animation: shimmer 2s ease-in-out infinite;
+  animation: gradient-shift var(--anim-duration-gradient) ease-in-out var(--anim-duration-infinite);
 }
 .stagger-animate {
-  transition: all 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: all var(--anim-duration) cubic-bezier(0.22, 1, 0.36, 1);
 }
 .stagger-animate.animate-in {
-  transition-delay: 60ms;
+  transition-delay: var(--anim-delay-stagger);
 }
 
 /* 3D Flip Animation */
@@ -653,20 +640,35 @@ input[type="range"]::-moz-range-thumb {
 
 /* Enhanced input styles */
 .input-enhanced {
-  background: linear-gradient(135deg, rgba(55, 65, 81, 0.8) 0%, rgba(75, 85, 99, 0.6) 50%, rgba(55, 65, 81, 0.8) 100%);
+  background: linear-gradient(
+    135deg,
+    rgba(55, 65, 81, 0.8) 0%,
+    rgba(75, 85, 99, 0.6) 50%,
+    rgba(55, 65, 81, 0.8) 100%
+  );
   border: 1px solid rgba(75, 85, 99, 0.4);
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .input-enhanced:focus {
-  background: linear-gradient(135deg, rgba(75, 85, 99, 0.9) 0%, rgba(107, 114, 128, 0.7) 50%, rgba(75, 85, 99, 0.9) 100%);
+  background: linear-gradient(
+    135deg,
+    rgba(75, 85, 99, 0.9) 0%,
+    rgba(107, 114, 128, 0.7) 50%,
+    rgba(75, 85, 99, 0.9) 100%
+  );
   border-color: rgba(156, 163, 175, 0.5);
   box-shadow: 0 0 0 3px rgba(156, 163, 175, 0.1);
 }
 
 /* Card styles */
 .card-enhanced {
-  background: linear-gradient(135deg, rgba(17, 24, 39, 0.95) 0%, rgba(31, 41, 55, 0.9) 50%, rgba(17, 24, 39, 0.95) 100%);
+  background: linear-gradient(
+    135deg,
+    rgba(17, 24, 39, 0.95) 0%,
+    rgba(31, 41, 55, 0.9) 50%,
+    rgba(17, 24, 39, 0.95) 100%
+  );
   border: 1px solid rgba(75, 85, 99, 0.5);
   backdrop-filter: blur(10px);
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -680,7 +682,9 @@ input[type="range"]::-moz-range-thumb {
 
 /* Smooth transitions for all interactive elements */
 * {
-  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke, opacity, box-shadow, transform, filter, backdrop-filter;
+  transition-property:
+    color, background-color, border-color, text-decoration-color, fill, stroke, opacity, box-shadow,
+    transform, filter, backdrop-filter;
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
   transition-duration: 150ms;
 }
@@ -738,11 +742,14 @@ input[type="range"]::-moz-range-thumb {
 
 /* Enhanced glow pulse with color variation */
 @keyframes glow-pulse-enhanced {
-  0%, 100% {
+  0%,
+  100% {
     box-shadow: 0 0 5px rgba(255, 255, 255, 0.3);
   }
   50% {
-    box-shadow: 0 0 20px rgba(255, 255, 255, 0.6), 0 0 30px rgba(59, 130, 246, 0.4);
+    box-shadow:
+      0 0 20px rgba(255, 255, 255, 0.6),
+      0 0 30px rgba(59, 130, 246, 0.4);
   }
 }
 
@@ -772,11 +779,13 @@ input[type="range"]::-moz-range-thumb {
 
 /* Enhanced cursor blink with glow */
 @keyframes cursor-blink {
-  0%, 50% {
+  0%,
+  50% {
     opacity: 1;
     box-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
   }
-  51%, 100% {
+  51%,
+  100% {
     opacity: 0;
     box-shadow: 0 0 4px rgba(255, 255, 255, 0.2);
   }
@@ -809,7 +818,8 @@ input[type="range"]::-moz-range-thumb {
 
 /* Enhanced wave animation for sound visualization */
 @keyframes wave-animation {
-  0%, 100% {
+  0%,
+  100% {
     transform: scaleY(1);
   }
   50% {
@@ -819,7 +829,8 @@ input[type="range"]::-moz-range-thumb {
 
 /* Enhanced bounce with rotation */
 @keyframes bounce-rotate {
-  0%, 100% {
+  0%,
+  100% {
     transform: translateY(0) rotate(0deg);
   }
   50% {
@@ -914,7 +925,9 @@ input[type="range"]::-moz-range-thumb {
 /* Enhanced focus states */
 .input-enhanced:focus {
   transform: scale(1.02);
-  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.1), 0 8px 16px rgba(0, 0, 0, 0.2);
+  box-shadow:
+    0 0 0 3px rgba(255, 255, 255, 0.1),
+    0 8px 16px rgba(0, 0, 0, 0.2);
 }
 
 /* Enhanced button states */
@@ -952,7 +965,9 @@ input[type="range"]::-moz-range-thumb {
   border-radius: inherit;
   padding: 1px;
   background: linear-gradient(45deg, transparent, rgba(255, 255, 255, 0.1), transparent);
-  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
   mask-composite: exclude;
   opacity: 0;
   transition: opacity 0.3s ease;
@@ -1009,7 +1024,11 @@ input[type="range"]::-moz-range-thumb {
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background: radial-gradient(circle at var(--mouse-x, 50%) var(--mouse-y, 50%), rgba(255, 255, 255, 0.1) 0%, transparent 50%);
+  background: radial-gradient(
+    circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
+    rgba(255, 255, 255, 0.1) 0%,
+    transparent 50%
+  );
   opacity: 0;
   transition: opacity 0.3s ease;
   pointer-events: none;
@@ -1021,25 +1040,41 @@ input[type="range"]::-moz-range-thumb {
 
 /* Enhanced background patterns */
 .bg-pattern-enhanced {
-  background-image: 
+  background-image:
     radial-gradient(circle at 25% 25%, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
     radial-gradient(circle at 75% 75%, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
-  background-size: 50px 50px, 100px 100px;
-  background-position: 0 0, 25px 25px;
+  background-size:
+    50px 50px,
+    100px 100px;
+  background-position:
+    0 0,
+    25px 25px;
 }
 
 /* Remove blue outline and box-shadow for all buttons and inputs on focus */
-button:focus, button:focus-visible, input:focus, input:focus-visible {
+button:focus,
+button:focus-visible,
+input:focus,
+input:focus-visible {
   outline: none !important;
   box-shadow: none !important;
 }
 
 /* Pulse effect for BottomTabBar active tab content */
 .tabbar-pulse-content {
-  animation: tabbar-pulse 1.2s infinite cubic-bezier(0.4,0,0.2,1);
+  animation: tabbar-pulse 1.2s infinite cubic-bezier(0.4, 0, 0.2, 1);
 }
 @keyframes tabbar-pulse {
-  0% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(1.08); opacity: 0.92; }
-  100% { transform: scale(1); opacity: 1; }
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 0.92;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }

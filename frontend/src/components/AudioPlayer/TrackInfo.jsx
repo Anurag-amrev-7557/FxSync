@@ -31,5 +31,5 @@ TrackInfo.propTypes = {
   title: PropTypes.string,
   animating: PropTypes.bool,
   direction: PropTypes.oneOf(['up', 'down']),
-  className: PropTypes.string
-}; 
+  className: PropTypes.string,
+};

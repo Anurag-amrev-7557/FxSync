@@ -11,26 +11,35 @@ import PropTypes from 'prop-types';
  * @param {string} [props.resyncLabel]
  * @param {boolean} [props.showResync]
  */
-export default function ErrorBanner({ message, color, onDismiss, onResync, resyncLabel = 'Re-sync now', showResync = false }) {
+export default function ErrorBanner({
+  message,
+  color,
+  onDismiss,
+  onResync,
+  resyncLabel = 'Re-sync now',
+  showResync = false,
+}) {
   return (
-    <div style={{
-      position: 'fixed',
-      top: showResync ? 70 : 20,
-      left: '50%',
-      transform: 'translateX(-50%)',
-      zIndex: 20000 + (showResync ? 1 : 0),
-      background: color,
-      color: '#fff',
-      padding: '12px 28px',
-      borderRadius: 10,
-      fontSize: 16,
-      fontWeight: 'bold',
-      boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
-      border: `2px solid ${color}`,
-      display: 'flex',
-      alignItems: 'center',
-      gap: 16,
-    }}>
+    <div
+      style={{
+        position: 'fixed',
+        top: showResync ? 70 : 20,
+        left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: 20000 + (showResync ? 1 : 0),
+        background: color,
+        color: '#fff',
+        padding: '12px 28px',
+        borderRadius: 10,
+        fontSize: 16,
+        fontWeight: 'bold',
+        boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
+        border: `2px solid ${color}`,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 16,
+      }}
+    >
       <span>{message}</span>
       {showResync && onResync && (
         <button
@@ -73,5 +82,5 @@ ErrorBanner.propTypes = {
   onDismiss: PropTypes.func.isRequired,
   onResync: PropTypes.func,
   resyncLabel: PropTypes.string,
-  showResync: PropTypes.bool
-}; 
+  showResync: PropTypes.bool,
+};

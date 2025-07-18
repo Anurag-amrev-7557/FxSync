@@ -5,7 +5,7 @@ The FxSync application now supports data persistence across page refreshes using
 ## What's Persisted
 
 - **Chat Messages**: All chat messages and reactions are saved per session
-- **Playlist Queue**: The current playlist queue is saved per session  
+- **Playlist Queue**: The current playlist queue is saved per session
 - **Session Data**: Display names and other session-specific data
 
 ## How It Works
@@ -36,4 +36,4 @@ The FxSync application now supports data persistence across page refreshes using
 
 ## Browser Compatibility
 
-This feature works in all modern browsers that support localStorage. If localStorage is not available, the app will continue to work normally but without persistence. 
+This feature works in all modern browsers that support localStorage. If localStorage is not available, the app will continue to work normally but without persistence.

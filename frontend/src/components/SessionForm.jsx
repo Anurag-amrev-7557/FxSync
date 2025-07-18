@@ -46,7 +46,9 @@ function formReducer(state, action) {
 // Utility function to detect mobile or tablet devices
 function isMobileOrTablet() {
   if (typeof navigator === 'undefined') return false;
-  return /Mobi|Android|iPhone|iPad|iPod|Opera Mini|IEMobile|BlackBerry|webOS|Windows Phone|Tablet|Mobile/i.test(navigator.userAgent);
+  return /Mobi|Android|iPhone|iPad|iPod|Opera Mini|IEMobile|BlackBerry|webOS|Windows Phone|Tablet|Mobile/i.test(
+    navigator.userAgent
+  );
 }
 
 export default function SessionForm({ onJoin, currentSessionId }) {
@@ -68,6 +70,7 @@ export default function SessionForm({ onJoin, currentSessionId }) {
   const recentRoomsWriteTimeout = useRef(null);
   // Add a ref to store the current AbortController
   const fetchControllerRef = useRef(null);
+  const resizeTimeoutRef = useRef();
 
   // Load recent rooms from localStorage
   useEffect(() => {
@@ -85,36 +88,100 @@ export default function SessionForm({ onJoin, currentSessionId }) {
   useEffect(() => {
     const generateRandomName = () => {
       const adjectives = [
-        'Cool', 'Epic', 'Amazing', 'Awesome', 'Radical', 'Smooth', 'Groovy', 'Fresh',
-        'Electric', 'Cosmic', 'Neon', 'Vintage', 'Digital', 'Analog', 'Chill', 'Vibey',
-        'Sonic', 'Harmonic', 'Rhythmic', 'Melodic', 'Dynamic', 'Energetic', 'Mystic',
-        'Zen', 'Flow', 'Pulse', 'Wave', 'Beat', 'Tempo', 'Sync', 'Fusion', 'Nova'
+        'Cool',
+        'Epic',
+        'Amazing',
+        'Awesome',
+        'Radical',
+        'Smooth',
+        'Groovy',
+        'Fresh',
+        'Electric',
+        'Cosmic',
+        'Neon',
+        'Vintage',
+        'Digital',
+        'Analog',
+        'Chill',
+        'Vibey',
+        'Sonic',
+        'Harmonic',
+        'Rhythmic',
+        'Melodic',
+        'Dynamic',
+        'Energetic',
+        'Mystic',
+        'Zen',
+        'Flow',
+        'Pulse',
+        'Wave',
+        'Beat',
+        'Tempo',
+        'Sync',
+        'Fusion',
+        'Nova',
       ];
       const nouns = [
-        'Listener', 'Groover', 'Vibes', 'Beats', 'Rhythm', 'Melody', 'Harmony', 'Sound',
-        'Head', 'Soul', 'Spirit', 'Dreamer', 'Explorer', 'Creator', 'Mixer', 'Producer',
-        'DJ', 'Artist', 'Musician', 'Conductor', 'Composer', 'Performer', 'Enthusiast',
-        'Collector', 'Curator', 'Connoisseur', 'Aficionado', 'Fan', 'Lover', 'Seeker',
-        'Traveler', 'Adventurer', 'Pioneer', 'Innovator', 'Visionary'
+        'Listener',
+        'Groover',
+        'Vibes',
+        'Beats',
+        'Rhythm',
+        'Melody',
+        'Harmony',
+        'Sound',
+        'Head',
+        'Soul',
+        'Spirit',
+        'Dreamer',
+        'Explorer',
+        'Creator',
+        'Mixer',
+        'Producer',
+        'DJ',
+        'Artist',
+        'Musician',
+        'Conductor',
+        'Composer',
+        'Performer',
+        'Enthusiast',
+        'Collector',
+        'Curator',
+        'Connoisseur',
+        'Aficionado',
+        'Fan',
+        'Lover',
+        'Seeker',
+        'Traveler',
+        'Adventurer',
+        'Pioneer',
+        'Innovator',
+        'Visionary',
       ];
       const randomAdj = adjectives[Math.floor(Math.random() * adjectives.length)];
       const randomNoun = nouns[Math.floor(Math.random() * nouns.length)];
       return `${randomAdj} ${randomNoun}`;
     };
-    
+
     formDispatch({ type: 'SET', payload: { displayName: generateRandomName() } });
   }, []);
 
   useEffect(() => {
-    formDispatch({ type: 'SET', payload: { reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches } });
+    formDispatch({
+      type: 'SET',
+      payload: { reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches },
+    });
   }, []);
 
   // Memoize throttled handlers
-  const throttledMouseMove = useCallback(throttle((e) => {
+  const throttledMouseMove = useCallback(
+    throttle((e) => {
       if (parallaxRef.current) {
         parallaxRef.current.style.transform = `translate(${e.clientX * 0.01}px, ${e.clientY * 0.01}px)`;
       }
-  }, 32), []);
+    }, 32),
+    []
+  );
 
   const throttledClick = useCallback(
     throttle((e) => {
@@ -125,7 +192,7 @@ export default function SessionForm({ onJoin, currentSessionId }) {
         created: now,
         x: e.clientX,
         y: e.clientY,
-        angle: (i * 45) * (Math.PI / 180),
+        angle: i * 45 * (Math.PI / 180),
         speed: 2 + Math.random() * 3,
         size: 2 + Math.random() * 4,
         color: [
@@ -136,10 +203,13 @@ export default function SessionForm({ onJoin, currentSessionId }) {
           'rgba(75, 85, 99, 0.8)',
           'rgba(59, 130, 246, 0.6)',
           'rgba(147, 197, 253, 0.7)',
-          'rgba(191, 219, 254, 0.6)'
-        ][i % 8]
+          'rgba(191, 219, 254, 0.6)',
+        ][i % 8],
       }));
       particlesRef.current.push(...particles);
+      if (particlesRef.current.length > 200) {
+        particlesRef.current.splice(0, particlesRef.current.length - 200);
+      }
     }, 32),
     [formState.reducedMotion]
   );
@@ -182,7 +252,10 @@ export default function SessionForm({ onJoin, currentSessionId }) {
       // Recalculate on font size or window resize for better accuracy
       const recalc = () => {
         rafId = requestAnimationFrame(() => {
-          const newCursorLeft = calculateCursorPosition(formState.sessionId, formState.cursorPosition);
+          const newCursorLeft = calculateCursorPosition(
+            formState.sessionId,
+            formState.cursorPosition
+          );
           formDispatch({ type: 'SET', payload: { cursorLeft: newCursorLeft } });
         });
       };
@@ -210,59 +283,68 @@ export default function SessionForm({ onJoin, currentSessionId }) {
   // Calculate cursor position based on text width
   const calculateCursorPosition = (text, position) => {
     if (!measureRef.current || !inputRef.current) return 16;
-    
+
     const measureText = text.substring(0, position);
     measureRef.current.textContent = measureText;
     const textWidth = measureRef.current.offsetWidth;
-    
+
     // Get actual input dimensions
     const inputRect = inputRef.current.getBoundingClientRect();
     const inputWidth = inputRect.width;
     const padding = 16; // px-4 = 16px padding
-    
+
     // Calculate center position for the text
     const fullTextWidth = measureRef.current.scrollWidth;
     const centerOffset = (inputWidth - fullTextWidth) / 2;
-    
+
     // Position cursor relative to the text start
     const cursorPosition = centerOffset + textWidth;
-    
+
     return Math.max(padding, Math.min(cursorPosition, inputWidth - padding));
   };
 
   // Enhanced input handling
-  const handleInputChange = useCallback((e) => {
-    const value = e.target.value.toLowerCase();
-    formDispatch({ type: 'SET', payload: { sessionId: value } });
-    const input = e.target;
-    const newPosition = input.selectionStart || value.length;
-    formDispatch({ type: 'SET', payload: { cursorPosition: newPosition } });
-    const newCursorLeft = calculateCursorPosition(value, newPosition);
-    formDispatch({ type: 'SET', payload: { cursorLeft: newCursorLeft } });
-    setTimeout(() => formDispatch({ type: 'SET', payload: { isTyping: false } }), 1000);
-    if (value.length > 0) {
-      isGlowingRef.current = true;
-      setTimeout(() => isGlowingRef.current = false, 2000);
-    }
-  }, [formDispatch]);
+  const handleInputChange = useCallback(
+    (e) => {
+      const value = e.target.value.toLowerCase();
+      formDispatch({ type: 'SET', payload: { sessionId: value } });
+      const input = e.target;
+      const newPosition = input.selectionStart || value.length;
+      formDispatch({ type: 'SET', payload: { cursorPosition: newPosition } });
+      const newCursorLeft = calculateCursorPosition(value, newPosition);
+      formDispatch({ type: 'SET', payload: { cursorLeft: newCursorLeft } });
+      setTimeout(() => formDispatch({ type: 'SET', payload: { isTyping: false } }), 1000);
+      if (value.length > 0) {
+        isGlowingRef.current = true;
+        setTimeout(() => (isGlowingRef.current = false), 2000);
+      }
+    },
+    [formDispatch]
+  );
 
   // Handle input click to update cursor position
-  const handleInputClick = useCallback((e) => {
-    const input = e.target;
-    const newPosition = input.selectionStart || input.value.length;
-    formDispatch({ type: 'SET', payload: { cursorPosition: newPosition } });
-    const newCursorLeft = calculateCursorPosition(input.value, newPosition);
-    formDispatch({ type: 'SET', payload: { cursorLeft: newCursorLeft } });
-  }, [formDispatch]);
+  const handleInputClick = useCallback(
+    (e) => {
+      const input = e.target;
+      const newPosition = input.selectionStart || input.value.length;
+      formDispatch({ type: 'SET', payload: { cursorPosition: newPosition } });
+      const newCursorLeft = calculateCursorPosition(input.value, newPosition);
+      formDispatch({ type: 'SET', payload: { cursorLeft: newCursorLeft } });
+    },
+    [formDispatch]
+  );
 
   // Handle input key events to update cursor position
-  const handleInputKeyUp = useCallback((e) => {
-    const input = e.target;
-    const newPosition = input.selectionStart || input.value.length;
-    formDispatch({ type: 'SET', payload: { cursorPosition: newPosition } });
-    const newCursorLeft = calculateCursorPosition(input.value, newPosition);
-    formDispatch({ type: 'SET', payload: { cursorLeft: newCursorLeft } });
-  }, [formDispatch]);
+  const handleInputKeyUp = useCallback(
+    (e) => {
+      const input = e.target;
+      const newPosition = input.selectionStart || input.value.length;
+      formDispatch({ type: 'SET', payload: { cursorPosition: newPosition } });
+      const newCursorLeft = calculateCursorPosition(input.value, newPosition);
+      formDispatch({ type: 'SET', payload: { cursorLeft: newCursorLeft } });
+    },
+    [formDispatch]
+  );
 
   // Magnetic effect for buttons
   const handleGenerate = async () => {
@@ -276,7 +358,7 @@ export default function SessionForm({ onJoin, currentSessionId }) {
       const res = await fetch(`${backendUrl}/session/generate-session-id`, {
         method: 'GET',
         headers: {
-          'Accept': 'application/json',
+          Accept: 'application/json',
         },
         cache: 'no-store',
         signal: controller.signal,
@@ -289,14 +371,25 @@ export default function SessionForm({ onJoin, currentSessionId }) {
       const data = await res.json();
 
       if (!data.sessionId) {
-        formDispatch({ type: 'SET', payload: { error: 'No session ID returned from server', sessionId: '' } });
+        formDispatch({
+          type: 'SET',
+          payload: { error: 'No session ID returned from server', sessionId: '' },
+        });
       } else {
         formDispatch({ type: 'SET', payload: { sessionId: data.sessionId, isGlowing: true } });
-        setTimeout(() => isGlowingRef.current = false, 1500);
+        setTimeout(() => (isGlowingRef.current = false), 1500);
       }
     } catch (e) {
       if (e.name !== 'AbortError') {
-        formDispatch({ type: 'SET', payload: { error: e?.message ? `Failed to generate session ID: ${e.message}` : 'Failed to generate session ID', sessionId: '' } });
+        formDispatch({
+          type: 'SET',
+          payload: {
+            error: e?.message
+              ? `Failed to generate session ID: ${e.message}`
+              : 'Failed to generate session ID',
+            sessionId: '',
+          },
+        });
       }
     } finally {
       formDispatch({ type: 'SET', payload: { isGenerating: false } });
@@ -311,7 +404,9 @@ export default function SessionForm({ onJoin, currentSessionId }) {
     formDispatch({ type: 'SET', payload: { isCreatingRoom: true, createRoomError: '' } });
     try {
       const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
-      const res = await fetch(`${backendUrl}/session/generate-session-id`, { signal: controller.signal });
+      const res = await fetch(`${backendUrl}/session/generate-session-id`, {
+        signal: controller.signal,
+      });
       const data = await res.json();
       formDispatch({ type: 'SET', payload: { createRoomSessionId: data.sessionId || '' } });
       formDispatch({ type: 'SET', payload: { showCreateRoom: true } });
@@ -331,7 +426,10 @@ export default function SessionForm({ onJoin, currentSessionId }) {
   };
 
   const handleCreateRoomCancel = () => {
-    formDispatch({ type: 'SET', payload: { showCreateRoom: false, createRoomSessionId: '', createRoomError: '' } });
+    formDispatch({
+      type: 'SET',
+      payload: { showCreateRoom: false, createRoomSessionId: '', createRoomError: '' },
+    });
   };
 
   const copyToClipboard = async (text) => {
@@ -345,12 +443,12 @@ export default function SessionForm({ onJoin, currentSessionId }) {
   };
 
   const addToRecentRooms = (roomId) => {
-    const updated = [roomId, ...formState.recentRooms.filter(id => id !== roomId)].slice(0, 5);
+    const updated = [roomId, ...formState.recentRooms.filter((id) => id !== roomId)].slice(0, 5);
     formDispatch({ type: 'SET', payload: { recentRooms: updated } });
     // Debounce localStorage write
     if (recentRoomsWriteTimeout.current) clearTimeout(recentRoomsWriteTimeout.current);
     recentRoomsWriteTimeout.current = setTimeout(() => {
-    localStorage.setItem('fxsync_recent_rooms', JSON.stringify(updated));
+      localStorage.setItem('fxsync_recent_rooms', JSON.stringify(updated));
     }, 500);
   };
 
@@ -405,21 +503,79 @@ export default function SessionForm({ onJoin, currentSessionId }) {
 
   const regenerateName = () => {
     formDispatch({ type: 'SET', payload: { isRegenerating: true, nameAnimation: true } });
-    
+
     const adjectives = [
-      'Cool', 'Epic', 'Amazing', 'Awesome', 'Radical', 'Smooth', 'Groovy', 'Fresh',
-      'Electric', 'Cosmic', 'Neon', 'Vintage', 'Digital', 'Analog', 'Chill', 'Vibey',
-      'Sonic', 'Harmonic', 'Rhythmic', 'Melodic', 'Dynamic', 'Energetic', 'Mystic',
-      'Zen', 'Flow', 'Pulse', 'Wave', 'Beat', 'Tempo', 'Sync', 'Fusion', 'Nova'
+      'Cool',
+      'Epic',
+      'Amazing',
+      'Awesome',
+      'Radical',
+      'Smooth',
+      'Groovy',
+      'Fresh',
+      'Electric',
+      'Cosmic',
+      'Neon',
+      'Vintage',
+      'Digital',
+      'Analog',
+      'Chill',
+      'Vibey',
+      'Sonic',
+      'Harmonic',
+      'Rhythmic',
+      'Melodic',
+      'Dynamic',
+      'Energetic',
+      'Mystic',
+      'Zen',
+      'Flow',
+      'Pulse',
+      'Wave',
+      'Beat',
+      'Tempo',
+      'Sync',
+      'Fusion',
+      'Nova',
     ];
     const nouns = [
-      'Listener', 'Groover', 'Vibes', 'Beats', 'Rhythm', 'Melody', 'Harmony', 'Sound',
-      'Head', 'Soul', 'Spirit', 'Dreamer', 'Explorer', 'Creator', 'Mixer', 'Producer',
-      'DJ', 'Artist', 'Musician', 'Conductor', 'Composer', 'Performer', 'Enthusiast',
-      'Collector', 'Curator', 'Connoisseur', 'Aficionado', 'Fan', 'Lover', 'Seeker',
-      'Traveler', 'Adventurer', 'Pioneer', 'Innovator', 'Visionary'
+      'Listener',
+      'Groover',
+      'Vibes',
+      'Beats',
+      'Rhythm',
+      'Melody',
+      'Harmony',
+      'Sound',
+      'Head',
+      'Soul',
+      'Spirit',
+      'Dreamer',
+      'Explorer',
+      'Creator',
+      'Mixer',
+      'Producer',
+      'DJ',
+      'Artist',
+      'Musician',
+      'Conductor',
+      'Composer',
+      'Performer',
+      'Enthusiast',
+      'Collector',
+      'Curator',
+      'Connoisseur',
+      'Aficionado',
+      'Fan',
+      'Lover',
+      'Seeker',
+      'Traveler',
+      'Adventurer',
+      'Pioneer',
+      'Innovator',
+      'Visionary',
     ];
-    
+
     // Avoid generating the same name
     let newName;
     do {
@@ -427,9 +583,9 @@ export default function SessionForm({ onJoin, currentSessionId }) {
       const randomNoun = nouns[Math.floor(Math.random() * nouns.length)];
       newName = `${randomAdj} ${randomNoun}`;
     } while (newName === formState.displayName && adjectives.length > 1 && nouns.length > 1);
-    
+
     formDispatch({ type: 'SET', payload: { displayName: newName } });
-    
+
     // Reset states after a short delay
     setTimeout(() => {
       formDispatch({ type: 'SET', payload: { isRegenerating: false } });
@@ -452,7 +608,7 @@ export default function SessionForm({ onJoin, currentSessionId }) {
       if (!running) return;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       const now = Date.now();
-      particlesRef.current = particlesRef.current.filter(p => now - p.created < 800);
+      particlesRef.current = particlesRef.current.filter((p) => now - p.created < 800);
       for (const p of particlesRef.current) {
         const progress = (now - p.created) / 800;
         const x = p.x + Math.cos(p.angle) * p.speed * 100 * progress;
@@ -487,6 +643,26 @@ export default function SessionForm({ onJoin, currentSessionId }) {
     };
   }, []);
 
+  // Add a debounced resize handler for the canvas:
+  const resizeCanvas = () => {
+    const canvas = effectsCanvasRef.current;
+    if (!canvas) return;
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+  };
+  useEffect(() => {
+    resizeCanvas();
+    const handleResize = () => {
+      if (resizeTimeoutRef.current) clearTimeout(resizeTimeoutRef.current);
+      resizeTimeoutRef.current = setTimeout(resizeCanvas, 150);
+    };
+    window.addEventListener('resize', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      if (resizeTimeoutRef.current) clearTimeout(resizeTimeoutRef.current);
+    };
+  }, []);
+
   // Abort any in-flight fetch on unmount
   useEffect(() => {
     return () => {
@@ -509,32 +685,56 @@ export default function SessionForm({ onJoin, currentSessionId }) {
             {/* Header with enhanced styling */}
             <div className="text-center mb-6">
               <div className="w-12 h-12 sm:w-16 sm:h-16 bg-gradient-to-br from-neutral-800 to-neutral-700 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg">
-                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-300 sm:w-7 sm:h-7">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="24"
+                  height="24"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="text-neutral-300 sm:w-7 sm:h-7"
+                >
                   <path d="M9 18V5l12-2v13"></path>
                   <circle cx="6" cy="18" r="3"></circle>
                   <circle cx="18" cy="16" r="3"></circle>
                 </svg>
               </div>
-              <h2 className="text-lg sm:text-xl font-bold tracking-tight mb-2 text-white">Current Session</h2>
-              <p className="text-neutral-400 text-xs sm:text-sm">You're connected to a FxSync room</p>
+              <h2 className="text-lg sm:text-xl font-bold tracking-tight mb-2 text-white">
+                Current Session
+              </h2>
+              <p className="text-neutral-400 text-xs sm:text-sm">
+                You're connected to a FxSync room
+              </p>
             </div>
-            
+
             {/* Room code display with minimalist styling */}
             <div className="w-full p-4 sm:p-6 bg-neutral-900/50 rounded-2xl border border-neutral-700/30 mb-6 shadow-lg relative overflow-hidden group">
               {/* Subtle hover effect */}
               <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-              
+
               <div className="text-center relative z-10">
-                <div className="text-neutral-400 text-xs mb-3 font-medium uppercase tracking-wider">Room Code</div>
-                <div className="text-white font-mono text-2xl sm:text-3xl font-bold tracking-wider mb-4 break-all">{currentSessionId}</div>
+                <div className="text-neutral-400 text-xs mb-3 font-medium uppercase tracking-wider">
+                  Room Code
+                </div>
+                <div className="text-white font-mono text-2xl sm:text-3xl font-bold tracking-wider mb-4 break-all">
+                  {currentSessionId}
+                </div>
                 <div className="text-xs text-neutral-500 break-all bg-neutral-800/40 p-3 rounded-lg border border-neutral-600/30 mb-4 font-mono">
                   Share: {window.location.origin}/?session={currentSessionId}
                 </div>
                 {/* QR Code and Copy section */}
                 <div className="mt-6 flex flex-col sm:flex-row items-center justify-center gap-4">
                   <div className="flex flex-col items-center">
-                    <QRCodeDisplay value={`${window.location.origin}/?session=${currentSessionId}`} size={100} />
-                    <p className="text-xs text-neutral-500 mt-2 text-center">Scan to join on mobile</p>
+                    <QRCodeDisplay
+                      value={`${window.location.origin}/?session=${currentSessionId}`}
+                      size={100}
+                    />
+                    <p className="text-xs text-neutral-500 mt-2 text-center">
+                      Scan to join on mobile
+                    </p>
                   </div>
                   <div className="flex flex-col items-center gap-2">
                     <div className="w-px h-16 bg-neutral-600/50 hidden sm:block"></div>
@@ -543,19 +743,43 @@ export default function SessionForm({ onJoin, currentSessionId }) {
                   </div>
                   <div className="flex flex-col items-center gap-2">
                     <button
-                      onClick={() => copyToClipboard(`${window.location.origin}/?session=${currentSessionId}`)}
+                      onClick={() =>
+                        copyToClipboard(`${window.location.origin}/?session=${currentSessionId}`)
+                      }
                       className="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-white text-xs rounded-lg border border-neutral-600 hover:border-neutral-500 transition-all duration-300 hover:scale-105 group/btn flex items-center gap-2 font-medium"
                     >
                       {formState.copied ? (
                         <>
-                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-green-400">
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            width="12"
+                            height="12"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            className="text-green-400"
+                          >
                             <polyline points="20,6 9,17 4,12"></polyline>
                           </svg>
                           <span className="text-green-400">Copied!</span>
                         </>
                       ) : (
                         <>
-                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="transition-transform duration-300 group-hover/btn:scale-110">
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            width="12"
+                            height="12"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            className="transition-transform duration-300 group-hover/btn:scale-110"
+                          >
                             <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                             <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
                           </svg>
@@ -574,7 +798,18 @@ export default function SessionForm({ onJoin, currentSessionId }) {
               onClick={() => onJoin(null)}
               className="w-full px-4 sm:px-6 py-3 bg-gradient-to-r from-neutral-800 via-neutral-700 to-neutral-800 hover:from-neutral-700 hover:via-neutral-600 hover:to-neutral-700 text-white rounded-xl font-semibold text-sm cursor-pointer transition-all duration-300 flex items-center justify-center gap-3 shadow-lg hover:shadow-xl border border-neutral-600/30 hover:border-neutral-500/50 transform hover:scale-[1.02]"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="sm:w-[18px] sm:h-[18px]">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="sm:w-[18px] sm:h-[18px]"
+              >
                 <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
                 <polyline points="16,17 21,12 16,7"></polyline>
                 <line x1="21" y1="12" x2="9" y2="12"></line>
@@ -588,7 +823,10 @@ export default function SessionForm({ onJoin, currentSessionId }) {
   }
 
   return (
-    <div className="min-h-screen bg-black relative overflow-hidden transition-background duration-1000" style={{ transition: 'background 1s cubic-bezier(0.4,0,0.2,1)' }}>
+    <div
+      className="min-h-screen bg-black relative overflow-hidden transition-background duration-1000"
+      style={{ transition: 'background 1s cubic-bezier(0.4,0,0.2,1)' }}
+    >
       <style>{`
         .form-container {
           transition: min-height 0.7s cubic-bezier(0.4, 0, 0.2, 1);
@@ -638,7 +876,7 @@ export default function SessionForm({ onJoin, currentSessionId }) {
           className="absolute inset-0"
           style={{
             backgroundImage:
-              'url("data:image/svg+xml,%3Csvg width=\'40\' height=\'40\' viewBox=\'0 0 40 40\' fill=\'none\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Ccircle cx=\'2\' cy=\'2\' r=\'1.5\' fill=\'%23fff\' fill-opacity=\'0.03\'/%3E%3C/svg%3E")',
+              "url(\"data:image/svg+xml,%3Csvg width='40' height='40' viewBox='0 0 40 40' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Ccircle cx='2' cy='2' r='1.5' fill='%23fff' fill-opacity='0.03'/%3E%3C/svg%3E\")",
             opacity: 0.5,
             zIndex: 2,
             pointerEvents: 'none',
@@ -652,7 +890,8 @@ export default function SessionForm({ onJoin, currentSessionId }) {
           style={{
             zIndex: 3,
             filter: 'blur(1px)',
-            animation: 'float-slow 12s ease-in-out infinite, shapeMove1 18s ease-in-out infinite alternate',
+            animation:
+              'float-slow 12s ease-in-out infinite, shapeMove1 18s ease-in-out infinite alternate',
           }}
           viewBox="0 0 100 100"
         >
@@ -663,7 +902,8 @@ export default function SessionForm({ onJoin, currentSessionId }) {
           style={{
             zIndex: 3,
             filter: 'blur(0.5px)',
-            animation: 'float-medium 8s ease-in-out infinite, shapeMove2 14s ease-in-out infinite alternate',
+            animation:
+              'float-medium 8s ease-in-out infinite, shapeMove2 14s ease-in-out infinite alternate',
           }}
           viewBox="0 0 100 100"
         >
@@ -674,7 +914,8 @@ export default function SessionForm({ onJoin, currentSessionId }) {
           style={{
             zIndex: 3,
             filter: 'blur(0.5px)',
-            animation: 'float-fast 5s ease-in-out infinite, shapeMove3 11s ease-in-out infinite alternate',
+            animation:
+              'float-fast 5s ease-in-out infinite, shapeMove3 11s ease-in-out infinite alternate',
           }}
           viewBox="0 0 100 100"
         >
@@ -686,7 +927,8 @@ export default function SessionForm({ onJoin, currentSessionId }) {
           style={{
             zIndex: 3,
             filter: 'blur(0.7px)',
-            animation: 'float-extra 9s ease-in-out infinite, shapeMove4 13s ease-in-out infinite alternate',
+            animation:
+              'float-extra 9s ease-in-out infinite, shapeMove4 13s ease-in-out infinite alternate',
           }}
           viewBox="0 0 100 100"
         >
@@ -770,7 +1012,6 @@ export default function SessionForm({ onJoin, currentSessionId }) {
           }
         `}</style>
       </div>
-    
 
       {/* Main content */}
       <div className="relative z-10 min-h-screen flex flex-col">
@@ -891,7 +1132,6 @@ export default function SessionForm({ onJoin, currentSessionId }) {
         <main className="flex-1 flex items-center justify-center px-4 sm:px-6 lg:px-8 py-8 sm:py-12">
           <div className="w-full max-w-5xl mx-auto">
             <div className="grid lg:grid-cols-2 gap-12 sm:gap-16 lg:gap-16 items-center">
-              
               {/* Left side - Hero content (Enhanced) */}
               <SessionHero isVisible={formState.isVisible} />
 
@@ -930,11 +1170,19 @@ export default function SessionForm({ onJoin, currentSessionId }) {
         ref={effectsCanvasRef}
         width={window.innerWidth}
         height={window.innerHeight}
-        style={{ position: 'fixed', left: 0, top: 0, width: '100vw', height: '100vh', pointerEvents: 'none', zIndex: 40 }}
+        style={{
+          position: 'fixed',
+          left: 0,
+          top: 0,
+          width: '100vw',
+          height: '100vh',
+          pointerEvents: 'none',
+          zIndex: 40,
+        }}
         aria-hidden="true"
       />
       {/* Mount SessionPage in background if calibration is running */}
       {/* Removed calibration modal JSX */}
     </div>
   );
-} 
+}

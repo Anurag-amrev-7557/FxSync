@@ -30,4 +30,4 @@ export default function useFocusTrap(isOpen, ref, closeFn) {
     ref.current.addEventListener('keydown', handleKeyDown);
     return () => ref.current && ref.current.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, ref, closeFn]);
-} 
+}

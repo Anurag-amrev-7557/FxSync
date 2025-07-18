@@ -2,7 +2,12 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { fadeAudio } from './useDriftCorrection';
 import SYNC_CONFIG from '../utils/syncConfig';
 
-export default function useAudioElement({ currentTrack, isController, getServerTime, setLastSeekTime }) {
+export default function useAudioElement({
+  currentTrack,
+  isController,
+  getServerTime,
+  setLastSeekTime,
+}) {
   const [audioUrl, setAudioUrl] = useState(null);
   const [loading, setLoading] = useState(true);
   const [audioError, setAudioError] = useState(null);
@@ -45,11 +50,11 @@ export default function useAudioElement({ currentTrack, isController, getServerT
       return;
     }
     fetch(`${backendUrl}/audio/audio-url`)
-      .then(res => {
+      .then((res) => {
         if (!res.ok) throw new Error(`Failed to fetch audio URL: ${res.status}`);
         return res.json();
       })
-      .then(data => {
+      .then((data) => {
         if (data && typeof data.url === 'string' && data.url.length > 0) {
           setAudioUrl(data.url);
         } else {
@@ -57,7 +62,7 @@ export default function useAudioElement({ currentTrack, isController, getServerT
         }
         setLoading(false);
       })
-      .catch(err => {
+      .catch((err) => {
         setAudioError('Error fetching audio URL. ' + (err?.message || ''));
         setLoading(false);
       });
@@ -92,23 +97,26 @@ export default function useAudioElement({ currentTrack, isController, getServerT
   }, [audioUrl, isSeeking]);
 
   // Seek handler
-  const handleSeek = useCallback((time) => {
-    const audio = audioRef.current;
-    if (audio && typeof time === 'number') {
-      setIsSeeking(true);
-      setDisplayedCurrentTime(time);
-      if (typeof setLastSeekTime === 'function') {
-        setLastSeekTime(Date.now());
+  const handleSeek = useCallback(
+    (time) => {
+      const audio = audioRef.current;
+      if (audio && typeof time === 'number') {
+        setIsSeeking(true);
+        setDisplayedCurrentTime(time);
+        if (typeof setLastSeekTime === 'function') {
+          setLastSeekTime(Date.now());
+        }
+        fadeAudio(audio, 0, 100);
+        setTimeout(() => {
+          audio.currentTime = time;
+          fadeAudio(audio, 1, 100);
+          // Allow timeupdate events to resume after a short delay
+          setTimeout(() => setIsSeeking(false), 200);
+        }, 110);
       }
-      fadeAudio(audio, 0, 100);
-      setTimeout(() => {
-        audio.currentTime = time;
-        fadeAudio(audio, 1, 100);
-        // Allow timeupdate events to resume after a short delay
-        setTimeout(() => setIsSeeking(false), 200);
-      }, 110);
-    }
-  }, [setLastSeekTime]);
+    },
+    [setLastSeekTime]
+  );
 
   return {
     audioRef,
@@ -125,4 +133,4 @@ export default function useAudioElement({ currentTrack, isController, getServerT
     handleSeek,
     isSeeking,
   };
-} 
+}

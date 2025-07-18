@@ -37,9 +37,9 @@ router.get(
       lastUpdated: session.lastUpdated,
       controllerId: session.controllerId,
       clients: Array.from(session.clients.entries()).map(([id, info]) => ({ id, ...info })),
-      queue: session.queue
+      queue: session.queue,
     });
   }
 );
 
-export default router; 
+export default router;

@@ -1,4 +1,21 @@
-import { getSession, createSession, deleteSession, addClient, removeClient, setController, getAllSessions, getClients, updatePlayback, updateTimestamp, getClientIdBySocket, getSocketIdByClientId, addControllerRequest, removeControllerRequest, getPendingControllerRequests, clearExpiredControllerRequests } from './managers/sessionManager.js';
+import {
+  getSession,
+  createSession,
+  deleteSession,
+  addClient,
+  removeClient,
+  setController,
+  getAllSessions,
+  getClients,
+  updatePlayback,
+  updateTimestamp,
+  getClientIdBySocket,
+  getSocketIdByClientId,
+  addControllerRequest,
+  removeControllerRequest,
+  getPendingControllerRequests,
+  clearExpiredControllerRequests,
+} from './managers/sessionManager.js';
 import { addToQueue, removeFromQueue, getQueue } from './managers/queueManager.js';
 import { formatChatMessage, formatReaction } from './managers/chatManager.js';
 import { log } from './utils/utils.js';
@@ -14,8 +31,10 @@ dotenv.config();
 // Helper to build full session sync state for advanced sync
 function buildSessionSyncState(session) {
   const queue = Array.isArray(session.queue) ? session.queue : [];
-  const selectedTrackIdx = Number.isInteger(session.selectedTrackIdx) ? session.selectedTrackIdx : 0;
-  const currentTrack = (queue.length > 0 && queue[selectedTrackIdx]) ? queue[selectedTrackIdx] : null;
+  const selectedTrackIdx = Number.isInteger(session.selectedTrackIdx)
+    ? session.selectedTrackIdx
+    : 0;
+  const currentTrack = queue.length > 0 && queue[selectedTrackIdx] ? queue[selectedTrackIdx] : null;
   return {
     isPlaying: !!session.isPlaying,
     timestamp: typeof session.timestamp === 'number' ? session.timestamp : 0,
@@ -32,13 +51,13 @@ function buildSessionSyncState(session) {
 
 // Simple HTML escape utility
 function escapeHtml(str) {
-  return str.replace(/[&<>'"]/g, function(tag) {
+  return str.replace(/[&<>'"]/g, function (tag) {
     const charsToReplace = {
       '&': '&amp;',
       '<': '&lt;',
       '>': '&gt;',
       "'": '&#39;',
-      '"': '&quot;'
+      '"': '&quot;',
     };
     return charsToReplace[tag] || tag;
   });
@@ -68,7 +87,7 @@ function aggregateReactions(reactions) {
     aggregated.push({
       emoji,
       count: data.count,
-      users: Array.from(data.users)
+      users: Array.from(data.users),
     });
   }
   return aggregated.sort((a, b) => b.count - a.count); // Sort by count descending
@@ -94,212 +113,298 @@ function safeDisplayName(name) {
   return name.replace(/<[^>]*>/g, '').slice(0, 64);
 }
 
+// --- Rate limiting state ---
+// Use a fixed-size ring buffer for each socket to track timestamps efficiently
+const chatRateLimit = {};
+const CHAT_LIMIT = 5;
+const CHAT_WINDOW_MS = 3000;
+class TimestampRingBuffer {
+  constructor(size) {
+    this.size = size;
+    this.buffer = new Array(size).fill(0);
+    this.index = 0;
+    this.count = 0;
+  }
+  add(ts) {
+    this.buffer[this.index] = ts;
+    this.index = (this.index + 1) % this.size;
+    if (this.count < this.size) this.count++;
+  }
+  countRecent(now, windowMs) {
+    let c = 0;
+    for (let i = 0; i < this.count; i++) {
+      if (now - this.buffer[i] < windowMs) c++;
+    }
+    return c;
+  }
+}
+
+// At the top, add a syncVersion map
+const syncVersionMap = {};
+
+function getSyncVersion(sessionId) {
+  if (!syncVersionMap[sessionId]) syncVersionMap[sessionId] = 1;
+  return syncVersionMap[sessionId];
+}
+function incrementSyncVersion(sessionId) {
+  if (!syncVersionMap[sessionId]) syncVersionMap[sessionId] = 1;
+  else syncVersionMap[sessionId]++;
+  return syncVersionMap[sessionId];
+}
+
 export function setupSocket(io) {
   // --- Rate limiting state ---
+  // Use a fixed-size ring buffer for each socket to track timestamps efficiently
   const chatRateLimit = {};
+  const CHAT_LIMIT = 5;
+  const CHAT_WINDOW_MS = 3000;
+  class TimestampRingBuffer {
+    constructor(size) {
+      this.size = size;
+      this.buffer = new Array(size).fill(0);
+      this.index = 0;
+      this.count = 0;
+    }
+    add(ts) {
+      this.buffer[this.index] = ts;
+      this.index = (this.index + 1) % this.size;
+      if (this.count < this.size) this.count++;
+    }
+    countRecent(now, windowMs) {
+      let c = 0;
+      for (let i = 0; i < this.count; i++) {
+        if (now - this.buffer[i] < windowMs) c++;
+      }
+      return c;
+    }
+  }
   io.on('connection', (socket) => {
-
     // Change the join_session handler to async to allow await
-    socket.on('join_session', async ({ sessionId, displayName, deviceInfo, clientId } = {}, callback) => {
-      // Input validation
-      if (!isValidSessionId(sessionId)) {
-        log('join_session: missing or invalid sessionId');
-        return typeof callback === "function" && callback({ error: 'Invalid sessionId' });
-      }
-      if (displayName && !isValidDisplayName(displayName)) {
-        return typeof callback === "function" && callback({ error: 'Invalid displayName' });
-      }
-      if (clientId && !isValidClientId(clientId)) {
-        return typeof callback === "function" && callback({ error: 'Invalid clientId' });
-      }
-      // Sanitize displayName before storing/broadcasting
-      const safeName = displayName ? safeDisplayName(displayName) : undefined;
-      if (!sessionId || typeof sessionId !== 'string') {
-        log('join_session: missing or invalid sessionId');
-        return typeof callback === "function" && callback({ error: 'No sessionId provided' });
-      }
-      let session = getSession(sessionId);
-      if (!session) {
-        session = createSession(sessionId, socket.id, clientId);
-        log('Session created:', sessionId);
-      }
-      // Auto-populate queue with all sample tracks if empty
-      if ((session.queue?.length ?? 0) === 0) {
-        const samplesDir = path.join(process.cwd(), 'uploads', 'samples');
-        if (fs.existsSync(samplesDir)) {
-          const files = fs.readdirSync(samplesDir);
-          for (const file of files) {
-            if (file.endsWith('.mp3')) {
-              // Extract metadata using music-metadata
-              let artist = '';
-              let album = '';
-              let duration = 0;
-              try {
-                const metadata = await mm.parseFile(path.join(samplesDir, file));
-                artist = metadata.common.artist || '';
-                album = metadata.common.album || '';
-                duration = metadata.format.duration || 0;
-              } catch (e) {
-                // Ignore errors, fallback to empty
+    socket.on(
+      'join_session',
+      async ({ sessionId, displayName, deviceInfo, clientId } = {}, callback) => {
+        // Input validation
+        if (!isValidSessionId(sessionId)) {
+          log('join_session: missing or invalid sessionId');
+          return typeof callback === 'function' && callback({ error: 'Invalid sessionId' });
+        }
+        if (displayName && !isValidDisplayName(displayName)) {
+          return typeof callback === 'function' && callback({ error: 'Invalid displayName' });
+        }
+        if (clientId && !isValidClientId(clientId)) {
+          return typeof callback === 'function' && callback({ error: 'Invalid clientId' });
+        }
+        // Sanitize displayName before storing/broadcasting
+        const safeName = displayName ? safeDisplayName(displayName) : undefined;
+        if (!sessionId || typeof sessionId !== 'string') {
+          log('join_session: missing or invalid sessionId');
+          return typeof callback === 'function' && callback({ error: 'No sessionId provided' });
+        }
+        let session = getSession(sessionId);
+        if (!session) {
+          session = createSession(sessionId, socket.id, clientId);
+          log('Session created:', sessionId);
+        }
+        // Auto-populate queue with all sample tracks if empty
+        if ((session.queue?.length ?? 0) === 0) {
+          const samplesDir = path.join(process.cwd(), 'uploads', 'samples');
+          if (
+            await fs.promises.access(samplesDir).then(
+              () => true,
+              () => false
+            )
+          ) {
+            const files = await fs.promises.readdir(samplesDir);
+            for (const file of files) {
+              if (file.endsWith('.mp3')) {
+                // Extract metadata using music-metadata
+                let artist = '';
+                let album = '';
+                let duration = 0;
+                try {
+                  const metadata = await mm.parseFile(path.join(samplesDir, file));
+                  artist = metadata.common.artist || '';
+                  album = metadata.common.album || '';
+                  duration = metadata.format.duration || 0;
+                } catch (e) {
+                  // Ignore errors, fallback to empty
+                }
+                addToQueue(
+                  sessionId,
+                  `/audio/uploads/samples/${encodeURIComponent(file)}`,
+                  file.replace(/\.mp3$/i, ''),
+                  { type: 'sample', artist, album, duration }
+                );
               }
-              addToQueue(
-                sessionId,
-                `/audio/uploads/samples/${encodeURIComponent(file)}`,
-                file.replace(/\.mp3$/i, ''),
-                { type: 'sample', artist, album, duration }
-              );
             }
           }
         }
-      }
-      addClient(sessionId, socket.id, safeName, deviceInfo, clientId);
-      socket.join(sessionId);
-      log('Socket', socket.id, 'joined session', sessionId, 'as client', clientId);
-      // Ensure controllerClientId is set (first joiner becomes controller)
-      let becameController = false;
-      if (!session.controllerClientId) {
-        session.controllerClientId = clientId;
-        session.controllerId = socket.id;
-        becameController = true;
-      }
-      // If this clientId is the controller, update controllerId to this socket
-      if (session.controllerClientId === clientId) {
-        session.controllerId = socket.id;
-        becameController = true;
-      }
+        addClient(sessionId, socket.id, safeName, deviceInfo, clientId);
+        socket.join(sessionId);
+        log('Socket', socket.id, 'joined session', sessionId, 'as client', clientId);
+        // Ensure controllerClientId is set (first joiner becomes controller)
+        let becameController = false;
+        if (!session.controllerClientId) {
+          session.controllerClientId = clientId;
+          session.controllerId = socket.id;
+          becameController = true;
+        }
+        // If this clientId is the controller, update controllerId to this socket
+        if (session.controllerClientId === clientId) {
+          session.controllerId = socket.id;
+          becameController = true;
+        }
 
-      // Always send the correct controllerClientId in the callback
-      const syncState = buildSessionSyncState(session);
-      typeof callback === "function" && callback({
-        ...syncState,
-        sessionId,
-        audioUrl: process.env.AUDIO_URL || 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
-      });
-      
-      // Send current queue to the joining client
-      socket.emit('queue_update', getQueue(sessionId));
-      
-      // Send all reactions for the session to the joining client
-      const sessionReactions = getSessionReactions(sessionId);
-      if (sessionReactions && sessionReactions.size > 0) {
-        for (const [messageId, messageReactions] of sessionReactions.entries()) {
-          const aggregatedReactions = aggregateReactions(messageReactions);
-          if (aggregatedReactions.length > 0) {
-            socket.emit('message_reactions_updated', {
-              messageId,
-              reactions: aggregatedReactions,
-              joinedBy: clientId
-            });
+        // Always send the correct controllerClientId in the callback
+        const syncState = buildSessionSyncState(session);
+        typeof callback === 'function' &&
+          callback({
+            ...syncState,
+            sessionId,
+            audioUrl:
+              process.env.AUDIO_URL ||
+              'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
+          });
+
+        // Send current queue to the joining client
+        socket.emit('queue_update', getQueue(sessionId));
+
+        // Send all reactions for the session to the joining client
+        const sessionReactions = getSessionReactions(sessionId);
+        if (sessionReactions && sessionReactions.size > 0) {
+          for (const [messageId, messageReactions] of sessionReactions.entries()) {
+            const aggregatedReactions = aggregateReactions(messageReactions);
+            if (aggregatedReactions.length > 0) {
+              socket.emit('message_reactions_updated', {
+                messageId,
+                reactions: aggregatedReactions,
+                joinedBy: clientId,
+              });
+            }
           }
         }
-      }
-      
-      io.to(sessionId).emit('clients_update', getClients(sessionId));
-      if (becameController) {
-        io.to(sessionId).emit('controller_change', socket.id);
-        io.to(sessionId).emit('controller_client_change', clientId);
-      }
-      log('Client joined session', sessionId, 'Current queue:', getQueue(sessionId));
-    });
 
-    socket.on('play', ({ sessionId, timestamp } = {}) => {
+        io.to(sessionId).emit('clients_update', getClients(sessionId));
+        if (becameController) {
+          io.to(sessionId).emit('controller_change', socket.id);
+          io.to(sessionId).emit('controller_client_change', clientId);
+        }
+        log('Client joined session', sessionId, 'Current queue:', getQueue(sessionId));
+        socket.clientId = clientId; // Set clientId on the socket for signaling relay
+      }
+    );
+
+    socket.on('play', async ({ sessionId, timestamp } = {}) => {
       if (!isValidSessionId(sessionId) || !isValidTimestamp(timestamp)) return;
       const session = getSession(sessionId);
       if (!session) return;
       const clientId = getClientIdBySocket(sessionId, socket.id);
       if (session.controllerClientId !== clientId) return;
-      updatePlayback(sessionId, { isPlaying: true, timestamp, controllerId: socket.id });
+      await updatePlayback(sessionId, { isPlaying: true, timestamp, controllerId: socket.id });
       log('Play in session', sessionId, 'at', timestamp);
       io.to(sessionId).emit('sync_state', {
         isPlaying: true,
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
         controllerId: socket.id,
-        serverTime: Date.now()
+        serverTime: Date.now(),
+        syncVersion: incrementSyncVersion(sessionId),
       });
     });
 
-    socket.on('pause', ({ sessionId, timestamp } = {}) => {
+    socket.on('pause', async ({ sessionId, timestamp } = {}) => {
       if (!isValidSessionId(sessionId) || !isValidTimestamp(timestamp)) return;
       const session = getSession(sessionId);
       if (!session) return;
       const clientId = getClientIdBySocket(sessionId, socket.id);
       if (session.controllerClientId !== clientId) return;
-      updatePlayback(sessionId, { isPlaying: false, timestamp, controllerId: socket.id });
+      await updatePlayback(sessionId, { isPlaying: false, timestamp, controllerId: socket.id });
       log('Pause in session', sessionId, 'at', timestamp);
       io.to(sessionId).emit('sync_state', {
         isPlaying: false,
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
         controllerId: socket.id,
-        serverTime: Date.now()
+        serverTime: Date.now(),
+        syncVersion: incrementSyncVersion(sessionId),
       });
     });
 
-    socket.on('seek', ({ sessionId, timestamp } = {}) => {
+    socket.on('seek', async ({ sessionId, timestamp } = {}) => {
       if (!isValidSessionId(sessionId) || !isValidTimestamp(timestamp)) return;
       const session = getSession(sessionId);
       if (!session) return;
       const clientId = getClientIdBySocket(sessionId, socket.id);
       if (session.controllerClientId !== clientId) return;
-      updateTimestamp(sessionId, timestamp, socket.id);
+      await updateTimestamp(sessionId, timestamp, socket.id);
       log('Seek in session', sessionId, 'to', timestamp);
       io.to(sessionId).emit('sync_state', {
         isPlaying: session.isPlaying,
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
         controllerId: socket.id,
-        serverTime: Date.now()
+        serverTime: Date.now(),
+        syncVersion: incrementSyncVersion(sessionId),
       });
     });
 
     socket.on('sync_request', async ({ sessionId } = {}, callback) => {
       try {
         if (!isValidSessionId(sessionId)) {
-          if (typeof callback === "function") callback({ error: 'Invalid sessionId' });
+          if (typeof callback === 'function') callback({ error: 'Invalid sessionId' });
           return;
         }
         if (!sessionId) {
-          if (typeof callback === "function") callback({ error: 'No sessionId provided' });
+          if (typeof callback === 'function') callback({ error: 'No sessionId provided' });
           return;
         }
         const session = getSession(sessionId);
         if (!session) {
-          if (typeof callback === "function") callback({ error: 'Session not found' });
+          if (typeof callback === 'function') callback({ error: 'Session not found' });
           return;
         }
         const response = buildSessionSyncState(session);
-        if (typeof callback === "function") callback(response);
+        if (typeof callback === 'function') callback(response);
       } catch (err) {
-        if (typeof callback === "function") callback({ error: 'Internal server error' });
+        if (typeof callback === 'function') callback({ error: 'Internal server error' });
       }
     });
 
-    socket.on('request_controller', ({ sessionId } = {}, callback) => {
-      if (!sessionId) return typeof callback === "function" && callback({ error: 'No sessionId provided' });
+    socket.on('request_controller', async ({ sessionId } = {}, callback) => {
+      if (!sessionId)
+        return typeof callback === 'function' && callback({ error: 'No sessionId provided' });
       const session = getSession(sessionId);
-      if (!session) return typeof callback === "function" && callback({ error: 'Session not found' });
-      
+      if (!session)
+        return typeof callback === 'function' && callback({ error: 'Session not found' });
+
       const requesterClientId = getClientIdBySocket(sessionId, socket.id);
-      if (!requesterClientId) return typeof callback === "function" && callback({ error: 'Client not found in session' });
-      
+      if (!requesterClientId)
+        return typeof callback === 'function' && callback({ error: 'Client not found in session' });
+
       // Check if requester is already the controller
       if (session.controllerClientId === requesterClientId) {
-        return typeof callback === "function" && callback({ error: 'You are already the controller' });
+        return (
+          typeof callback === 'function' && callback({ error: 'You are already the controller' })
+        );
       }
-      
+
       // Check if there's already a pending request from this client
       if (session.pendingControllerRequests.has(requesterClientId)) {
-        return typeof callback === "function" && callback({ error: 'You already have a pending request' });
+        return (
+          typeof callback === 'function' &&
+          callback({ error: 'You already have a pending request' })
+        );
       }
-      
+
       // Get requester's display name
       const requesterInfo = session.clients.get(socket.id);
-      const requesterName = requesterInfo ? requesterInfo.displayName : `User-${requesterClientId.slice(-4)}`;
-      
+      const requesterName = requesterInfo
+        ? requesterInfo.displayName
+        : `User-${requesterClientId.slice(-4)}`;
+
       // Add the request
       addControllerRequest(sessionId, requesterClientId, requesterName);
-      
+
       // Notify the current controller
       const controllerSocketId = session.controllerId;
       if (controllerSocketId) {
@@ -309,125 +414,173 @@ export function setupSocket(io) {
             sessionId,
             requesterClientId,
             requesterName,
-            requestTime: Date.now()
+            requestTime: Date.now(),
           });
         }
       }
-      
+
       // Notify all clients about the pending request
       io.to(sessionId).emit('controller_requests_update', getPendingControllerRequests(sessionId));
-      
+
       log('Controller request from client', requesterClientId, 'in session', sessionId);
-      typeof callback === "function" && callback({ success: true, message: 'Request sent to current controller' });
+      typeof callback === 'function' &&
+        callback({ success: true, message: 'Request sent to current controller' });
     });
 
-    socket.on('approve_controller_request', ({ sessionId, requesterClientId } = {}, callback) => {
-      if (!sessionId) return typeof callback === "function" && callback({ error: 'No sessionId provided' });
-      if (!requesterClientId) return typeof callback === "function" && callback({ error: 'No requesterClientId provided' });
-      
-      const session = getSession(sessionId);
-      if (!session) return typeof callback === "function" && callback({ error: 'Session not found' });
-      
-      const approverClientId = getClientIdBySocket(sessionId, socket.id);
-      if (session.controllerClientId !== approverClientId) {
-        return typeof callback === "function" && callback({ error: 'Only the current controller can approve requests' });
-      }
-      
-      // Check if the request still exists
-      if (!session.pendingControllerRequests.has(requesterClientId)) {
-        return typeof callback === "function" && callback({ error: 'Request not found or expired' });
-      }
-      
-      // Remove the request and transfer controller role
-      removeControllerRequest(sessionId, requesterClientId);
-      setController(sessionId, requesterClientId);
-      
-      log('Controller transferred to client', requesterClientId, 'in session', sessionId);
-      
-      // Notify all clients
-      io.to(sessionId).emit('controller_change', getSocketIdByClientId(sessionId, requesterClientId));
-      io.to(sessionId).emit('controller_client_change', requesterClientId);
-      io.to(sessionId).emit('controller_requests_update', getPendingControllerRequests(sessionId));
-      io.to(sessionId).emit('sync_state', {
-        isPlaying: session.isPlaying,
-        timestamp: session.timestamp,
-        lastUpdated: session.lastUpdated,
-        controllerId: getSocketIdByClientId(sessionId, requesterClientId),
-        serverTime: Date.now()
-      });
-      
-      typeof callback === "function" && callback({ success: true });
-    });
+    socket.on(
+      'approve_controller_request',
+      async ({ sessionId, requesterClientId } = {}, callback) => {
+        if (!sessionId)
+          return typeof callback === 'function' && callback({ error: 'No sessionId provided' });
+        if (!requesterClientId)
+          return (
+            typeof callback === 'function' && callback({ error: 'No requesterClientId provided' })
+          );
 
-    socket.on('deny_controller_request', ({ sessionId, requesterClientId } = {}, callback) => {
-      if (!sessionId) return typeof callback === "function" && callback({ error: 'No sessionId provided' });
-      if (!requesterClientId) return typeof callback === "function" && callback({ error: 'No requesterClientId provided' });
-      
-      const session = getSession(sessionId);
-      if (!session) return typeof callback === "function" && callback({ error: 'Session not found' });
-      
-      const denierClientId = getClientIdBySocket(sessionId, socket.id);
-      if (session.controllerClientId !== denierClientId) {
-        return typeof callback === "function" && callback({ error: 'Only the current controller can deny requests' });
-      }
-      
-      // Remove the request
-      removeControllerRequest(sessionId, requesterClientId);
-      
-      log('Controller request denied for client', requesterClientId, 'in session', sessionId);
-      
-      // Notify all clients
-      io.to(sessionId).emit('controller_requests_update', getPendingControllerRequests(sessionId));
-      
-      typeof callback === "function" && callback({ success: true });
-    });
+        const session = getSession(sessionId);
+        if (!session)
+          return typeof callback === 'function' && callback({ error: 'Session not found' });
 
-    socket.on('cancel_controller_request', ({ sessionId } = {}, callback) => {
-      if (!sessionId) return typeof callback === "function" && callback({ error: 'No sessionId provided' });
-      
+        const approverClientId = getClientIdBySocket(sessionId, socket.id);
+        if (session.controllerClientId !== approverClientId) {
+          return (
+            typeof callback === 'function' &&
+            callback({ error: 'Only the current controller can approve requests' })
+          );
+        }
+
+        // Check if the request still exists
+        if (!session.pendingControllerRequests.has(requesterClientId)) {
+          return (
+            typeof callback === 'function' && callback({ error: 'Request not found or expired' })
+          );
+        }
+
+        // Remove the request and transfer controller role
+        removeControllerRequest(sessionId, requesterClientId);
+        setController(sessionId, requesterClientId);
+
+        log('Controller transferred to client', requesterClientId, 'in session', sessionId);
+
+        // Notify all clients
+        io.to(sessionId).emit(
+          'controller_change',
+          getSocketIdByClientId(sessionId, requesterClientId)
+        );
+        io.to(sessionId).emit('controller_client_change', requesterClientId);
+        io.to(sessionId).emit(
+          'controller_requests_update',
+          getPendingControllerRequests(sessionId)
+        );
+        io.to(sessionId).emit('sync_state', {
+          isPlaying: session.isPlaying,
+          timestamp: session.timestamp,
+          lastUpdated: session.lastUpdated,
+          controllerId: getSocketIdByClientId(sessionId, requesterClientId),
+          serverTime: Date.now(),
+          syncVersion: incrementSyncVersion(sessionId),
+        });
+
+        typeof callback === 'function' && callback({ success: true });
+      }
+    );
+
+    socket.on(
+      'deny_controller_request',
+      async ({ sessionId, requesterClientId } = {}, callback) => {
+        if (!sessionId)
+          return typeof callback === 'function' && callback({ error: 'No sessionId provided' });
+        if (!requesterClientId)
+          return (
+            typeof callback === 'function' && callback({ error: 'No requesterClientId provided' })
+          );
+
+        const session = getSession(sessionId);
+        if (!session)
+          return typeof callback === 'function' && callback({ error: 'Session not found' });
+
+        const denierClientId = getClientIdBySocket(sessionId, socket.id);
+        if (session.controllerClientId !== denierClientId) {
+          return (
+            typeof callback === 'function' &&
+            callback({ error: 'Only the current controller can deny requests' })
+          );
+        }
+
+        // Remove the request
+        removeControllerRequest(sessionId, requesterClientId);
+
+        log('Controller request denied for client', requesterClientId, 'in session', sessionId);
+
+        // Notify all clients
+        io.to(sessionId).emit(
+          'controller_requests_update',
+          getPendingControllerRequests(sessionId)
+        );
+
+        typeof callback === 'function' && callback({ success: true });
+      }
+    );
+
+    socket.on('cancel_controller_request', async ({ sessionId } = {}, callback) => {
+      if (!sessionId)
+        return typeof callback === 'function' && callback({ error: 'No sessionId provided' });
+
       const session = getSession(sessionId);
-      if (!session) return typeof callback === "function" && callback({ error: 'Session not found' });
-      
+      if (!session)
+        return typeof callback === 'function' && callback({ error: 'Session not found' });
+
       const requesterClientId = getClientIdBySocket(sessionId, socket.id);
-      if (!requesterClientId) return typeof callback === "function" && callback({ error: 'Client not found in session' });
-      
+      if (!requesterClientId)
+        return typeof callback === 'function' && callback({ error: 'Client not found in session' });
+
       // Remove the request
       removeControllerRequest(sessionId, requesterClientId);
-      
+
       log('Controller request cancelled by client', requesterClientId, 'in session', sessionId);
-      
+
       // Notify all clients
       io.to(sessionId).emit('controller_requests_update', getPendingControllerRequests(sessionId));
-      
-      typeof callback === "function" && callback({ success: true });
+
+      typeof callback === 'function' && callback({ success: true });
     });
 
-    socket.on('offer_controller', ({ sessionId, targetClientId } = {}, callback) => {
-      if (!sessionId) return typeof callback === "function" && callback({ error: 'No sessionId provided' });
-      if (!targetClientId) return typeof callback === "function" && callback({ error: 'No targetClientId provided' });
-      
+    socket.on('offer_controller', async ({ sessionId, targetClientId } = {}, callback) => {
+      if (!sessionId)
+        return typeof callback === 'function' && callback({ error: 'No sessionId provided' });
+      if (!targetClientId)
+        return typeof callback === 'function' && callback({ error: 'No targetClientId provided' });
+
       const session = getSession(sessionId);
-      if (!session) return typeof callback === "function" && callback({ error: 'Session not found' });
-      
+      if (!session)
+        return typeof callback === 'function' && callback({ error: 'Session not found' });
+
       const offererClientId = getClientIdBySocket(sessionId, socket.id);
       if (session.controllerClientId !== offererClientId) {
-        return typeof callback === "function" && callback({ error: 'Only the current controller can offer controller role' });
+        return (
+          typeof callback === 'function' &&
+          callback({ error: 'Only the current controller can offer controller role' })
+        );
       }
-      
+
       // Check if target is already the controller
       if (session.controllerClientId === targetClientId) {
-        return typeof callback === "function" && callback({ error: 'Target is already the controller' });
+        return (
+          typeof callback === 'function' && callback({ error: 'Target is already the controller' })
+        );
       }
-      
+
       // Get offerer's display name
       const offererInfo = session.clients.get(socket.id);
-      const offererName = offererInfo ? offererInfo.displayName : `User-${offererClientId.slice(-4)}`;
-      
+      const offererName = offererInfo
+        ? offererInfo.displayName
+        : `User-${offererClientId.slice(-4)}`;
+
       // Get target's display name
       const targetSocketId = getSocketIdByClientId(sessionId, targetClientId);
       const targetInfo = targetSocketId ? session.clients.get(targetSocketId) : null;
       const targetName = targetInfo ? targetInfo.displayName : `User-${targetClientId.slice(-4)}`;
-      
+
       // Notify the target client
       if (targetSocketId) {
         const targetSocket = io.sockets.sockets.get(targetSocketId);
@@ -438,47 +591,61 @@ export function setupSocket(io) {
             offererName,
             targetClientId,
             targetName,
-            offerTime: Date.now()
+            offerTime: Date.now(),
           });
         }
       }
-      
+
       // Notify the offerer that the offer was sent successfully
       socket.emit('controller_offer_sent', {
         sessionId,
         targetClientId,
         targetName,
-        offerTime: Date.now()
+        offerTime: Date.now(),
       });
-      
-      log('Controller offer sent from', offererClientId, 'to', targetClientId, 'in session', sessionId);
-      typeof callback === "function" && callback({ success: true, message: `Controller offer sent to ${targetName}` });
+
+      log(
+        'Controller offer sent from',
+        offererClientId,
+        'to',
+        targetClientId,
+        'in session',
+        sessionId
+      );
+      typeof callback === 'function' &&
+        callback({ success: true, message: `Controller offer sent to ${targetName}` });
     });
 
-    socket.on('accept_controller_offer', ({ sessionId, offererClientId } = {}, callback) => {
-      if (!sessionId) return typeof callback === "function" && callback({ error: 'No sessionId provided' });
-      if (!offererClientId) return typeof callback === "function" && callback({ error: 'No offererClientId provided' });
-      
+    socket.on('accept_controller_offer', async ({ sessionId, offererClientId } = {}, callback) => {
+      if (!sessionId)
+        return typeof callback === 'function' && callback({ error: 'No sessionId provided' });
+      if (!offererClientId)
+        return typeof callback === 'function' && callback({ error: 'No offererClientId provided' });
+
       const session = getSession(sessionId);
-      if (!session) return typeof callback === "function" && callback({ error: 'Session not found' });
-      
+      if (!session)
+        return typeof callback === 'function' && callback({ error: 'Session not found' });
+
       const accepterClientId = getClientIdBySocket(sessionId, socket.id);
-      if (!accepterClientId) return typeof callback === "function" && callback({ error: 'Client not found in session' });
-      
+      if (!accepterClientId)
+        return typeof callback === 'function' && callback({ error: 'Client not found in session' });
+
       // Verify the offerer is still the controller
       if (session.controllerClientId !== offererClientId) {
-        return typeof callback === "function" && callback({ error: 'Offer is no longer valid' });
+        return typeof callback === 'function' && callback({ error: 'Offer is no longer valid' });
       }
-      
+
       // Transfer controller role
       setController(sessionId, accepterClientId);
-      
+
       log('Controller transferred to client', accepterClientId, 'in session', sessionId);
-      
+
       // Get accepter's info
       const accepterInfo = session.clients.get(socket.id);
-      const accepterName = accepterInfo ? accepterInfo.displayName : `User-${accepterClientId.slice(-4)}`;
-      
+      const accepterName = accepterInfo
+        ? accepterInfo.displayName
+        : `User-${accepterClientId.slice(-4)}`;
+
       // Notify the offerer that their offer was accepted
       const offererSocketId = getSocketIdByClientId(sessionId, offererClientId);
       if (offererSocketId) {
@@ -488,35 +655,43 @@ export function setupSocket(io) {
             sessionId,
             accepterClientId,
             accepterName,
-            offerTime: Date.now()
+            offerTime: Date.now(),
           });
         }
       }
-      
+
       // Notify all clients
-      io.to(sessionId).emit('controller_change', getSocketIdByClientId(sessionId, accepterClientId));
+      io.to(sessionId).emit(
+        'controller_change',
+        getSocketIdByClientId(sessionId, accepterClientId)
+      );
       io.to(sessionId).emit('controller_client_change', accepterClientId);
       io.to(sessionId).emit('sync_state', {
         isPlaying: session.isPlaying,
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
         controllerId: getSocketIdByClientId(sessionId, accepterClientId),
-        serverTime: Date.now()
+        serverTime: Date.now(),
+        syncVersion: incrementSyncVersion(sessionId),
       });
-      
-      typeof callback === "function" && callback({ success: true });
+
+      typeof callback === 'function' && callback({ success: true });
     });
 
-    socket.on('decline_controller_offer', ({ sessionId, offererClientId } = {}, callback) => {
-      if (!sessionId) return typeof callback === "function" && callback({ error: 'No sessionId provided' });
-      if (!offererClientId) return typeof callback === "function" && callback({ error: 'No offererClientId provided' });
-      
+    socket.on('decline_controller_offer', async ({ sessionId, offererClientId } = {}, callback) => {
+      if (!sessionId)
+        return typeof callback === 'function' && callback({ error: 'No sessionId provided' });
+      if (!offererClientId)
+        return typeof callback === 'function' && callback({ error: 'No offererClientId provided' });
+
       const session = getSession(sessionId);
-      if (!session) return typeof callback === "function" && callback({ error: 'Session not found' });
-      
+      if (!session)
+        return typeof callback === 'function' && callback({ error: 'Session not found' });
+
       const declinerClientId = getClientIdBySocket(sessionId, socket.id);
-      if (!declinerClientId) return typeof callback === "function" && callback({ error: 'Client not found in session' });
-      
+      if (!declinerClientId)
+        return typeof callback === 'function' && callback({ error: 'Client not found in session' });
+
       // Notify the offerer that their offer was declined
       const offererSocketId = getSocketIdByClientId(sessionId, offererClientId);
       if (offererSocketId) {
@@ -525,92 +700,108 @@ export function setupSocket(io) {
           offererSocket.emit('controller_offer_declined', {
             sessionId,
             declinerClientId,
-            declinerName: session.clients.get(socket.id) ? session.clients.get(socket.id).displayName : `User-${declinerClientId.slice(-4)}`,
-            offerTime: Date.now()
+            declinerName: session.clients.get(socket.id)
+              ? session.clients.get(socket.id).displayName
+              : `User-${declinerClientId.slice(-4)}`,
+            offerTime: Date.now(),
           });
         }
       }
-      
+
       log('Controller offer declined by client', declinerClientId, 'in session', sessionId);
-      
-      typeof callback === "function" && callback({ success: true });
+
+      typeof callback === 'function' && callback({ success: true });
     });
 
-    socket.on('chat_message', ({ sessionId, message, sender, displayName } = {}, callback) => {
-      // --- Rate limiting ---
-      const now = Date.now();
-      if (!chatRateLimit[socket.id]) chatRateLimit[socket.id] = [];
-      // Remove timestamps older than 3 seconds
-      chatRateLimit[socket.id] = chatRateLimit[socket.id].filter(ts => now - ts < 3000);
-      if (chatRateLimit[socket.id].length >= 5) {
-        if (typeof callback === 'function') callback({ error: 'You are sending messages too quickly. Please slow down.' });
-        return;
-      }
-      chatRateLimit[socket.id].push(now);
-      if (!sessionId || !message || typeof message !== 'string') {
-        if (typeof callback === 'function') callback({ error: 'Invalid chat message data' });
-        return;
-      }
-      // Message length and content validation
-      const MAX_LENGTH = 500;
-      const trimmed = message.trim();
-      if (!trimmed) {
-        if (typeof callback === 'function') callback({ error: 'Message cannot be empty or whitespace.' });
-        return;
-      }
-      if (trimmed.length > MAX_LENGTH) {
-        if (typeof callback === 'function') callback({ error: `Message too long (max ${MAX_LENGTH} characters).` });
-        return;
-      }
-      // Sanitize message to prevent XSS
-      const safeMessage = escapeHtml(trimmed);
-      const session = getSession(sessionId);
-      if (!session) {
-        if (typeof callback === 'function') callback({ error: 'Session not found' });
-        return;
-      }
-      // Try to get displayName from payload, else from session.clients map
-      let resolvedDisplayName = displayName ? safeDisplayName(displayName) : undefined;
-      if (!resolvedDisplayName) {
-        // Try to find by socketId or clientId
-        let clientInfo = null;
-        // Try by socketId
-        clientInfo = session.clients.get(socket.id);
-        // If not found, try by clientId
-        if (!clientInfo && sender) {
-          for (const info of session.clients.values()) {
-            if (info.clientId === sender) {
-              clientInfo = info;
-              break;
+    socket.on(
+      'chat_message',
+      async ({ sessionId, message, sender, displayName } = {}, callback) => {
+        // --- Rate limiting ---
+        const now = Date.now();
+        if (!chatRateLimit[socket.id])
+          chatRateLimit[socket.id] = new TimestampRingBuffer(CHAT_LIMIT);
+        const ring = chatRateLimit[socket.id];
+        if (ring.countRecent(now, CHAT_WINDOW_MS) >= CHAT_LIMIT) {
+          if (typeof callback === 'function')
+            callback({ error: 'You are sending messages too quickly. Please slow down.' });
+          return;
+        }
+        ring.add(now);
+        if (!sessionId || !message || typeof message !== 'string') {
+          if (typeof callback === 'function') callback({ error: 'Invalid chat message data' });
+          return;
+        }
+        // Message length and content validation
+        const MAX_LENGTH = 500;
+        const trimmed = message.trim();
+        if (!trimmed) {
+          if (typeof callback === 'function')
+            callback({ error: 'Message cannot be empty or whitespace.' });
+          return;
+        }
+        if (trimmed.length > MAX_LENGTH) {
+          if (typeof callback === 'function')
+            callback({ error: `Message too long (max ${MAX_LENGTH} characters).` });
+          return;
+        }
+        // Sanitize message to prevent XSS
+        const safeMessage = escapeHtml(trimmed);
+        const session = getSession(sessionId);
+        if (!session) {
+          if (typeof callback === 'function') callback({ error: 'Session not found' });
+          return;
+        }
+        // Try to get displayName from payload, else from session.clients map
+        let resolvedDisplayName = displayName ? safeDisplayName(displayName) : undefined;
+        if (!resolvedDisplayName) {
+          // Try to find by socketId or clientId
+          let clientInfo = null;
+          // Try by socketId
+          clientInfo = session.clients.get(socket.id);
+          // If not found, try by clientId
+          if (!clientInfo && sender) {
+            for (const info of session.clients.values()) {
+              if (info.clientId === sender) {
+                clientInfo = info;
+                break;
+              }
             }
           }
+          resolvedDisplayName =
+            clientInfo && clientInfo.displayName
+              ? safeDisplayName(clientInfo.displayName)
+              : undefined;
         }
-        resolvedDisplayName = clientInfo && clientInfo.displayName ? safeDisplayName(clientInfo.displayName) : undefined;
+        let formattedMessage = formatChatMessage(
+          sender || socket.id,
+          safeMessage,
+          resolvedDisplayName
+        );
+        // Ensure messageId is present
+        if (!formattedMessage.messageId) {
+          formattedMessage = { ...formattedMessage, messageId: uuidv4() };
+        }
+        // Store message in session
+        const sessionMessages = getSessionMessages(sessionId);
+        if (sessionMessages) sessionMessages.push(formattedMessage);
+        io.to(sessionId).emit('chat_message', formattedMessage);
+        if (typeof callback === 'function') callback({ success: true, message: formattedMessage });
       }
-      let formattedMessage = formatChatMessage(sender || socket.id, safeMessage, resolvedDisplayName);
-      // Ensure messageId is present
-      if (!formattedMessage.messageId) {
-        formattedMessage = { ...formattedMessage, messageId: uuidv4() };
-      }
-      // Store message in session
-      const sessionMessages = getSessionMessages(sessionId);
-      if (sessionMessages) sessionMessages.push(formattedMessage);
-      io.to(sessionId).emit('chat_message', formattedMessage);
-      if (typeof callback === 'function') callback({ success: true, message: formattedMessage });
-    });
+    );
 
     // Edit message event
-    socket.on('edit_message', ({ sessionId, messageId, newMessage, clientId }, callback) => {
+    socket.on('edit_message', async ({ sessionId, messageId, newMessage, clientId }, callback) => {
       const sessionMessages = getSessionMessages(sessionId);
       if (!sessionMessages) return callback && callback({ error: 'Session not found' });
-      const msgIdx = sessionMessages.findIndex(m => m.messageId === messageId);
+      const msgIdx = sessionMessages.findIndex((m) => m.messageId === messageId);
       if (msgIdx === -1) return callback && callback({ error: 'Message not found' });
       const msg = sessionMessages[msgIdx];
       if (msg.sender !== clientId) return callback && callback({ error: 'Not allowed' });
       // Validate and sanitize new message
       const trimmed = (newMessage || '').trim();
       if (!trimmed) return callback && callback({ error: 'Message cannot be empty.' });
-      if (trimmed.length > 500) return callback && callback({ error: 'Message too long (max 500 characters).' });
+      if (trimmed.length > 500)
+        return callback && callback({ error: 'Message too long (max 500 characters).' });
       msg.message = escapeHtml(trimmed);
       msg.edited = true;
       msg.editTimestamp = Date.now();
@@ -619,10 +810,10 @@ export function setupSocket(io) {
     });
 
     // Delete message event
-    socket.on('delete_message', ({ sessionId, messageId, clientId }, callback) => {
+    socket.on('delete_message', async ({ sessionId, messageId, clientId }, callback) => {
       const sessionMessages = getSessionMessages(sessionId);
       if (!sessionMessages) return callback && callback({ error: 'Session not found' });
-      const msgIdx = sessionMessages.findIndex(m => m.messageId === messageId);
+      const msgIdx = sessionMessages.findIndex((m) => m.messageId === messageId);
       if (msgIdx === -1) return callback && callback({ error: 'Message not found' });
       const msg = sessionMessages[msgIdx];
       if (msg.sender !== clientId) return callback && callback({ error: 'Not allowed' });
@@ -632,161 +823,177 @@ export function setupSocket(io) {
     });
 
     // Report message event
-    socket.on('report_message', ({ sessionId, messageId, reporterId, reason }, callback) => {
+    socket.on('report_message', async ({ sessionId, messageId, reporterId, reason }, callback) => {
       const sessionMessages = getSessionMessages(sessionId);
       if (!sessionMessages) return callback && callback({ error: 'Session not found' });
-      const msg = sessionMessages.find(m => m.messageId === messageId);
+      const msg = sessionMessages.find((m) => m.messageId === messageId);
       if (!msg) return callback && callback({ error: 'Message not found' });
       // For now, just log the report
-     
+
       callback && callback({ success: true });
     });
 
     // Replace the existing reaction handler with comprehensive emoji reaction system
-    socket.on('emoji_reaction', ({ sessionId, messageId, emoji, clientId, displayName } = {}, callback) => {
-      if (!sessionId || !messageId || !emoji || !clientId) {
-        return typeof callback === "function" && callback({ error: 'Missing required fields' });
-      }
-      
-      const session = getSession(sessionId);
-      if (!session) {
-        return typeof callback === "function" && callback({ error: 'Session not found' });
-      }
-      
-      // Get or create reactions for this session
-      const sessionReactions = getSessionReactions(sessionId);
-      if (!sessionReactions) {
-        return typeof callback === "function" && callback({ error: 'Failed to get session reactions' });
-      }
-      
-      // Get or create reactions for this message
-      if (!sessionReactions.has(messageId)) {
-        sessionReactions.set(messageId, new Map());
-      }
-      const messageReactions = sessionReactions.get(messageId);
-      
-      // Get or create reaction data for this emoji
-      if (!messageReactions.has(emoji)) {
-        messageReactions.set(emoji, { count: 0, users: new Set() });
-      }
-      const reactionData = messageReactions.get(emoji);
-      
-      // Add user to this reaction
-      reactionData.users.add(clientId);
-      reactionData.count = reactionData.users.size;
-      
-      // Aggregate all reactions for this message
-      const aggregatedReactions = aggregateReactions(messageReactions);
-      
-      // Broadcast to all clients in the session
-      io.to(sessionId).emit('message_reactions_updated', {
-        messageId,
-        reactions: aggregatedReactions,
-        addedBy: clientId,
-        addedEmoji: emoji
-      });
-      
-      log('Emoji reaction added:', { sessionId, messageId, emoji, clientId, count: reactionData.count });
-      
-      if (typeof callback === "function") {
-        callback({ 
-          success: true, 
+    socket.on(
+      'emoji_reaction',
+      async ({ sessionId, messageId, emoji, clientId, displayName } = {}, callback) => {
+        if (!sessionId || !messageId || !emoji || !clientId) {
+          return typeof callback === 'function' && callback({ error: 'Missing required fields' });
+        }
+
+        const session = getSession(sessionId);
+        if (!session) {
+          return typeof callback === 'function' && callback({ error: 'Session not found' });
+        }
+
+        // Get or create reactions for this session
+        const sessionReactions = getSessionReactions(sessionId);
+        if (!sessionReactions) {
+          return (
+            typeof callback === 'function' && callback({ error: 'Failed to get session reactions' })
+          );
+        }
+
+        // Get or create reactions for this message
+        if (!sessionReactions.has(messageId)) {
+          sessionReactions.set(messageId, new Map());
+        }
+        const messageReactions = sessionReactions.get(messageId);
+
+        // Get or create reaction data for this emoji
+        if (!messageReactions.has(emoji)) {
+          messageReactions.set(emoji, { count: 0, users: new Set() });
+        }
+        const reactionData = messageReactions.get(emoji);
+
+        // Add user to this reaction
+        reactionData.users.add(clientId);
+        reactionData.count = reactionData.users.size;
+
+        // Aggregate all reactions for this message
+        const aggregatedReactions = aggregateReactions(messageReactions);
+
+        // Broadcast to all clients in the session
+        io.to(sessionId).emit('message_reactions_updated', {
+          messageId,
           reactions: aggregatedReactions,
-          addedEmoji: emoji
+          addedBy: clientId,
+          addedEmoji: emoji,
         });
+
+        log('Emoji reaction added:', {
+          sessionId,
+          messageId,
+          emoji,
+          clientId,
+          count: reactionData.count,
+        });
+
+        if (typeof callback === 'function') {
+          callback({
+            success: true,
+            reactions: aggregatedReactions,
+            addedEmoji: emoji,
+          });
+        }
       }
-    });
+    );
 
     // Remove emoji reaction
-    socket.on('remove_emoji_reaction', ({ sessionId, messageId, emoji, clientId } = {}, callback) => {
-      if (!sessionId || !messageId || !emoji || !clientId) {
-        return typeof callback === "function" && callback({ error: 'Missing required fields' });
-      }
-      
-      const session = getSession(sessionId);
-      if (!session) {
-        return typeof callback === "function" && callback({ error: 'Session not found' });
-      }
-      
-      const sessionReactions = getSessionReactions(sessionId);
-      if (!sessionReactions) {
-        return typeof callback === "function" && callback({ error: 'Failed to get session reactions' });
-      }
-      
-      const messageReactions = sessionReactions.get(messageId);
-      if (!messageReactions || !messageReactions.has(emoji)) {
-        return typeof callback === "function" && callback({ error: 'Reaction not found' });
-      }
-      
-      const reactionData = messageReactions.get(emoji);
-      reactionData.users.delete(clientId);
-      reactionData.count = reactionData.users.size;
-      
-      // Remove emoji if no users left
-      if (reactionData.count === 0) {
-        messageReactions.delete(emoji);
-      }
-      
-      // Remove message reactions if empty
-      if (messageReactions.size === 0) {
-        sessionReactions.delete(messageId);
-      }
-      
-      // Aggregate remaining reactions
-      const aggregatedReactions = aggregateReactions(messageReactions);
-      
-      // Broadcast to all clients
-      io.to(sessionId).emit('message_reactions_updated', {
-        messageId,
-        reactions: aggregatedReactions,
-        removedBy: clientId,
-        removedEmoji: emoji
-      });
-      
-      log('Emoji reaction removed:', { sessionId, messageId, emoji, clientId });
-      
-      if (typeof callback === "function") {
-        callback({ 
-          success: true, 
+    socket.on(
+      'remove_emoji_reaction',
+      async ({ sessionId, messageId, emoji, clientId } = {}, callback) => {
+        if (!sessionId || !messageId || !emoji || !clientId) {
+          return typeof callback === 'function' && callback({ error: 'Missing required fields' });
+        }
+
+        const session = getSession(sessionId);
+        if (!session) {
+          return typeof callback === 'function' && callback({ error: 'Session not found' });
+        }
+
+        const sessionReactions = getSessionReactions(sessionId);
+        if (!sessionReactions) {
+          return (
+            typeof callback === 'function' && callback({ error: 'Failed to get session reactions' })
+          );
+        }
+
+        const messageReactions = sessionReactions.get(messageId);
+        if (!messageReactions || !messageReactions.has(emoji)) {
+          return typeof callback === 'function' && callback({ error: 'Reaction not found' });
+        }
+
+        const reactionData = messageReactions.get(emoji);
+        reactionData.users.delete(clientId);
+        reactionData.count = reactionData.users.size;
+
+        // Remove emoji if no users left
+        if (reactionData.count === 0) {
+          messageReactions.delete(emoji);
+        }
+
+        // Remove message reactions if empty
+        if (messageReactions.size === 0) {
+          sessionReactions.delete(messageId);
+        }
+
+        // Aggregate remaining reactions
+        const aggregatedReactions = aggregateReactions(messageReactions);
+
+        // Broadcast to all clients
+        io.to(sessionId).emit('message_reactions_updated', {
+          messageId,
           reactions: aggregatedReactions,
-          removedEmoji: emoji
+          removedBy: clientId,
+          removedEmoji: emoji,
         });
+
+        log('Emoji reaction removed:', { sessionId, messageId, emoji, clientId });
+
+        if (typeof callback === 'function') {
+          callback({
+            success: true,
+            reactions: aggregatedReactions,
+            removedEmoji: emoji,
+          });
+        }
       }
-    });
+    );
 
     // Get reactions for a specific message
-    socket.on('get_message_reactions', ({ sessionId, messageId } = {}, callback) => {
+    socket.on('get_message_reactions', async ({ sessionId, messageId } = {}, callback) => {
       if (!sessionId || !messageId) {
-        return typeof callback === "function" && callback({ error: 'Missing required fields' });
+        return typeof callback === 'function' && callback({ error: 'Missing required fields' });
       }
-      
+
       const sessionReactions = getSessionReactions(sessionId);
       if (!sessionReactions) {
-        return typeof callback === "function" && callback({ error: 'Session not found' });
+        return typeof callback === 'function' && callback({ error: 'Session not found' });
       }
-      
+
       const messageReactions = sessionReactions.get(messageId);
       const aggregatedReactions = aggregateReactions(messageReactions);
-      
-      if (typeof callback === "function") {
-        callback({ 
-          success: true, 
-          reactions: aggregatedReactions
+
+      if (typeof callback === 'function') {
+        callback({
+          success: true,
+          reactions: aggregatedReactions,
         });
       }
     });
 
     // Get all reactions for a session
-    socket.on('get_session_reactions', ({ sessionId } = {}, callback) => {
+    socket.on('get_session_reactions', async ({ sessionId } = {}, callback) => {
       if (!sessionId) {
-        return typeof callback === "function" && callback({ error: 'Missing sessionId' });
+        return typeof callback === 'function' && callback({ error: 'Missing sessionId' });
       }
-      
+
       const sessionReactions = getSessionReactions(sessionId);
       if (!sessionReactions) {
-        return typeof callback === "function" && callback({ error: 'Session not found' });
+        return typeof callback === 'function' && callback({ error: 'Session not found' });
       }
-      
+
       const allReactions = {};
       for (const [messageId, messageReactions] of sessionReactions.entries()) {
         const aggregatedReactions = aggregateReactions(messageReactions);
@@ -794,11 +1001,11 @@ export function setupSocket(io) {
           allReactions[messageId] = aggregatedReactions;
         }
       }
-      
-      if (typeof callback === "function") {
-        callback({ 
-          success: true, 
-          reactions: allReactions
+
+      if (typeof callback === 'function') {
+        callback({
+          success: true,
+          reactions: allReactions,
         });
       }
     });
@@ -812,10 +1019,13 @@ export function setupSocket(io) {
      * - Broadcasts queue_update and emits a track_change if this is the first track.
      * - Returns detailed result in callback.
      */
-    socket.on('add_to_queue', (data = {}, callback) => {
+    socket.on('add_to_queue', async (data = {}, callback) => {
       const { sessionId, url, title, ...meta } = data || {};
       if (!sessionId || typeof sessionId !== 'string' || !url || typeof url !== 'string') {
-        return typeof callback === "function" && callback({ error: 'Missing or invalid sessionId or url' });
+        return (
+          typeof callback === 'function' &&
+          callback({ error: 'Missing or invalid sessionId or url' })
+        );
       }
       // Optionally: Only controller can add tracks (uncomment to enforce)
       // const session = getSession(sessionId);
@@ -826,8 +1036,8 @@ export function setupSocket(io) {
 
       // Enhanced: Prevent duplicate URLs in queue
       const queue = getQueue(sessionId) || [];
-      if (queue.some(track => track && track.url === url)) {
-        return typeof callback === "function" && callback({ error: 'Track already in queue' });
+      if (queue.some((track) => track && track.url === url)) {
+        return typeof callback === 'function' && callback({ error: 'Track already in queue' });
       }
 
       // Enhanced: Validate title (optional, allow empty but not non-string)
@@ -848,11 +1058,11 @@ export function setupSocket(io) {
           idx: 0,
           track: updatedQueue[0],
           reason: 'first_track_added',
-          initiator: getClientIdBySocket(sessionId, socket.id)
+          initiator: getClientIdBySocket(sessionId, socket.id),
         });
       }
 
-      typeof callback === "function" && callback({ success: true, queue: updatedQueue });
+      typeof callback === 'function' && callback({ success: true, queue: updatedQueue });
     });
 
     /**
@@ -864,25 +1074,27 @@ export function setupSocket(io) {
      * - Returns detailed result in callback.
      * - Logs for debugging.
      */
-    socket.on('remove_from_queue', ({ sessionId, index } = {}, callback) => {
+    socket.on('remove_from_queue', async ({ sessionId, index } = {}, callback) => {
       // Validate input
       if (!sessionId || typeof sessionId !== 'string' || typeof index !== 'number' || index < 0) {
-        return typeof callback === "function" && callback({ error: 'Invalid input' });
+        return typeof callback === 'function' && callback({ error: 'Invalid input' });
       }
       const session = getSession(sessionId);
-      if (!session) return typeof callback === "function" && callback({ error: 'Session not found' });
+      if (!session)
+        return typeof callback === 'function' && callback({ error: 'Session not found' });
       const clientId = getClientIdBySocket(sessionId, socket.id);
-      if (session.controllerClientId !== clientId) return typeof callback === "function" && callback({ error: 'Not allowed' });
+      if (session.controllerClientId !== clientId)
+        return typeof callback === 'function' && callback({ error: 'Not allowed' });
 
       const queue = getQueue(sessionId) || [];
       if (index >= queue.length) {
-        return typeof callback === "function" && callback({ error: 'Index out of bounds' });
+        return typeof callback === 'function' && callback({ error: 'Index out of bounds' });
       }
       const removedTrack = queue[index];
 
       // Remove the track
       const removed = removeFromQueue(sessionId, index);
-      if (!removed) return typeof callback === "function" && callback({ error: 'Invalid index' });
+      if (!removed) return typeof callback === 'function' && callback({ error: 'Invalid index' });
 
       // --- Delete uploaded file if it's a user upload (not a sample) ---
       if (removedTrack && removedTrack.url && typeof removedTrack.url === 'string') {
@@ -897,26 +1109,32 @@ export function setupSocket(io) {
         }
         const uploadsPrefix = '/audio/uploads/';
         const samplesPrefix = '/audio/uploads/samples/';
-        if (
-          pathname.startsWith(uploadsPrefix) &&
-          !pathname.startsWith(samplesPrefix)
-        ) {
+        if (pathname.startsWith(uploadsPrefix) && !pathname.startsWith(samplesPrefix)) {
           // Extract filename
           const filename = decodeURIComponent(pathname.substring(uploadsPrefix.length));
           const filePath = path.join(process.cwd(), 'uploads', filename);
-          log(`[remove_from_queue][DEBUG] Attempting to delete file:`, filePath, 'from url:', removedTrack.url);
-          fs.unlink(filePath, (err) => {
-            if (err) {
-              console.error(`[remove_from_queue] Failed to delete file ${filePath}:`, err);
-            } else {
-              log(`[remove_from_queue] Deleted user-uploaded file: ${filePath}`);
-            }
-          });
+          log(
+            `[remove_from_queue][DEBUG] Attempting to delete file:`,
+            filePath,
+            'from url:',
+            removedTrack.url
+          );
+          await fs.promises.unlink(filePath);
+          log(`[remove_from_queue] Deleted user-uploaded file: ${filePath}`);
         }
       }
 
       const updatedQueue = getQueue(sessionId) || [];
-      log('[DEBUG] remove_from_queue: session', sessionId, 'removed index', index, 'track:', removedTrack, 'queue now:', updatedQueue);
+      log(
+        '[DEBUG] remove_from_queue: session',
+        sessionId,
+        'removed index',
+        index,
+        'track:',
+        removedTrack,
+        'queue now:',
+        updatedQueue
+      );
 
       // If the removed track was the current track, emit a track_change to update current track
       let trackChangePayload = null;
@@ -930,7 +1148,7 @@ export function setupSocket(io) {
             track: null,
             reason: 'track_removed_queue_empty',
             initiator: clientId,
-            timestamp: Date.now()
+            timestamp: Date.now(),
           };
         } else {
           // If we removed the last track, move to previous; else, stay at same index
@@ -941,27 +1159,25 @@ export function setupSocket(io) {
             track: updatedQueue[newIdx],
             reason: 'current_track_removed',
             initiator: clientId,
-            timestamp: Date.now()
+            timestamp: Date.now(),
           };
         }
         io.to(sessionId).emit('track_change', trackChangePayload);
-      } else if (
-        typeof session.selectedTrackIdx === 'number' &&
-        index < session.selectedTrackIdx
-      ) {
+      } else if (typeof session.selectedTrackIdx === 'number' && index < session.selectedTrackIdx) {
         // If a track before the current was removed, decrement selectedTrackIdx
         session.selectedTrackIdx = Math.max(0, session.selectedTrackIdx - 1);
       }
 
       io.to(sessionId).emit('queue_update', updatedQueue);
 
-      typeof callback === "function" && callback({
-        success: true,
-        removedIndex: index,
-        removedTrack,
-        queue: updatedQueue,
-        ...(trackChangePayload ? { trackChange: trackChangePayload } : {})
-      });
+      typeof callback === 'function' &&
+        callback({
+          success: true,
+          removedIndex: index,
+          removedTrack,
+          queue: updatedQueue,
+          ...(trackChangePayload ? { trackChange: trackChangePayload } : {}),
+        });
     });
 
     /**
@@ -976,44 +1192,43 @@ export function setupSocket(io) {
      * - Optionally updates session.selectedTrackIdx for server-side state.
      * - Optionally emits a "track_change_failed" event for error cases.
      */
-    socket.on('track_change', (data, callback) => {
+    socket.on('track_change', async (data, callback) => {
       data = data || {};
       let { sessionId, idx, reason, extra, autoAdvance, force, track: customTrack } = data;
 
       if (!sessionId) {
-        if (typeof callback === "function") callback({ error: 'No sessionId provided' });
+        if (typeof callback === 'function') callback({ error: 'No sessionId provided' });
         return;
       }
       const session = getSession(sessionId);
       if (!session) {
-        if (typeof callback === "function") callback({ error: 'Session not found' });
+        if (typeof callback === 'function') callback({ error: 'Session not found' });
         return;
       }
       const clientId = getClientIdBySocket(sessionId, socket.id);
       if (session.controllerClientId !== clientId) {
-        if (typeof callback === "function") callback({ error: 'Not allowed' });
+        if (typeof callback === 'function') callback({ error: 'Not allowed' });
         io.to(socket.id).emit('track_change_failed', {
           error: 'Not allowed',
           sessionId,
           attemptedBy: clientId,
-          timestamp: Date.now()
+          timestamp: Date.now(),
         });
         return;
       }
 
       let queue = getQueue(sessionId) || [];
       let newIdx = typeof idx === 'number' ? idx : 0;
-      let track = (queue.length > 0 && typeof newIdx === 'number' && queue[newIdx]) ? queue[newIdx] : null;
+      let track =
+        queue.length > 0 && typeof newIdx === 'number' && queue[newIdx] ? queue[newIdx] : null;
 
       // --- Backend safeguard: If a custom track is provided and not in the queue, add it ---
-      if (customTrack && customTrack.url && !queue.some(t => t && t.url === customTrack.url)) {
+      if (customTrack && customTrack.url && !queue.some((t) => t && t.url === customTrack.url)) {
         addToQueue(sessionId, customTrack.url, customTrack.title || '', customTrack.meta || {});
         queue = getQueue(sessionId) || [];
-        newIdx = queue.findIndex(t => t && t.url === customTrack.url);
+        newIdx = queue.findIndex((t) => t && t.url === customTrack.url);
         track = queue[newIdx];
       }
-
-
 
       // Defensive: If idx is out of bounds, clamp to valid range or null
       if (typeof newIdx === 'number' && (newIdx < 0 || newIdx >= queue.length)) {
@@ -1048,7 +1263,24 @@ export function setupSocket(io) {
 
       // Debug log for queue and track
       if (process.env.NODE_ENV === 'development') {
-        log('[DEBUG][track_change] session:', sessionId, 'queue:', queue, 'idx:', newIdx, 'track:', track, 'reason:', reason, 'extra:', extra, 'autoAdvance:', autoAdvance, 'force:', force);
+        log(
+          '[DEBUG][track_change] session:',
+          sessionId,
+          'queue:',
+          queue,
+          'idx:',
+          newIdx,
+          'track:',
+          track,
+          'reason:',
+          reason,
+          'extra:',
+          extra,
+          'autoAdvance:',
+          autoAdvance,
+          'force:',
+          force
+        );
       }
 
       const payload = {
@@ -1058,7 +1290,7 @@ export function setupSocket(io) {
         initiator: clientId,
         timestamp: Date.now(),
         ...autoAdvanceInfo,
-        ...(extra && typeof extra === 'object' ? { extra } : {})
+        ...(extra && typeof extra === 'object' ? { extra } : {}),
       };
 
       io.to(sessionId).emit('queue_update', queue);
@@ -1071,10 +1303,11 @@ export function setupSocket(io) {
         timestamp: session.timestamp,
         lastUpdated: session.lastUpdated,
         controllerId: session.controllerId,
-        serverTime: Date.now()
+        serverTime: Date.now(),
+        syncVersion: incrementSyncVersion(sessionId),
       });
 
-      if (typeof callback === "function") callback({ success: true, ...payload });
+      if (typeof callback === 'function') callback({ success: true, ...payload });
     });
 
     /**
@@ -1092,20 +1325,22 @@ export function setupSocket(io) {
      */
     socket.on('time_sync', (clientSent, callback) => {
       const serverReceived = Date.now();
-      const parsedClientSent = typeof clientSent === 'number' ? clientSent : Number(clientSent) || null;
+      const parsedClientSent =
+        typeof clientSent === 'number' ? clientSent : Number(clientSent) || null;
 
       // Optionally, allow client to send an object with more info (future-proofing)
       let clientExtra = {};
       if (clientSent && typeof clientSent === 'object' && clientSent !== null) {
         clientExtra = { ...clientSent };
         if ('clientSent' in clientSent) {
-          clientExtra.clientSent = typeof clientSent.clientSent === 'number'
-            ? clientSent.clientSent
-            : Number(clientSent.clientSent) || null;
+          clientExtra.clientSent =
+            typeof clientSent.clientSent === 'number'
+              ? clientSent.clientSent
+              : Number(clientSent.clientSent) || null;
         }
       }
 
-      if (typeof callback === "function") {
+      if (typeof callback === 'function') {
         // Simulate minimal processing delay for realism
         setImmediate(() => {
           const serverProcessed = Date.now();
@@ -1125,10 +1360,10 @@ export function setupSocket(io) {
             serverInfo: {
               nodeVersion: process.version,
               platform: process.platform,
-              pid: process.pid
+              pid: process.pid,
             },
             roundTripEstimate,
-            ...clientExtra // echo back any extra client info for advanced sync
+            ...clientExtra, // echo back any extra client info for advanced sync
           });
         });
       }
@@ -1137,63 +1372,84 @@ export function setupSocket(io) {
     // Store per-client drift for diagnostics/adaptive correction
     const clientDriftMap = {};
 
-    socket.on('drift_report', ({ sessionId, drift, clientId, timestamp, manual, resyncDuration, beforeDrift, afterDrift, improvement } = {}) => {
-      if (!sessionId || typeof drift !== 'number' || !clientId) return;
-      if (!clientDriftMap[sessionId]) clientDriftMap[sessionId] = {};
-      clientDriftMap[sessionId][clientId] = { drift, timestamp };
-      
-      // Enhanced logging with more context
-      let logMessage = `[DRIFT] Session ${sessionId} Client ${clientId}: Drift=${drift.toFixed(3)}s at ${new Date(timestamp).toISOString()}`;
-      
-      if (manual) {
-        logMessage += ` (MANUAL RESYNC)`;
-        if (typeof resyncDuration === 'number') {
-          logMessage += ` Duration: ${resyncDuration.toFixed(1)}ms`;
+    socket.on(
+      'drift_report',
+      async ({
+        sessionId,
+        drift,
+        clientId,
+        timestamp,
+        manual,
+        resyncDuration,
+        beforeDrift,
+        afterDrift,
+        improvement,
+      } = {}) => {
+        if (!sessionId || typeof drift !== 'number' || !clientId) return;
+        if (!clientDriftMap[sessionId]) clientDriftMap[sessionId] = {};
+        if (!clientDriftMap[sessionId][clientId]) clientDriftMap[sessionId][clientId] = { history: [] };
+        clientDriftMap[sessionId][clientId].drift = drift;
+        clientDriftMap[sessionId][clientId].timestamp = timestamp;
+        // Maintain a moving window of drift history
+        const history = clientDriftMap[sessionId][clientId].history;
+        history.push(drift);
+        if (history.length > DRIFT_AVG_WINDOW) history.shift();
+
+        // Enhanced logging with more context
+        let logMessage = `[DRIFT] Session ${sessionId} Client ${clientId}: Drift=${drift.toFixed(3)}s at ${new Date(timestamp).toISOString()}`;
+
+        if (manual) {
+          logMessage += ` (MANUAL RESYNC)`;
+          if (typeof resyncDuration === 'number') {
+            logMessage += ` Duration: ${resyncDuration.toFixed(1)}ms`;
+          }
+          if (typeof beforeDrift === 'number' && typeof afterDrift === 'number') {
+            logMessage += ` Before: ${beforeDrift.toFixed(3)}s After: ${afterDrift.toFixed(3)}s`;
+          }
+          if (typeof improvement === 'number') {
+            logMessage += ` Improvement: ${improvement.toFixed(3)}s`;
+          }
         }
-        if (typeof beforeDrift === 'number' && typeof afterDrift === 'number') {
-          logMessage += ` Before: ${beforeDrift.toFixed(3)}s After: ${afterDrift.toFixed(3)}s`;
+
+        log(logMessage);
+
+        // Store additional analytics for manual resyncs
+        if (manual && typeof improvement === 'number') {
+          if (!clientDriftMap[sessionId][clientId].resyncHistory) {
+            clientDriftMap[sessionId][clientId].resyncHistory = [];
+          }
+          clientDriftMap[sessionId][clientId].resyncHistory.push({
+            timestamp,
+            beforeDrift,
+            afterDrift,
+            improvement,
+            resyncDuration,
+          });
+
+          // Keep only last 10 resyncs
+          if (clientDriftMap[sessionId][clientId].resyncHistory.length > 10) {
+            clientDriftMap[sessionId][clientId].resyncHistory.shift();
+          }
         }
-        if (typeof improvement === 'number') {
-          logMessage += ` Improvement: ${improvement.toFixed(3)}s`;
-        }
+
+        // (Optional) Adaptive correction logic can be added here
       }
-      
-      log(logMessage);
-      
-      // Store additional analytics for manual resyncs
-      if (manual && typeof improvement === 'number') {
-        if (!clientDriftMap[sessionId][clientId].resyncHistory) {
-          clientDriftMap[sessionId][clientId].resyncHistory = [];
-        }
-        clientDriftMap[sessionId][clientId].resyncHistory.push({
-          timestamp,
-          beforeDrift,
-          afterDrift,
-          improvement,
-          resyncDuration
-        });
-        
-        // Keep only last 10 resyncs
-        if (clientDriftMap[sessionId][clientId].resyncHistory.length > 10) {
-          clientDriftMap[sessionId][clientId].resyncHistory.shift();
-        }
-      }
-      
-      // (Optional) Adaptive correction logic can be added here
-    });
+    );
 
     // Typing indicator events
     socket.on('typing', ({ sessionId, clientId, displayName }) => {
       if (!sessionId || !clientId) return;
       // Broadcast to all except sender
-      socket.to(sessionId).emit('user_typing', { clientId, displayName: safeDisplayName(displayName) });
+      socket
+        .to(sessionId)
+        .emit('user_typing', { clientId, displayName: safeDisplayName(displayName) });
     });
     socket.on('stop_typing', ({ sessionId, clientId }) => {
       if (!sessionId || !clientId) return;
       socket.to(sessionId).emit('user_stop_typing', { clientId });
     });
 
-    socket.on('disconnect', () => {
+    socket.on('disconnect', async () => {
       for (const [sessionId, session] of Object.entries(getAllSessions())) {
         const clientId = getClientIdBySocket(sessionId, socket.id);
         removeClient(sessionId, socket.id);
@@ -1205,69 +1461,185 @@ export function setupSocket(io) {
           const newSocketId = getSocketIdByClientId(sessionId, session.controllerClientId);
           session.controllerId = newSocketId;
           io.to(sessionId).emit('controller_change', newSocketId);
+          // Immediately broadcast full sync_state to all clients
+          io.to(sessionId).emit('sync_state', {
+            isPlaying: session.isPlaying,
+            timestamp: session.timestamp,
+            lastUpdated: session.lastUpdated,
+            controllerId: newSocketId,
+            serverTime: Date.now(),
+            syncVersion: incrementSyncVersion(sessionId),
+          });
         }
         // Only delete files if the session is now empty
         if (getClients(sessionId).length === 0) {
           // Delete all files for this session (user uploads only)
-          const sessionFiles = getSessionFiles(sessionId);
-          const uploadsDir = path.join(process.cwd(), 'uploads');
-          const samplesDir = path.join(uploadsDir, 'samples');
-          const sampleFiles = fs.existsSync(samplesDir) ? new Set(fs.readdirSync(samplesDir)) : new Set();
-          Object.values(sessionFiles).forEach(fileList => {
-            fileList.forEach(filename => {
-              // Only delete files that are NOT in the samples directory and not a sample file
-              if (!filename.startsWith('samples/') && !sampleFiles.has(filename)) {
-                const filePath = path.join(uploadsDir, filename);
-                fs.unlink(filePath, (err) => {
-                  if (err) {
-                    console.error(`[CLEANUP] Failed to delete file ${filePath}:`, err);
-                  } else {
-                    log(`[CLEANUP] Deleted user-uploaded file: ${filePath}`);
-                  }
-                });
-              } else {
-                log(`[CLEANUP] Skipped sample file: ${filename}`);
-              }
-            });
-          });
-          removeSessionFiles(sessionId);
+          await deleteUserUploadedFiles(sessionId);
           deleteSession(sessionId);
           log(`[CLEANUP] Session deleted (empty): ${sessionId}`);
         }
         io.to(sessionId).emit('clients_update', getClients(sessionId));
-        io.to(sessionId).emit('controller_requests_update', getPendingControllerRequests(sessionId));
+        io.to(sessionId).emit(
+          'controller_requests_update',
+          getPendingControllerRequests(sessionId)
+        );
       }
       log('Socket disconnected:', socket.id);
     });
 
-    // --- WebRTC Peer-to-Peer Signaling for Time Sync ---
-    socket.on('peer-offer', ({ to, from, offer }) => {
-      const targetSocket = Array.from(io.sockets.sockets.values()).find(s => s.clientId === to || s.id === to);
+    // --- WebRTC Peer-to-Peer Signaling for Time Sync (server relay) ---
+    socket.on('peer-offer', (data) => {
+      const { to } = data;
+      const targetSocket = Array.from(io.sockets.sockets.values()).find(
+        (s) => s.clientId === to
+      );
       if (targetSocket) {
-        targetSocket.emit('peer-offer', { from, offer });
+        targetSocket.emit('peer-offer', data);
       }
     });
-    socket.on('peer-answer', ({ to, from, answer }) => {
-      const targetSocket = Array.from(io.sockets.sockets.values()).find(s => s.clientId === to || s.id === to);
+    socket.on('peer-answer', (data) => {
+      const { to } = data;
+      const targetSocket = Array.from(io.sockets.sockets.values()).find(
+        (s) => s.clientId === to
+      );
       if (targetSocket) {
-        targetSocket.emit('peer-answer', { from, answer });
+        targetSocket.emit('peer-answer', data);
       }
     });
-    socket.on('peer-ice-candidate', ({ to, from, candidate }) => {
-      const targetSocket = Array.from(io.sockets.sockets.values()).find(s => s.clientId === to || s.id === to);
+    socket.on('peer-ice-candidate', (data) => {
+      const { to } = data;
+      const targetSocket = Array.from(io.sockets.sockets.values()).find(
+        (s) => s.clientId === to
+      );
       if (targetSocket) {
-        targetSocket.emit('peer-ice-candidate', { from, candidate });
+        targetSocket.emit('peer-ice-candidate', data);
       }
     });
   });
 
   // Session timeout/cleanup (1 hour inactivity)
   const SESSION_TIMEOUT_MS = 60 * 60 * 1000; // 1 hour
-  setInterval(() => {
+  // --- Min-heap for session expirations ---
+  class MinHeap {
+    constructor() {
+      this.heap = [];
+      this.sessionMap = new Map(); // sessionId -> index in heap
+    }
+    push(sessionId, expiresAt) {
+      if (this.sessionMap.has(sessionId)) {
+        this.update(sessionId, expiresAt);
+        return;
+      }
+      this.heap.push({ sessionId, expiresAt });
+      this.sessionMap.set(sessionId, this.heap.length - 1);
+      this._bubbleUp(this.heap.length - 1);
+    }
+    pop() {
+      if (this.heap.length === 0) return null;
+      const min = this.heap[0];
+      const last = this.heap.pop();
+      this.sessionMap.delete(min.sessionId);
+      if (this.heap.length > 0) {
+        this.heap[0] = last;
+        this.sessionMap.set(last.sessionId, 0);
+        this._bubbleDown(0);
+      }
+      return min;
+    }
+    peek() {
+      return this.heap.length > 0 ? this.heap[0] : null;
+    }
+    update(sessionId, expiresAt) {
+      const idx = this.sessionMap.get(sessionId);
+      if (idx === undefined) return;
+      this.heap[idx].expiresAt = expiresAt;
+      this._bubbleUp(idx);
+      this._bubbleDown(idx);
+    }
+    remove(sessionId) {
+      const idx = this.sessionMap.get(sessionId);
+      if (idx === undefined) return;
+      const last = this.heap.pop();
+      this.sessionMap.delete(sessionId);
+      if (idx < this.heap.length) {
+        this.heap[idx] = last;
+        this.sessionMap.set(last.sessionId, idx);
+        this._bubbleUp(idx);
+        this._bubbleDown(idx);
+      }
+    }
+    _bubbleUp(idx) {
+      while (idx > 0) {
+        const parent = Math.floor((idx - 1) / 2);
+        if (this.heap[idx].expiresAt >= this.heap[parent].expiresAt) break;
+        [this.heap[idx], this.heap[parent]] = [this.heap[parent], this.heap[idx]];
+        this.sessionMap.set(this.heap[idx].sessionId, idx);
+        this.sessionMap.set(this.heap[parent].sessionId, parent);
+        idx = parent;
+      }
+    }
+    _bubbleDown(idx) {
+      const n = this.heap.length;
+      while (true) {
+        let smallest = idx;
+        const left = 2 * idx + 1;
+        const right = 2 * idx + 2;
+        if (left < n && this.heap[left].expiresAt < this.heap[smallest].expiresAt) smallest = left;
+        if (right < n && this.heap[right].expiresAt < this.heap[smallest].expiresAt)
+          smallest = right;
+        if (smallest === idx) break;
+        [this.heap[idx], this.heap[smallest]] = [this.heap[smallest], this.heap[idx]];
+        this.sessionMap.set(this.heap[idx].sessionId, idx);
+        this.sessionMap.set(this.heap[smallest].sessionId, smallest);
+        idx = smallest;
+      }
+    }
+  }
+  const sessionExpiryHeap = new MinHeap();
+
+  // Helper to update heap on session activity
+  function updateSessionExpiry(sessionId, lastUpdated) {
+    sessionExpiryHeap.push(sessionId, lastUpdated + SESSION_TIMEOUT_MS);
+  }
+  function removeSessionExpiry(sessionId) {
+    sessionExpiryHeap.remove(sessionId);
+  }
+
+  // Helper to delete user-uploaded files for a session (not samples)
+  async function deleteUserUploadedFiles(sessionId) {
+    const sessionFiles = getSessionFiles(sessionId);
+    const uploadsDir = path.join(process.cwd(), 'uploads');
+    const samplesDir = path.join(uploadsDir, 'samples');
+    const sampleFiles = (await fs.promises.access(samplesDir).then(
+      () => true,
+      () => false
+    ))
+      ? new Set(await fs.promises.readdir(samplesDir))
+      : new Set();
+    Object.values(sessionFiles).forEach(async (fileList) => {
+      for (const filename of fileList) {
+        // Only delete files that are NOT in the samples directory and not a sample file
+        if (!filename.startsWith('samples/') && !sampleFiles.has(filename)) {
+          const filePath = path.join(uploadsDir, filename);
+          log(`[CLEANUP] Attempting to delete file:`, filePath, 'from url:', filePath);
+          await fs.promises.unlink(filePath);
+          log(`[CLEANUP] Deleted user-uploaded file: ${filePath}`);
+        } else {
+          log(`[CLEANUP] Skipped sample file: ${filename}`);
+        }
+      }
+    });
+    removeSessionFiles(sessionId);
+  }
+
+  // Refactored session cleanup interval
+  setInterval(async () => {
     const now = Date.now();
-    const sessions = getAllSessions();
-    for (const [sessionId, session] of Object.entries(sessions)) {
-      if (now - session.lastUpdated > SESSION_TIMEOUT_MS) {
+    let top = sessionExpiryHeap.peek();
+    while (top && top.expiresAt <= now) {
+      const sessionId = top.sessionId;
+      const session = getSession(sessionId);
+      if (session) {
         io.to(sessionId).emit('session_closed');
         for (const clientId of session.clients.keys()) {
           const clientSocket = io.sockets.sockets.get(clientId);
@@ -1275,18 +1647,12 @@ export function setupSocket(io) {
             clientSocket.leave(sessionId);
           }
         }
-        // Clean up uploaded files and in-memory file tracking
-        removeSessionFiles(sessionId);
+        await deleteUserUploadedFiles(sessionId);
         deleteSession(sessionId);
         log(`Session ${sessionId} timed out and was removed.`);
-      } else {
-        // Clean up expired controller requests
-        const hadExpiredRequests = session.pendingControllerRequests.size > 0;
-        clearExpiredControllerRequests(sessionId);
-        if (hadExpiredRequests && session.pendingControllerRequests.size === 0) {
-          io.to(sessionId).emit('controller_requests_update', []);
-        }
       }
+      removeSessionExpiry(sessionId);
+      top = sessionExpiryHeap.peek();
     }
   }, 60 * 1000);
 
@@ -1295,7 +1661,8 @@ export function setupSocket(io) {
   const HIGH_DRIFT_SYNC_INTERVAL = 100; // ms (was 200)
   const DRIFT_THRESHOLD = 0.2; // seconds
   const DRIFT_WINDOW = 10000; // ms (10s)
-  const clientDriftMap = {}; // sessionId -> { clientId: { drift, timestamp } }
+  const DRIFT_AVG_WINDOW = 8; // Number of drift samples for moving average
+  const clientDriftMap = {}; // sessionId -> { clientId: { drift, timestamp, history: [] } }
 
   // Clean up old drift reports every minute
   setInterval(() => {
@@ -1312,27 +1679,40 @@ export function setupSocket(io) {
     }
   }, 60000);
 
-  // Adaptive sync broadcast
+  // Adaptive sync broadcast using moving average of drift
   setInterval(() => {
     const sessions = getAllSessions();
     const now = Date.now();
     for (const [sessionId, session] of Object.entries(sessions)) {
       let highDrift = false;
+      let noRecentDrift = true;
       if (clientDriftMap[sessionId]) {
-        for (const { drift, timestamp } of Object.values(clientDriftMap[sessionId])) {
-          if (now - timestamp < DRIFT_WINDOW && drift > DRIFT_THRESHOLD) {
-            highDrift = true;
-            break;
+        let driftSamples = [];
+        for (const { drift, timestamp, history } of Object.values(clientDriftMap[sessionId])) {
+          if (now - timestamp < DRIFT_WINDOW) {
+            noRecentDrift = false;
+            if (Array.isArray(history) && history.length > 0) {
+              driftSamples = driftSamples.concat(history);
+            } else {
+              driftSamples.push(drift);
+            }
           }
         }
+        if (driftSamples.length > 0) {
+          const avgDrift = driftSamples.reduce((a, b) => a + b, 0) / driftSamples.length;
+          if (avgDrift > DRIFT_THRESHOLD) highDrift = true;
+        }
       }
+      // If no recent drift reports, treat as high drift (increase sync frequency)
+      if (noRecentDrift) highDrift = true;
       if (!highDrift) {
         io.to(sessionId).emit('sync_state', {
           isPlaying: session.isPlaying,
           timestamp: session.timestamp,
           lastUpdated: session.lastUpdated,
           controllerId: session.controllerId,
-          serverTime: Date.now()
+          serverTime: Date.now(),
+          syncVersion: getSyncVersion(sessionId),
         });
       }
     }
@@ -1344,23 +1724,36 @@ export function setupSocket(io) {
     const now = Date.now();
     for (const [sessionId, session] of Object.entries(sessions)) {
       let highDrift = false;
+      let noRecentDrift = true;
       if (clientDriftMap[sessionId]) {
-        for (const { drift, timestamp } of Object.values(clientDriftMap[sessionId])) {
-          if (now - timestamp < DRIFT_WINDOW && drift > DRIFT_THRESHOLD) {
-            highDrift = true;
-            break;
+        let driftSamples = [];
+        for (const { drift, timestamp, history } of Object.values(clientDriftMap[sessionId])) {
+          if (now - timestamp < DRIFT_WINDOW) {
+            noRecentDrift = false;
+            if (Array.isArray(history) && history.length > 0) {
+              driftSamples = driftSamples.concat(history);
+            } else {
+              driftSamples.push(drift);
+            }
           }
         }
+        if (driftSamples.length > 0) {
+          const avgDrift = driftSamples.reduce((a, b) => a + b, 0) / driftSamples.length;
+          if (avgDrift > DRIFT_THRESHOLD) highDrift = true;
+        }
       }
+      // If no recent drift reports, treat as high drift (increase sync frequency)
+      if (noRecentDrift) highDrift = true;
       if (highDrift) {
         io.to(sessionId).emit('sync_state', {
           isPlaying: session.isPlaying,
           timestamp: session.timestamp,
           lastUpdated: session.lastUpdated,
           controllerId: session.controllerId,
-          serverTime: Date.now()
+          serverTime: Date.now(),
+          syncVersion: getSyncVersion(sessionId),
         });
       }
     }
   }, HIGH_DRIFT_SYNC_INTERVAL);
-} 
+}

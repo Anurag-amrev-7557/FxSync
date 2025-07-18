@@ -55,7 +55,13 @@ const SYNC_CONFIG = {
 
   // Adaptive tuning (to be implemented)
   ADAPTIVE: {
-    ENABLED: false, // Set to true to enable adaptive thresholds
+    ENABLED: true, // Set to true to enable adaptive thresholds
+    DRIFT_WINDOW: 8, // Number of drift samples for moving average
+    JITTER_WINDOW: 8, // Number of jitter samples for moving average
+    HIGH_DRIFT_THRESHOLD: 0.18, // seconds
+    LOW_DRIFT_THRESHOLD: 0.08, // seconds
+    MIN_CORRECTION_COOLDOWN: 600, // ms
+    MAX_CORRECTION_COOLDOWN: 2200, // ms
     // ...future adaptive logic params
   },
 };
@@ -88,4 +94,4 @@ export function createEMA(alpha = 0.2, initial = 0) {
 // ema.next(newSample);
 // ema.get();
 
-export default SYNC_CONFIG; 
+export default SYNC_CONFIG;

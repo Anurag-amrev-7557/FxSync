@@ -149,12 +149,15 @@ Please read our [Code of Conduct](#) and [Contributing Guide](#) before submitti
 ## ❓ FAQ
 
 **Q: Can I use my own audio files?**
+
 > Yes! Upload via the UI or place files in `backend/uploads/samples/`.
 
 **Q: How does sync work?**
+
 > The app uses custom time sync hooks and Socket.io events to keep all clients in sync.
 
 **Q: Is this production-ready?**
+
 > This is a demo/experimental project. For production, review security, scalability, and deployment.
 
 ---

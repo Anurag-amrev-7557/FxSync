@@ -3,6 +3,7 @@
 ## Backend Tests
 
 ### 1. Socket Event Handlers
+
 - [ ] `emoji_reaction` event adds reaction to message
 - [ ] `remove_emoji_reaction` event removes reaction from message
 - [ ] `get_message_reactions` event returns reactions for message
@@ -10,6 +11,7 @@
 - [ ] Real-time updates are broadcast to all clients
 
 ### 2. Data Storage
+
 - [ ] Reactions are stored per session
 - [ ] Reactions are stored per message
 - [ ] User tracking works correctly
@@ -18,24 +20,28 @@
 ## Frontend Tests
 
 ### 1. UI Display
+
 - [ ] Emoji reactions appear above message bubbles
 - [ ] Reactions show correct emoji and count
 - [ ] User's own reactions are highlighted
 - [ ] Reactions are positioned correctly (right for own messages, left for others)
 
 ### 2. Interaction
+
 - [ ] Clicking emoji reaction adds reaction
 - [ ] Clicking own reaction removes it
 - [ ] Context menu shows emoji row
 - [ ] Emoji row disappears after reaction
 
 ### 3. Real-time Updates
+
 - [ ] Reactions update in real-time across all clients
 - [ ] New reactions appear immediately
 - [ ] Removed reactions disappear immediately
 - [ ] Multiple users can react to same message
 
 ### 4. Mobile Support
+
 - [ ] Long-press shows context menu
 - [ ] Emoji reactions work on mobile
 - [ ] Touch interactions work correctly
@@ -43,6 +49,7 @@
 ## Test Steps
 
 1. **Start both servers**
+
    ```bash
    cd backend && npm start
    cd frontend && npm run dev
@@ -84,4 +91,4 @@
 - ✅ Mobile support works correctly
 - ✅ Context menu integration works
 - ✅ Animations are smooth
-- ✅ Error handling works correctly 
+- ✅ Error handling works correctly

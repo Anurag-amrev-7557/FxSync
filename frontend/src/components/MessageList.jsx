@@ -8,7 +8,6 @@ const MessageList = React.memo(function MessageList({
   displayName,
   clients,
   mobile,
-  messageAnimations,
   handleContextMenu,
   ListComponent,
   scrollContainerRef,
@@ -22,6 +21,7 @@ const MessageList = React.memo(function MessageList({
   fontFamily,
   getAvatar,
   highlightMentions,
+  reducedMotion,
 }) {
   // Always use virtualization
   const itemSize = () => 64;
@@ -46,8 +46,9 @@ const MessageList = React.memo(function MessageList({
             <div
               style={style}
               key={msg.messageId || `${msg.sender}-${msg.timestamp}-${index}`}
-              className={`flex items-end transition-all duration-300 group ${isOwn ? 'justify-end' : 'justify-start'} enhanced-bubble-appear ${mobile ? '' : messageAnimations[index]?.animationClass || ''} ${groupStart ? 'mt-3' : ''} ${groupEnd ? 'mb-2' : ''} ${mobile ? 'no-select-mobile' : ''}`}
-              onContextMenu={e => handleContextMenu(e, msg)}
+              className={`flex items-end transition-all duration-300 group ${isOwn ? 'justify-end' : 'justify-start'} enhanced-bubble-appear ${mobile ? '' : 'whatsapp-bubble-entry'} ${groupStart ? 'mt-3' : ''} ${groupEnd ? 'mb-2' : ''} ${mobile ? 'no-select-mobile' : ''}`}
+              style={{ animationDelay: !reducedMotion ? `${index * 60}ms` : undefined }}
+              onContextMenu={(e) => handleContextMenu(e, msg)}
             >
               {!isOwn && groupStart && (
                 <div className="mr-2 flex-shrink-0">
@@ -58,7 +59,9 @@ const MessageList = React.memo(function MessageList({
               )}
               <div className={`max-w-xs lg:max-w-md ${isOwn ? 'order-2' : 'order-1'}`}>
                 {msg.reaction ? (
-                  <div className={`flex items-center gap-2 ${isOwn ? 'justify-end' : 'justify-start'}`}>
+                  <div
+                    className={`flex items-center gap-2 ${isOwn ? 'justify-end' : 'justify-start'}`}
+                  >
                     <div className="bg-neutral-800 rounded-lg px-3 py-2 text-lg">
                       {msg.reaction}
                     </div>
@@ -77,13 +80,34 @@ const MessageList = React.memo(function MessageList({
                     <div className="flex flex-row items-end w-full">
                       {msg.deleted || !msg.message ? (
                         <span className="flex-1 text-sm italic text-neutral-500 bg-neutral-800/80 rounded-lg px-3 py-2 select-none cursor-default">
-                          <svg className="inline-block mr-1 mb-0.5" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                          <svg
+                            className="inline-block mr-1 mb-0.5"
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <path d="M3 6h18" />
+                            <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                            <line x1="10" y1="11" x2="10" y2="17" />
+                            <line x1="14" y1="11" x2="14" y2="17" />
+                          </svg>
                           This message was deleted
                         </span>
                       ) : (
-                        <span className={`flex-1 text-base break-words ${msg.message && msg.message.includes('@' + displayName) ? 'bg-yellow-400/20' : ''}`} style={{ color: selectedTheme.bubbleText || '#fff' }}>
+                        <span
+                          className={`flex-1 text-base break-words ${msg.message && msg.message.includes('@' + displayName) ? 'bg-yellow-400/20' : ''}`}
+                          style={{ color: selectedTheme.bubbleText || '#fff' }}
+                        >
                           {highlightMentions(msg.message, clients, displayName)}
-                          {msg.edited && <span className="text-xs text-neutral-400 ml-1">(edited)</span>}
+                          {msg.edited && (
+                            <span className="text-xs text-neutral-400 ml-1">(edited)</span>
+                          )}
                         </span>
                       )}
                       <span className="flex items-end gap-1 text-[11px] opacity-70 ml-4 relative top-[4px]">
@@ -92,20 +116,84 @@ const MessageList = React.memo(function MessageList({
                             ? new Date(msg.timestamp).toLocaleTimeString([], {
                                 hour: '2-digit',
                                 minute: '2-digit',
-                                hour12: true
+                                hour12: true,
                               })
                             : 'now'}
                         </span>
                         {/* Delivery status for own messages */}
-                        {msg.sender === clientId && (
-                          msg.read ? (
-                            <span title="Read" className=""><svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg" className="inline align-bottom"><path d="M4.5 10.5L7.5 13.5L12.5 8.5" stroke="#53BDEB" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M7 10.5L10 13.5L15 8.5" stroke="#53BDEB" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg></span>
+                        {msg.sender === clientId &&
+                          (msg.read ? (
+                            <span title="Read" className="">
+                              <svg
+                                width="18"
+                                height="18"
+                                viewBox="0 0 18 18"
+                                fill="none"
+                                xmlns="http://www.w3.org/2000/svg"
+                                className="inline align-bottom"
+                              >
+                                <path
+                                  d="M4.5 10.5L7.5 13.5L12.5 8.5"
+                                  stroke="#53BDEB"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                />
+                                <path
+                                  d="M7 10.5L10 13.5L15 8.5"
+                                  stroke="#53BDEB"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                />
+                              </svg>
+                            </span>
                           ) : msg.delivered ? (
-                            <span title="Delivered" className=""><svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg" className="inline align-bottom"><path d="M4.5 10.5L7.5 13.5L12.5 8.5" stroke="#A0A0A0" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M7 10.5L10 13.5L15 8.5" stroke="#A0A0A0" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg></span>
+                            <span title="Delivered" className="">
+                              <svg
+                                width="18"
+                                height="18"
+                                viewBox="0 0 18 18"
+                                fill="none"
+                                xmlns="http://www.w3.org/2000/svg"
+                                className="inline align-bottom"
+                              >
+                                <path
+                                  d="M4.5 10.5L7.5 13.5L12.5 8.5"
+                                  stroke="#A0A0A0"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                />
+                                <path
+                                  d="M7 10.5L10 13.5L15 8.5"
+                                  stroke="#A0A0A0"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                />
+                              </svg>
+                            </span>
                           ) : (
-                            <span title="Sent" className=""><svg width="18" height="18" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg" className="inline align-bottom"><path d="M5 9.5L8 12.5L13 7.5" stroke="#6EAF7C" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg></span>
-                          )
-                        )}
+                            <span title="Sent" className="">
+                              <svg
+                                width="18"
+                                height="18"
+                                viewBox="0 0 18 18"
+                                fill="none"
+                                xmlns="http://www.w3.org/2000/svg"
+                                className="inline align-bottom"
+                              >
+                                <path
+                                  d="M5 9.5L8 12.5L13 7.5"
+                                  stroke="#6EAF7C"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                />
+                              </svg>
+                            </span>
+                          ))}
                       </span>
                     </div>
                   </div>
@@ -127,7 +215,6 @@ MessageList.propTypes = {
   displayName: PropTypes.string,
   clients: PropTypes.array,
   mobile: PropTypes.bool,
-  messageAnimations: PropTypes.array,
   handleContextMenu: PropTypes.func.isRequired,
   ListComponent: PropTypes.elementType.isRequired,
   scrollContainerRef: PropTypes.object,
@@ -141,6 +228,7 @@ MessageList.propTypes = {
   fontFamily: PropTypes.string,
   getAvatar: PropTypes.func.isRequired,
   highlightMentions: PropTypes.func.isRequired,
+  reducedMotion: PropTypes.bool,
 };
 
-export default MessageList; 
+export default MessageList;
