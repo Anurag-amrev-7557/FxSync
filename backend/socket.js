@@ -13,18 +13,13 @@ dotenv.config();
 
 // Helper to build full session sync state for advanced sync
 function buildSessionSyncState(session) {
-  // ULTRA-FAST: Use high-resolution timestamp
-  const highResTimestamp = process.hrtime.bigint();
-  const serverTime = Number(highResTimestamp) / 1000000; // Microsecond precision
-  
   const queue = Array.isArray(session.queue) ? session.queue : [];
   const selectedTrackIdx = Number.isInteger(session.selectedTrackIdx) ? session.selectedTrackIdx : 0;
   const currentTrack = (queue.length > 0 && queue[selectedTrackIdx]) ? queue[selectedTrackIdx] : null;
-  
   return {
     isPlaying: !!session.isPlaying,
     timestamp: typeof session.timestamp === 'number' ? session.timestamp : 0,
-    lastUpdated: typeof session.lastUpdated === 'number' ? session.lastUpdated : serverTime,
+    lastUpdated: typeof session.lastUpdated === 'number' ? session.lastUpdated : Date.now(),
     controllerId: session.controllerId || null,
     controllerClientId: session.controllerClientId || null,
     queue,
@@ -32,9 +27,6 @@ function buildSessionSyncState(session) {
     currentTrack,
     sessionSettings: session.settings || {},
     drift: typeof session.drift === 'number' ? session.drift : null,
-    serverTime, // Include current server time
-    highResTimestamp: highResTimestamp.toString(), // Include high-resolution timestamp
-    emissionTime: serverTime // Track when this was built
   };
 }
 
@@ -179,23 +171,14 @@ export function setupSocket(io) {
       if (!session) return;
       const clientId = getClientIdBySocket(sessionId, socket.id);
       if (session.controllerClientId !== clientId) return;
-      
-      // ULTRA-FAST: Use high-resolution timestamp
-      const highResTimestamp = process.hrtime.bigint();
-      const serverTime = Number(highResTimestamp) / 1000000; // Convert to milliseconds with microsecond precision
-      
       updatePlayback(sessionId, { isPlaying: true, timestamp, controllerId: socket.id });
       log('Play in session', sessionId, 'at', timestamp);
-      
-      // ULTRA-FAST: Immediate emission with high-resolution timing
       io.to(sessionId).emit('sync_state', {
         isPlaying: true,
         timestamp: session.timestamp,
-        lastUpdated: serverTime, // Use high-resolution timestamp
+        lastUpdated: session.lastUpdated,
         controllerId: socket.id,
-        serverTime: serverTime,
-        highResTimestamp: highResTimestamp.toString(), // Include for ultra-precise sync
-        emissionTime: serverTime // Track when this was emitted
+        serverTime: Date.now()
       });
     });
 
@@ -205,23 +188,14 @@ export function setupSocket(io) {
       if (!session) return;
       const clientId = getClientIdBySocket(sessionId, socket.id);
       if (session.controllerClientId !== clientId) return;
-      
-      // ULTRA-FAST: Use high-resolution timestamp
-      const highResTimestamp = process.hrtime.bigint();
-      const serverTime = Number(highResTimestamp) / 1000000; // Convert to milliseconds with microsecond precision
-      
       updatePlayback(sessionId, { isPlaying: false, timestamp, controllerId: socket.id });
       log('Pause in session', sessionId, 'at', timestamp);
-      
-      // ULTRA-FAST: Immediate emission with high-resolution timing
       io.to(sessionId).emit('sync_state', {
         isPlaying: false,
         timestamp: session.timestamp,
-        lastUpdated: serverTime, // Use high-resolution timestamp
+        lastUpdated: session.lastUpdated,
         controllerId: socket.id,
-        serverTime: serverTime,
-        highResTimestamp: highResTimestamp.toString(), // Include for ultra-precise sync
-        emissionTime: serverTime // Track when this was emitted
+        serverTime: Date.now()
       });
     });
 
@@ -231,23 +205,14 @@ export function setupSocket(io) {
       if (!session) return;
       const clientId = getClientIdBySocket(sessionId, socket.id);
       if (session.controllerClientId !== clientId) return;
-      
-      // ULTRA-FAST: Use high-resolution timestamp
-      const highResTimestamp = process.hrtime.bigint();
-      const serverTime = Number(highResTimestamp) / 1000000; // Convert to milliseconds with microsecond precision
-      
       updateTimestamp(sessionId, timestamp, socket.id);
       log('Seek in session', sessionId, 'to', timestamp);
-      
-      // ULTRA-FAST: Immediate emission with high-resolution timing
       io.to(sessionId).emit('sync_state', {
         isPlaying: session.isPlaying,
         timestamp: session.timestamp,
-        lastUpdated: serverTime, // Use high-resolution timestamp
+        lastUpdated: session.lastUpdated,
         controllerId: socket.id,
-        serverTime: serverTime,
-        highResTimestamp: highResTimestamp.toString(), // Include for ultra-precise sync
-        emissionTime: serverTime // Track when this was emitted
+        serverTime: Date.now()
       });
     });
 
@@ -270,45 +235,6 @@ export function setupSocket(io) {
         if (typeof callback === "function") callback(response);
       } catch (err) {
         if (typeof callback === "function") callback({ error: 'Internal server error' });
-      }
-    });
-
-    // ULTRA-FAST: Lightning-fast sync request with minimal processing
-    socket.on('ultra_sync_request', ({ sessionId } = {}, callback) => {
-      // ULTRA-FAST: Immediate response with high-resolution timing
-      const highResTimestamp = process.hrtime.bigint();
-      const serverTime = Number(highResTimestamp) / 1000000; // Microsecond precision
-      
-      if (!isValidSessionId(sessionId)) {
-        if (typeof callback === "function") callback({ 
-          error: 'Invalid sessionId',
-          serverTime,
-          highResTimestamp: highResTimestamp.toString()
-        });
-        return;
-      }
-      
-      const session = getSession(sessionId);
-      if (!session) {
-        if (typeof callback === "function") callback({ 
-          error: 'Session not found',
-          serverTime,
-          highResTimestamp: highResTimestamp.toString()
-        });
-        return;
-      }
-      
-      // ULTRA-FAST: Minimal response with high-resolution timing
-      if (typeof callback === "function") {
-        callback({
-          isPlaying: session.isPlaying,
-          timestamp: session.timestamp,
-          lastUpdated: session.lastUpdated,
-          controllerId: session.controllerId,
-          serverTime,
-          highResTimestamp: highResTimestamp.toString(),
-          emissionTime: serverTime
-        });
       }
     });
 
@@ -385,18 +311,12 @@ export function setupSocket(io) {
       io.to(sessionId).emit('controller_change', getSocketIdByClientId(sessionId, requesterClientId));
       io.to(sessionId).emit('controller_client_change', requesterClientId);
       io.to(sessionId).emit('controller_requests_update', getPendingControllerRequests(sessionId));
-      // ULTRA-FAST: Emit sync_state with high-resolution timing
-      const highResTimestamp = process.hrtime.bigint();
-      const serverTime = Number(highResTimestamp) / 1000000; // Microsecond precision
-      
       io.to(sessionId).emit('sync_state', {
         isPlaying: session.isPlaying,
         timestamp: session.timestamp,
-        lastUpdated: serverTime, // Use high-resolution timestamp
+        lastUpdated: session.lastUpdated,
         controllerId: getSocketIdByClientId(sessionId, requesterClientId),
-        serverTime: serverTime,
-        highResTimestamp: highResTimestamp.toString(), // Include for ultra-precise sync
-        emissionTime: serverTime // Track when this was emitted
+        serverTime: Date.now()
       });
       
       typeof callback === "function" && callback({ success: true });
@@ -539,18 +459,12 @@ export function setupSocket(io) {
       // Notify all clients
       io.to(sessionId).emit('controller_change', getSocketIdByClientId(sessionId, accepterClientId));
       io.to(sessionId).emit('controller_client_change', accepterClientId);
-      // ULTRA-FAST: Emit sync_state with high-resolution timing
-      const highResTimestamp = process.hrtime.bigint();
-      const serverTime = Number(highResTimestamp) / 1000000; // Microsecond precision
-      
       io.to(sessionId).emit('sync_state', {
         isPlaying: session.isPlaying,
         timestamp: session.timestamp,
-        lastUpdated: serverTime, // Use high-resolution timestamp
+        lastUpdated: session.lastUpdated,
         controllerId: getSocketIdByClientId(sessionId, accepterClientId),
-        serverTime: serverTime,
-        highResTimestamp: highResTimestamp.toString(), // Include for ultra-precise sync
-        emissionTime: serverTime // Track when this was emitted
+        serverTime: Date.now()
       });
       
       typeof callback === "function" && callback({ success: true });
@@ -967,18 +881,13 @@ export function setupSocket(io) {
       io.to(sessionId).emit('track_change', payload);
       log('Track change in session', sessionId, ':', payload);
 
-      // ULTRA-FAST: Emit sync_state with high-resolution timing
-      const highResTimestamp = process.hrtime.bigint();
-      const serverTime = Number(highResTimestamp) / 1000000; // Microsecond precision
-      
+      // Emit sync_state after track change so all clients get the latest play state and timestamp
       io.to(sessionId).emit('sync_state', {
         isPlaying: session.isPlaying,
         timestamp: session.timestamp,
-        lastUpdated: serverTime, // Use high-resolution timestamp
+        lastUpdated: session.lastUpdated,
         controllerId: session.controllerId,
-        serverTime: serverTime,
-        highResTimestamp: highResTimestamp.toString(), // Include for ultra-precise sync
-        emissionTime: serverTime // Track when this was emitted
+        serverTime: Date.now()
       });
 
       if (typeof callback === "function") callback({ success: true, ...payload });
@@ -998,9 +907,7 @@ export function setupSocket(io) {
      *   - roundTripEstimate: estimated round-trip time in ms (if client provides a callback timestamp)
      */
     socket.on('time_sync', (clientSent, callback) => {
-      // ULTRA-FAST: Use high-resolution timestamps
-      const highResReceived = process.hrtime.bigint();
-      const serverReceived = Number(highResReceived) / 1000000; // Microsecond precision
+      const serverReceived = Date.now();
       const parsedClientSent = typeof clientSent === 'number' ? clientSent : Number(clientSent) || null;
 
       // Optionally, allow client to send an object with more info (future-proofing)
@@ -1015,33 +922,30 @@ export function setupSocket(io) {
       }
 
       if (typeof callback === "function") {
-        // ULTRA-FAST: Immediate response with high-resolution timing
-        const highResProcessed = process.hrtime.bigint();
-        const serverProcessed = Number(highResProcessed) / 1000000; // Microsecond precision
-        
-        // Optionally estimate round-trip if client sent a callback timestamp
-        let roundTripEstimate = null;
-        if (clientExtra && typeof clientExtra.clientCallbackReceived === 'number') {
-          roundTripEstimate = serverProcessed - clientExtra.clientCallbackReceived;
-        }
-        
-        callback({
-          serverTime: serverReceived,
-          clientSent: parsedClientSent,
-          serverReceived, // Always include when request was received
-          serverProcessed, // Always include when response is sent
-          highResReceived: highResReceived.toString(), // High-resolution received time
-          highResProcessed: highResProcessed.toString(), // High-resolution processed time
-          serverUptime: Math.round(process.uptime() * 1000),
-          serverTimezoneOffset: new Date().getTimezoneOffset(),
-          serverIso: new Date(serverReceived).toISOString(),
-          serverInfo: {
-            nodeVersion: process.version,
-            platform: process.platform,
-            pid: process.pid
-          },
-          roundTripEstimate,
-          ...clientExtra // echo back any extra client info for advanced sync
+        // Simulate minimal processing delay for realism
+        setImmediate(() => {
+          const serverProcessed = Date.now();
+          // Optionally estimate round-trip if client sent a callback timestamp
+          let roundTripEstimate = null;
+          if (clientExtra && typeof clientExtra.clientCallbackReceived === 'number') {
+            roundTripEstimate = serverProcessed - clientExtra.clientCallbackReceived;
+          }
+          callback({
+            serverTime: serverReceived,
+            clientSent: parsedClientSent,
+            serverReceived, // Always include when request was received
+            serverProcessed, // Always include when response is sent
+            serverUptime: Math.round(process.uptime() * 1000),
+            serverTimezoneOffset: new Date().getTimezoneOffset(),
+            serverIso: new Date(serverReceived).toISOString(),
+            serverInfo: {
+              nodeVersion: process.version,
+              platform: process.platform,
+              pid: process.pid
+            },
+            roundTripEstimate,
+            ...clientExtra // echo back any extra client info for advanced sync
+          });
         });
       }
     });
@@ -1103,22 +1007,6 @@ export function setupSocket(io) {
     socket.on('stop_typing', ({ sessionId, clientId }) => {
       if (!sessionId || !clientId) return;
       socket.to(sessionId).emit('user_stop_typing', { clientId });
-    });
-
-    // ULTRA-FAST: Force immediate time sync for critical synchronization
-    socket.on('force_time_sync', (callback) => {
-      // ULTRA-FAST: Immediate response with high-resolution timing
-      const highResTimestamp = process.hrtime.bigint();
-      const serverTime = Number(highResTimestamp) / 1000000; // Microsecond precision
-      
-      if (typeof callback === "function") {
-        callback({
-          serverTime,
-          highResTimestamp: highResTimestamp.toString(),
-          emissionTime: serverTime,
-          forceSync: true
-        });
-      }
     });
 
     socket.on('disconnect', () => {
@@ -1255,18 +1143,12 @@ export function setupSocket(io) {
         }
       }
       if (!highDrift) {
-        // ULTRA-FAST: Emit sync_state with high-resolution timing
-        const highResTimestamp = process.hrtime.bigint();
-        const serverTime = Number(highResTimestamp) / 1000000; // Microsecond precision
-        
         io.to(sessionId).emit('sync_state', {
           isPlaying: session.isPlaying,
           timestamp: session.timestamp,
-          lastUpdated: serverTime, // Use high-resolution timestamp
+          lastUpdated: session.lastUpdated,
           controllerId: session.controllerId,
-          serverTime: serverTime,
-          highResTimestamp: highResTimestamp.toString(), // Include for ultra-precise sync
-          emissionTime: serverTime // Track when this was emitted
+          serverTime: Date.now()
         });
       }
     }
@@ -1287,18 +1169,12 @@ export function setupSocket(io) {
         }
       }
       if (highDrift) {
-        // ULTRA-FAST: Emit sync_state with high-resolution timing
-        const highResTimestamp = process.hrtime.bigint();
-        const serverTime = Number(highResTimestamp) / 1000000; // Microsecond precision
-        
         io.to(sessionId).emit('sync_state', {
           isPlaying: session.isPlaying,
           timestamp: session.timestamp,
-          lastUpdated: serverTime, // Use high-resolution timestamp
+          lastUpdated: session.lastUpdated,
           controllerId: session.controllerId,
-          serverTime: serverTime,
-          highResTimestamp: highResTimestamp.toString(), // Include for ultra-precise sync
-          emissionTime: serverTime // Track when this was emitted
+          serverTime: Date.now()
         });
       }
     }

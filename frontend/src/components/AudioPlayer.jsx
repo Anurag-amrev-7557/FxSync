@@ -672,8 +672,6 @@ export default function AudioPlayer({
       trackId,
       meta,
       serverTime,
-      highResTimestamp, // New: High-resolution timestamp from backend
-      emissionTime, // New: When the sync_state was emitted
     }) => {
       // Defensive: check for valid timestamp and lastUpdated
       if (
@@ -694,9 +692,6 @@ export default function AudioPlayer({
       let now = null;
       if (typeof serverTime === 'number' && isFinite(serverTime)) {
         now = serverTime;
-      } else if (typeof emissionTime === 'number' && isFinite(emissionTime)) {
-        // ULTRA-FAST: Use emission time if serverTime is not available
-        now = emissionTime;
       } else {
         now = getNow(getServerTime);
         log('warn', 'SYNC_STATE: serverTime missing, using getNow(getServerTime)', { now });
@@ -730,10 +725,6 @@ export default function AudioPlayer({
         setSyncStatus('Major re-sync');
         if (typeof socket?.forceTimeSync === 'function') {
           socket.forceTimeSync();
-        }
-        // ULTRA-FAST: Also try ultra-fast sync if available
-        if (typeof socket?.ultraSyncRequest === 'function' && socket.sessionId) {
-          socket.ultraSyncRequest(socket.sessionId);
         }
         emitDriftReport(drift, expected, audio.currentTime, { ctrlId, trackId, meta, immediate: true });
         driftCountRef.current = 0;
@@ -773,10 +764,6 @@ export default function AudioPlayer({
 
           if (typeof socket?.forceTimeSync === 'function') {
             socket.forceTimeSync();
-          }
-          // ULTRA-FAST: Also try ultra-fast sync if available
-          if (typeof socket?.ultraSyncRequest === 'function' && socket.sessionId) {
-            socket.ultraSyncRequest(socket.sessionId);
           }
           emitDriftReport(drift, expected, audio.currentTime, { ctrlId, trackId, meta });
           driftCountRef.current = 0;
@@ -900,10 +887,6 @@ export default function AudioPlayer({
 
             if (typeof socket?.forceTimeSync === 'function') {
               socket.forceTimeSync();
-            }
-            // ULTRA-FAST: Also try ultra-fast sync if available
-            if (typeof socket?.ultraSyncRequest === 'function' && socket.sessionId) {
-              socket.ultraSyncRequest(socket.sessionId);
             }
 
             if (socket && socket.emit && socket.sessionId && typeof drift === 'number') {

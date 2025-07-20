@@ -478,58 +478,11 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
     };
   }, [sessionId, clientId]);
 
-  // Enhanced time sync with ultra-fast sync support
+  // Expose a method to force immediate time sync (for use on drift)
   function forceTimeSync() {
-    const socket = socketRef.current;
-    if (!socket || !socket.connected) return;
-    
-    // ULTRA-FAST: Use the new force_time_sync event
-    socket.emit('force_time_sync', (data) => {
-      if (data && typeof data.serverTime === 'number') {
-        const clientReceived = Date.now();
-        const roundTrip = clientReceived - (data.emissionTime || data.serverTime);
-        const offset = data.serverTime - clientReceived;
-        
-        // Update time offset immediately
-        setTimeOffset(offset);
-        setRtt(roundTrip);
-        
-        if (import.meta.env.MODE === 'development') {
-          console.log('[ULTRA-FAST] Force time sync completed', { offset, roundTrip, data });
-        }
-      }
-    });
-  }
-
-  // ULTRA-FAST: Ultra-fast sync request
-  function ultraSyncRequest(sessionId) {
-    const socket = socketRef.current;
-    if (!socket || !socket.connected || !sessionId) return;
-    
-    return new Promise((resolve) => {
-      socket.emit('ultra_sync_request', { sessionId }, (data) => {
-        if (data && !data.error) {
-          const clientReceived = Date.now();
-          const roundTrip = clientReceived - (data.emissionTime || data.serverTime);
-          const offset = data.serverTime - clientReceived;
-          
-          // Update time offset immediately
-          setTimeOffset(offset);
-          setRtt(roundTrip);
-          
-          if (import.meta.env.MODE === 'development') {
-            console.log('[ULTRA-FAST] Ultra sync request completed', { offset, roundTrip, data });
-          }
-          
-          resolve(data);
-        } else {
-          if (import.meta.env.MODE === 'development') {
-            console.warn('[ULTRA-FAST] Ultra sync request failed', data);
-          }
-          resolve(null);
-        }
-      });
-    });
+    if (typeof window !== 'undefined' && window.__forceTimeSync) {
+      window.__forceTimeSync();
+    }
   }
 
   // Expose a method to force immediate NTP batch sync (for manual resync)
@@ -578,7 +531,6 @@ export default function useSocket(sessionId, displayName = '', deviceInfo = '') 
     rtt,
     getServerTime,
     forceTimeSync, // for immediate sync
-    ultraSyncRequest, // ULTRA-FAST: Ultra-fast sync request
     pendingControllerRequests,
     controllerRequestReceived,
     controllerOfferReceived,
