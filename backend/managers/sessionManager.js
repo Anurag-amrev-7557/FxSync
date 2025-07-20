@@ -59,14 +59,18 @@ export function updatePlayback(sessionId, { isPlaying, timestamp, controllerId }
   if (!sessions[sessionId]) return;
   sessions[sessionId].isPlaying = isPlaying;
   sessions[sessionId].timestamp = timestamp;
-  sessions[sessionId].lastUpdated = Date.now();
+  // ULTRA-FAST: Use high-resolution timestamp
+  const highResTimestamp = process.hrtime.bigint();
+  sessions[sessionId].lastUpdated = Number(highResTimestamp) / 1000000; // Microsecond precision
   sessions[sessionId].controllerId = controllerId;
 }
 
 export function updateTimestamp(sessionId, timestamp, controllerId) {
   if (!sessions[sessionId]) return;
   sessions[sessionId].timestamp = timestamp;
-  sessions[sessionId].lastUpdated = Date.now();
+  // ULTRA-FAST: Use high-resolution timestamp
+  const highResTimestamp = process.hrtime.bigint();
+  sessions[sessionId].lastUpdated = Number(highResTimestamp) / 1000000; // Microsecond precision
   sessions[sessionId].controllerId = controllerId;
 }
 
