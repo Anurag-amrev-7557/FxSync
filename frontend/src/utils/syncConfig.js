@@ -2,19 +2,27 @@
 // All thresholds, smoothing windows, and correction parameters should be defined here
 
 const SYNC_CONFIG = {
-  // Timer intervals (in milliseconds)
-  TIMER_INTERVAL: 1200, // 1.2 seconds - drift check interval
-  TIMER_DRIFT_DETECTION: 2400, // 2.4 seconds - 2x the normal interval for drift detection
-  
   // Drift correction thresholds (in seconds)
   SMART_RESYNC_THRESHOLD: 0.25, // 250ms
   DRIFT_THRESHOLD: 0.3, // 300ms (was 0.2)
   DRIFT_JITTER_BUFFER: 4, // Number of consecutive drift checks before correction (was 2)
   RESYNC_COOLDOWN_MS: 5000, // 5 seconds
   PLAY_OFFSET: 0.04, // 40ms
-  
-  // Correction cooldown (in milliseconds)
-  CORRECTION_COOLDOWN: 1500, // 1.5 seconds - minimum time between drift corrections
+
+  // Ultra-precise lag detection parameters - BALANCED (less aggressive to prevent stuttering)
+  ULTRA_LAG: {
+    ENABLED: true, // Enable ultra-precise lag detection
+    MICRO_DRIFT_THRESHOLD: 0.00005, // 0.05ms - balanced sensitivity
+    MICRO_CORRECTION_THRESHOLD: 0.0001, // 0.1ms - balanced correction
+    PREDICTIVE_LAG_THRESHOLD: 0.02, // 20ms - balanced prediction
+    RTT_SPIKE_THRESHOLD: 100, // ms - balanced RTT detection
+    DRIFT_ACCELERATION_THRESHOLD: 0.001, // 1ms/s - balanced acceleration
+    LAG_PREDICTION_WINDOW: 3, // frames to predict future lag
+    SPIKE_RTT: 100, // ms - balanced sensitivity
+    SPIKE_DRIFT: 0.1, // s - balanced sensitivity
+    SPIKE_WINDOW: 2, // Number of samples to consider
+    SPIKE_PERSIST: 1, // Number of consecutive spikes to trigger predictive resync
+  },
 
   // Micro-correction parameters by quality tier
   DRIFT_PARAMS_BY_QUALITY: {

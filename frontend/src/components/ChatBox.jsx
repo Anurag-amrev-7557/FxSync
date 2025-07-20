@@ -27,7 +27,6 @@ import { VariableSizeList as List } from 'react-window';
 import { ReducedMotionContext } from '../App';
 import MessageList from './MessageList';
 import PropTypes from 'prop-types';
-import { saveReactions, loadReactions } from '../utils/persistence';
 
 const EMOJIS = [
   '👏',
@@ -383,7 +382,6 @@ const ChatBox = React.memo(function ChatBox({
   const chatInputRef = useRef(null);
   const plusButtonRef = useRef(null);
   const typingTimeoutRef = useRef(null);
-  const typingFallbackTimeoutsRef = useRef(new Map()); // Track fallback timeouts for each user
   const notificationAudio = useRef(null);
   const lastMsgCount = useRef(messages.length);
   // Accessibility/focus trap refs
@@ -407,21 +405,6 @@ const ChatBox = React.memo(function ChatBox({
 
   // Add message reactions state
   const [messageReactions, setMessageReactions] = useState(new Map()); // messageId -> reactions array
-
-  // Load reactions from persistence on mount
-  useEffect(() => {
-    if (sessionId) {
-      const savedReactions = loadReactions(sessionId);
-      setMessageReactions(savedReactions);
-    }
-  }, [sessionId]);
-
-  // Save reactions to persistence whenever they change
-  useEffect(() => {
-    if (sessionId && messageReactions.size > 0) {
-      saveReactions(sessionId, messageReactions);
-    }
-  }, [messageReactions, sessionId]);
 
   useEffect(() => {
     if (state.emojiRowMsgId) {
@@ -737,24 +720,12 @@ const ChatBox = React.memo(function ChatBox({
     if (e.target.value.trim().length <= MAX_LENGTH)
       dispatch({ type: 'SET', payload: { error: '' } });
     if (!socket) return;
-    
-    // Clear any existing timeout
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-      typingTimeoutRef.current = null;
-    }
-    
-    // Emit typing event
     socket.emit('typing', { sessionId, clientId, displayName });
-    
-    // Set new timeout to stop typing
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     typingTimeoutRef.current = setTimeout(() => {
-      if (socket) {
-        socket.emit('stop_typing', { sessionId, clientId });
-      }
+      socket.emit('stop_typing', { sessionId, clientId });
       // Remove self from typingUsers immediately
       dispatch({ type: 'REMOVE_TYPING_USER', payload: { clientId } });
-      typingTimeoutRef.current = null;
     }, 2000);
   };
 
@@ -763,30 +734,9 @@ const ChatBox = React.memo(function ChatBox({
     if (!socket) return;
     const handleUserTyping = ({ clientId: typingId, displayName }) => {
       if (typingId === clientId) return;
-      
-      // Clear any existing fallback timeout for this user
-      if (typingFallbackTimeoutsRef.current.has(typingId)) {
-        clearTimeout(typingFallbackTimeoutsRef.current.get(typingId));
-      }
-      
       dispatch({ type: 'ADD_TYPING_USER', payload: { clientId: typingId, displayName } });
-      
-      // Set a fallback timeout to automatically remove typing indicator after 5 seconds
-      // This prevents typing indicators from persisting indefinitely
-      const fallbackTimeout = setTimeout(() => {
-        dispatch({ type: 'REMOVE_TYPING_USER', payload: { clientId: typingId } });
-        typingFallbackTimeoutsRef.current.delete(typingId);
-      }, 5000);
-      
-      typingFallbackTimeoutsRef.current.set(typingId, fallbackTimeout);
     };
     const handleUserStopTyping = ({ clientId: typingId }) => {
-      // Clear the fallback timeout for this user
-      if (typingFallbackTimeoutsRef.current.has(typingId)) {
-        clearTimeout(typingFallbackTimeoutsRef.current.get(typingId));
-        typingFallbackTimeoutsRef.current.delete(typingId);
-      }
-      
       dispatch({ type: 'REMOVE_TYPING_USER', payload: { clientId: typingId } });
     };
     socket.on('user_typing', handleUserTyping);
@@ -794,107 +744,8 @@ const ChatBox = React.memo(function ChatBox({
     return () => {
       socket.off('user_typing', handleUserTyping);
       socket.off('user_stop_typing', handleUserStopTyping);
-      
-      // Clear all fallback timeouts on cleanup
-      typingFallbackTimeoutsRef.current.forEach(timeout => clearTimeout(timeout));
-      typingFallbackTimeoutsRef.current.clear();
     };
   }, [socket, clientId]);
-
-  // Cleanup typing timeout on unmount or socket change
-  useEffect(() => {
-    return () => {
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-        typingTimeoutRef.current = null;
-      }
-      // Clear all fallback timeouts
-      typingFallbackTimeoutsRef.current.forEach(timeout => clearTimeout(timeout));
-      typingFallbackTimeoutsRef.current.clear();
-      // Also emit stop_typing on cleanup to ensure other users see the typing indicator disappear
-      if (socket && sessionId && clientId) {
-        socket.emit('stop_typing', { sessionId, clientId });
-      }
-    };
-  }, [socket, sessionId, clientId]);
-
-  // Clear typing indicator when session changes or user leaves
-  useEffect(() => {
-    return () => {
-      // Clear any existing typing timeout
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-        typingTimeoutRef.current = null;
-      }
-      // Clear all fallback timeouts
-      typingFallbackTimeoutsRef.current.forEach(timeout => clearTimeout(timeout));
-      typingFallbackTimeoutsRef.current.clear();
-      // Clear typing users from state
-      dispatch({ type: 'SET', payload: { typingUsers: [] } });
-    };
-  }, [sessionId]);
-
-  // Clear typing indicators for users who are no longer in the session
-  useEffect(() => {
-    if (!clients || clients.length === 0) return;
-    
-    const currentClientIds = clients.map(c => c.clientId);
-    
-    // Remove typing indicators for users who are no longer in the session
-    state.typingUsers.forEach(typingUser => {
-      if (!currentClientIds.includes(typingUser.clientId)) {
-        dispatch({ type: 'REMOVE_TYPING_USER', payload: { clientId: typingUser.clientId } });
-        // Also clear any fallback timeout for this user
-        if (typingFallbackTimeoutsRef.current.has(typingUser.clientId)) {
-          clearTimeout(typingFallbackTimeoutsRef.current.get(typingUser.clientId));
-          typingFallbackTimeoutsRef.current.delete(typingUser.clientId);
-        }
-      }
-    });
-  }, [clients, state.typingUsers]);
-
-  // Clear all typing indicators when socket disconnects
-  useEffect(() => {
-    if (!socket) {
-      // Clear all typing indicators when socket is not available
-      dispatch({ type: 'SET', payload: { typingUsers: [] } });
-      // Clear all timeouts
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-        typingTimeoutRef.current = null;
-      }
-      typingFallbackTimeoutsRef.current.forEach(timeout => clearTimeout(timeout));
-      typingFallbackTimeoutsRef.current.clear();
-    }
-  }, [socket]);
-
-  // Clear typing indicators when session changes
-  useEffect(() => {
-    // Clear all typing indicators when session changes
-    dispatch({ type: 'SET', payload: { typingUsers: [] } });
-    // Clear all timeouts
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-      typingTimeoutRef.current = null;
-    }
-    typingFallbackTimeoutsRef.current.forEach(timeout => clearTimeout(timeout));
-    typingFallbackTimeoutsRef.current.clear();
-  }, [sessionId]);
-
-  // Handle page unload to clear typing indicator
-  useEffect(() => {
-    const handleBeforeUnload = () => {
-      if (socket && sessionId && clientId) {
-        // Try to emit stop_typing before page unload
-        socket.emit('stop_typing', { sessionId, clientId });
-      }
-    };
-
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-    };
-  }, [socket, sessionId, clientId]);
 
   // Replace the tick/clock rendering logic with WhatsApp-like SVGs:
   // Add these helper components inside ChatBox:
@@ -1061,17 +912,6 @@ const ChatBox = React.memo(function ChatBox({
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    
-    // Clear typing timeout and emit stop_typing immediately when submitting
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-      typingTimeoutRef.current = null;
-    }
-    if (socket) {
-      socket.emit('stop_typing', { sessionId, clientId });
-    }
-    dispatch({ type: 'REMOVE_TYPING_USER', payload: { clientId } });
-    
     if (state.editingId) {
       handleEditSave(messages.find((m) => m.messageId === state.editingId));
     } else {
@@ -1281,16 +1121,6 @@ const ChatBox = React.memo(function ChatBox({
 
   // Edit message handler
   const handleEdit = (msg) => {
-    // Clear typing timeout when starting to edit
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-      typingTimeoutRef.current = null;
-    }
-    if (socket) {
-      socket.emit('stop_typing', { sessionId, clientId });
-    }
-    dispatch({ type: 'REMOVE_TYPING_USER', payload: { clientId } });
-    
     dispatch({ type: 'SET', payload: { editingId: msg.messageId } });
     dispatch({ type: 'SET', payload: { input: msg.message } });
     dispatch({ type: 'SET', payload: { editValue: msg.message } });
@@ -1302,16 +1132,6 @@ const ChatBox = React.memo(function ChatBox({
   };
   const handleEditChange = (e) => dispatch({ type: 'SET', payload: { editValue: e.target.value } });
   const handleEditCancel = () => {
-    // Clear typing timeout when canceling edit
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-      typingTimeoutRef.current = null;
-    }
-    if (socket) {
-      socket.emit('stop_typing', { sessionId, clientId });
-    }
-    dispatch({ type: 'REMOVE_TYPING_USER', payload: { clientId } });
-    
     dispatch({ type: 'SET', payload: { editingId: null, editValue: '', input: '' } });
   };
   const handleEditSave = (msg) => {

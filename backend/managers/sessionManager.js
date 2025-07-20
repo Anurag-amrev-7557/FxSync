@@ -14,8 +14,7 @@ export function createSession(sessionId, controllerId, controllerClientId) {
     clients: new Map(), // Map<socketId, {displayName, deviceInfo, clientId}>
     queue: [],
     selectedTrackIdx: 0,
-    pendingControllerRequests: new Map(), // Map<clientId, {requestTime, requesterName}>
-    reactions: new Map() // Map<messageId, Array<{emoji, users: [clientId], count}>>
+    pendingControllerRequests: new Map() // Map<clientId, {requestTime, requesterName}>
   };
   return sessions[sessionId];
 }
@@ -60,14 +59,18 @@ export function updatePlayback(sessionId, { isPlaying, timestamp, controllerId }
   if (!sessions[sessionId]) return;
   sessions[sessionId].isPlaying = isPlaying;
   sessions[sessionId].timestamp = timestamp;
-  sessions[sessionId].lastUpdated = Date.now();
+  // ULTRA-FAST: Use high-resolution timestamp
+  const highResTimestamp = process.hrtime.bigint();
+  sessions[sessionId].lastUpdated = Number(highResTimestamp) / 1000000; // Microsecond precision
   sessions[sessionId].controllerId = controllerId;
 }
 
 export function updateTimestamp(sessionId, timestamp, controllerId) {
   if (!sessions[sessionId]) return;
   sessions[sessionId].timestamp = timestamp;
-  sessions[sessionId].lastUpdated = Date.now();
+  // ULTRA-FAST: Use high-resolution timestamp
+  const highResTimestamp = process.hrtime.bigint();
+  sessions[sessionId].lastUpdated = Number(highResTimestamp) / 1000000; // Microsecond precision
   sessions[sessionId].controllerId = controllerId;
 }
 
@@ -125,70 +128,4 @@ export function setSelectedTrackIdx(sessionId, idx) {
   if (!sessions[sessionId]) return;
   sessions[sessionId].selectedTrackIdx = idx;
   sessions[sessionId].lastUpdated = Date.now();
-} 
-
-export function addReaction(sessionId, messageId, emoji, clientId, displayName) {
-  if (!sessions[sessionId]) return false;
-  
-  if (!sessions[sessionId].reactions.has(messageId)) {
-    sessions[sessionId].reactions.set(messageId, []);
-  }
-  
-  const messageReactions = sessions[sessionId].reactions.get(messageId);
-  let reaction = messageReactions.find(r => r.emoji === emoji);
-  
-  if (!reaction) {
-    reaction = { emoji, users: [], count: 0 };
-    messageReactions.push(reaction);
-  }
-  
-  if (!reaction.users.includes(clientId)) {
-    reaction.users.push(clientId);
-    reaction.count = reaction.users.length;
-  }
-  
-  return true;
-}
-
-export function removeReaction(sessionId, messageId, emoji, clientId) {
-  if (!sessions[sessionId]) return false;
-  
-  const messageReactions = sessions[sessionId].reactions.get(messageId);
-  if (!messageReactions) return false;
-  
-  const reaction = messageReactions.find(r => r.emoji === emoji);
-  if (!reaction) return false;
-  
-  const userIndex = reaction.users.indexOf(clientId);
-  if (userIndex === -1) return false;
-  
-  reaction.users.splice(userIndex, 1);
-  reaction.count = reaction.users.length;
-  
-  // Remove reaction if no users left
-  if (reaction.count === 0) {
-    const reactionIndex = messageReactions.indexOf(reaction);
-    messageReactions.splice(reactionIndex, 1);
-  }
-  
-  // Remove message from reactions if no reactions left
-  if (messageReactions.length === 0) {
-    sessions[sessionId].reactions.delete(messageId);
-  }
-  
-  return true;
-}
-
-export function getMessageReactions(sessionId, messageId) {
-  if (!sessions[sessionId]) return [];
-  return sessions[sessionId].reactions.get(messageId) || [];
-}
-
-export function getAllSessionReactions(sessionId) {
-  if (!sessions[sessionId]) return {};
-  const reactions = {};
-  for (const [messageId, messageReactions] of sessions[sessionId].reactions.entries()) {
-    reactions[messageId] = messageReactions;
-  }
-  return reactions;
 } 

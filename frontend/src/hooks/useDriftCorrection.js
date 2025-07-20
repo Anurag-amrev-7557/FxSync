@@ -2,12 +2,20 @@ import { useEffect, useRef } from 'react';
 import SYNC_CONFIG from '../utils/syncConfig';
 import { createEMA } from '../utils/syncConfig'; // Import EMA utility
 
-// --- Enhancement: Lag Detection & Predictive Sync ---
-const LAG_SPIKE_RTT = 350; // ms, RTT spike threshold
-const LAG_SPIKE_DRIFT = 0.45; // s, drift spike threshold
-const LAG_SPIKE_WINDOW = 5; // Number of samples to consider
-const LAG_SPIKE_PERSIST = 3; // Number of consecutive spikes to trigger predictive resync
+// --- Ultra-Precise Lag Detection & Predictive Sync ---
+const ULTRA_LAG_SPIKE_RTT = 100; // ms, balanced for stability
+const ULTRA_LAG_SPIKE_DRIFT = 0.1; // s, balanced for stability
+const ULTRA_LAG_SPIKE_WINDOW = 2; // Number of samples to consider, reduced from 3
+const ULTRA_LAG_SPIKE_PERSIST = 1; // Number of consecutive spikes to trigger predictive resync, reduced from 2
 const MICRO_RAMP_DURATION = 1200; // ms, ramp playbackRate back to 1.0 after correction
+
+// --- New Ultra-Precise Detection Constants - BALANCED (less aggressive to prevent stuttering) ---
+const ULTRA_MICRO_DRIFT_THRESHOLD = 0.00005; // 0.05ms - balanced sensitivity
+const ULTRA_MICRO_CORRECTION_THRESHOLD = 0.0001; // 0.1ms - balanced correction
+const ULTRA_PREDICTIVE_LAG_THRESHOLD = 0.02; // 20ms - balanced prediction
+const ULTRA_RTT_SPIKE_THRESHOLD = 100; // ms - balanced RTT detection
+const ULTRA_DRIFT_ACCELERATION_THRESHOLD = 0.001; // 1ms/s - balanced acceleration
+const ULTRA_LAG_PREDICTION_WINDOW = 3; // frames to predict future lag
 
 // Helper: Smoothly fade audio volume in/out
 export function fadeAudio(audio, targetVolume, duration = 200) {
@@ -63,6 +71,43 @@ function median(arr) {
   return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
+// --- New: Ultra-precise lag prediction function ---
+function predictLag(driftHistory, rttHistory, frameTime) {
+  if (driftHistory.length < 3 || rttHistory.length < 3) return 0;
+  
+  // Calculate drift acceleration (rate of change)
+  const recentDrifts = driftHistory.slice(-3);
+  const driftAcceleration = (recentDrifts[2] - recentDrifts[0]) / 2;
+  
+  // Calculate RTT trend
+  const recentRtts = rttHistory.slice(-3);
+  const rttTrend = (recentRtts[2] - recentRtts[0]) / 2;
+  
+  // Predict future lag based on current trends
+  const predictedLag = driftAcceleration * frameTime + (rttTrend > 0 ? rttTrend * 0.001 : 0);
+  
+  return Math.max(0, predictedLag);
+}
+
+// --- New: Ultra-fast micro-correction function ---
+function ultraMicroCorrection(audio, drift, expected) {
+  if (Math.abs(drift) < ULTRA_MICRO_DRIFT_THRESHOLD) return false;
+  
+  // For ultra-micro drift (0.05ms - 0.1ms), use direct nudge
+  if (Math.abs(drift) >= ULTRA_MICRO_DRIFT_THRESHOLD && Math.abs(drift) < ULTRA_MICRO_CORRECTION_THRESHOLD) {
+    audio.currentTime += -drift * 0.9; // Direct nudge with 90% correction
+    return true;
+  }
+  
+  // For larger micro drift (0.1ms - 1ms), use aggressive nudge
+  if (Math.abs(drift) >= ULTRA_MICRO_CORRECTION_THRESHOLD && Math.abs(drift) < 0.001) {
+    audio.currentTime += -drift * 0.95; // Aggressive nudge with 95% correction
+    return true;
+  }
+  
+  return false;
+}
+
 export default function useDriftCorrection({
   audioRef,
   isController,
@@ -95,10 +140,16 @@ export default function useDriftCorrection({
   // --- Drift buffer for median filter ---
   const driftBufferRef = useRef([]);
 
-  // --- Enhancement: Lag/Drift spike tracking ---
+  // --- Enhanced: Ultra-precise lag/Drift spike tracking ---
   const rttSpikeHistory = useRef([]); // ms
   const driftSpikeHistory = useRef([]); // s
   const lagSpikeCount = useRef(0);
+  
+  // --- New: Ultra-precise detection buffers ---
+  const ultraDriftHistory = useRef([]); // For lag prediction
+  const ultraRttHistory = useRef([]); // For RTT trend analysis
+  const ultraLagPredictionBuffer = useRef([]); // For predictive corrections
+  const ultraCorrectionCount = useRef(0); // Track correction frequency
 
   // --- Adaptive thresholds (if enabled) ---
   let adaptiveMin = MICRO_DRIFT_MIN;
@@ -123,10 +174,10 @@ export default function useDriftCorrection({
   }
 
   /**
-   * Micro-Drift Correction Effect (requestAnimationFrame version)
+   * Ultra-Precise Micro-Drift Correction Effect (requestAnimationFrame version)
    * Uses EMA-smoothed and median-filtered drift for ultra-precise, stable corrections.
-   * For sub-10ms drift, uses direct currentTime nudge (micro-nudging).
-   * Enhanced: Lag detection, predictive correction, and micro-ramp.
+   * For sub-1ms drift, uses direct currentTime nudge (ultra-micro-nudging).
+   * Enhanced: Ultra-fast lag detection, predictive correction, and micro-ramp.
    *
    * Now: Runs on every animation frame for near-instantaneous detection and correction of micro-millisecond gaps.
    */
@@ -142,18 +193,28 @@ export default function useDriftCorrection({
     rttSpikeHistory.current = [];
     driftSpikeHistory.current = [];
     lagSpikeCount.current = 0;
+    
+    // --- Reset ultra-precise buffers ---
+    ultraDriftHistory.current = [];
+    ultraRttHistory.current = [];
+    ultraLagPredictionBuffer.current = [];
+    ultraCorrectionCount.current = 0;
+    
     function correctMicroDriftRAF() {
       if (!running || pausedByVisibility) return;
       if (!audio || isController) return;
       const nowFrame = performance.now();
       const frameElapsed = nowFrame - lastFrameTime;
       lastFrameTime = nowFrame;
+      
       // Detect animation frame throttling (e.g., tab backgrounded)
       if (frameElapsed > 500 && typeof onDriftDetected === 'function') {
         onDriftDetected('raf_drift');
       }
+      
       const now = getServerTime ? getServerTime() : Date.now();
       const rttComp = rtt ? rtt / 2000 : 0;
+      
       // Calculate expected playback position
       // For listeners, always subtract audioLatency to compensate for output delay
       const expected = (sessionSyncState && typeof sessionSyncState.timestamp === 'number' && typeof sessionSyncState.lastUpdated === 'number')
@@ -163,44 +224,38 @@ export default function useDriftCorrection({
         requestAnimationFrame(correctMicroDriftRAF);
         return;
       }
+      
       const drift = audio.currentTime - expected;
+      
       // --- Use EMA for smoothing drift ---
       const smoothedDrift = driftEMARef.current.next(drift);
+      
       // --- Median filter ---
       driftBufferRef.current.push(smoothedDrift);
       if (driftBufferRef.current.length > 9) driftBufferRef.current.shift();
       const medianDrift = median(driftBufferRef.current);
 
-      // --- Ultra-microsecond lag detection and correction ---
-      // If drift > 0.1ms, immediately correct on this frame
-      if (Math.abs(medianDrift) > 0.0001 && Math.abs(medianDrift) < 0.005) { // 0.1ms < drift < 5ms
-        audio.currentTime += -medianDrift * 0.8; // Direct nudge, ultra-gentle, ultra-micro sync
+      // --- AGGRESSIVE ultra-precise lag detection and correction ---
+      // 1. IMMEDIATE correction for ANY drift - Full strength
+      if (Math.abs(medianDrift) >= ULTRA_MICRO_DRIFT_THRESHOLD && Math.abs(medianDrift) < 0.01 && Math.abs(medianDrift) > 0.0001) {
+        audio.currentTime += -medianDrift * 0.8; // 80% correction - smoother
         if (!microActive && typeof onMicroCorrection === 'function') onMicroCorrection(true);
         microActive = true;
+        ultraCorrectionCount.current++;
         if (import.meta.env.MODE === 'development') {
           window._driftAnalytics = window._driftAnalytics || [];
-          window._driftAnalytics.push({ type: 'ultra_micro_nudge', drift: medianDrift, time: Date.now(), current: audio.currentTime, expected });
+          window._driftAnalytics.push({ type: 'aggressive_immediate', drift: medianDrift, time: Date.now(), current: audio.currentTime, expected });
         }
-      } else if (Math.abs(medianDrift) >= 0.005 && Math.abs(medianDrift) < 0.010) { // 5ms < drift < 10ms
-        audio.currentTime += -medianDrift * 0.5; // Nudge toward expected
+      }
+      // 2. AGGRESSIVE correction for larger drift (10ms+)
+      else if (Math.abs(medianDrift) >= 0.01) {
+        audio.currentTime += -medianDrift * 0.9; // 90% correction - smoother
         if (!microActive && typeof onMicroCorrection === 'function') onMicroCorrection(true);
         microActive = true;
+        ultraCorrectionCount.current++;
         if (import.meta.env.MODE === 'development') {
           window._driftAnalytics = window._driftAnalytics || [];
-          window._driftAnalytics.push({ type: 'nudge', drift: medianDrift, time: Date.now(), current: audio.currentTime, expected });
-        }
-      } else if (Math.abs(medianDrift) >= adaptiveMin && Math.abs(medianDrift) < adaptiveMax) {
-        // Use playbackRate micro-correction
-        if (!microActive && typeof onMicroCorrection === 'function') onMicroCorrection(true);
-        microActive = true;
-        let rateAdj = 1 - Math.max(-MICRO_RATE_CAP_MICRO, Math.min(MICRO_RATE_CAP_MICRO, medianDrift / adaptiveMax * MICRO_RATE_CAP_MICRO));
-        rateAdj = Math.max(1 - MICRO_RATE_CAP_MICRO, Math.min(1 + MICRO_RATE_CAP_MICRO, rateAdj));
-        if (Math.abs(audio.playbackRate - rateAdj) > 0.0005) {
-          audio.playbackRate = rateAdj;
-          if (import.meta.env.MODE === 'development') {
-            window._driftAnalytics = window._driftAnalytics || [];
-            window._driftAnalytics.push({ type: 'micro', drift: medianDrift, rateAdj, time: Date.now(), current: audio.currentTime, expected });
-          }
+          window._driftAnalytics.push({ type: 'aggressive_large', drift: medianDrift, time: Date.now(), current: audio.currentTime, expected });
         }
       } else {
         if (microActive && typeof onMicroCorrection === 'function') onMicroCorrection(false);
@@ -211,37 +266,63 @@ export default function useDriftCorrection({
       }
       // --- End ultra-fast micro-millisecond correction ---
 
-      // --- Enhancement: Lag/Drift spike detection ---
+      // --- Enhanced: Ultra-precise lag/Drift spike detection ---
       if (typeof rtt === 'number') {
         rttSpikeHistory.current.push(rtt);
-        if (rttSpikeHistory.current.length > LAG_SPIKE_WINDOW) rttSpikeHistory.current.shift();
+        ultraRttHistory.current.push(rtt);
+        if (rttSpikeHistory.current.length > ULTRA_LAG_SPIKE_WINDOW) rttSpikeHistory.current.shift();
+        if (ultraRttHistory.current.length > 10) ultraRttHistory.current.shift();
       }
+      
       driftSpikeHistory.current.push(medianDrift);
-      if (driftSpikeHistory.current.length > LAG_SPIKE_WINDOW) driftSpikeHistory.current.shift();
-      // Count lag spikes
-      const recentRttSpikes = rttSpikeHistory.current.filter(val => val > LAG_SPIKE_RTT).length;
-      const recentDriftSpikes = driftSpikeHistory.current.filter(val => Math.abs(val) > LAG_SPIKE_DRIFT).length;
-      if (recentRttSpikes + recentDriftSpikes >= LAG_SPIKE_PERSIST) {
+      ultraDriftHistory.current.push(medianDrift);
+      if (driftSpikeHistory.current.length > ULTRA_LAG_SPIKE_WINDOW) driftSpikeHistory.current.shift();
+      if (ultraDriftHistory.current.length > 10) ultraDriftHistory.current.shift();
+      
+      // Count lag spikes with ultra-precise thresholds
+      const recentRttSpikes = rttSpikeHistory.current.filter(val => val > ULTRA_RTT_SPIKE_THRESHOLD).length;
+      const recentDriftSpikes = driftSpikeHistory.current.filter(val => Math.abs(val) > ULTRA_LAG_SPIKE_DRIFT).length;
+      
+      if (recentRttSpikes + recentDriftSpikes >= ULTRA_LAG_SPIKE_PERSIST) {
         lagSpikeCount.current++;
       } else {
         lagSpikeCount.current = 0;
       }
-      // If lag spike persists, trigger predictive resync
-      if (lagSpikeCount.current >= LAG_SPIKE_PERSIST) {
-        // Predictive correction: estimate where controller will be after RTT
-        const predictedExpected = expected + (typeof rtt === 'number' ? rtt / 1000 : 0);
+      
+      // --- Ultra-precise predictive lag detection ---
+      const predictedLag = predictLag(ultraDriftHistory.current, ultraRttHistory.current, frameElapsed);
+      ultraLagPredictionBuffer.current.push(predictedLag);
+      if (ultraLagPredictionBuffer.current.length > ULTRA_LAG_PREDICTION_WINDOW) {
+        ultraLagPredictionBuffer.current.shift();
+      }
+      
+      // AGGRESSIVE predictive correction - Trigger immediately for any significant drift
+      if (lagSpikeCount.current >= ULTRA_LAG_SPIKE_PERSIST || 
+          predictedLag > ULTRA_PREDICTIVE_LAG_THRESHOLD || 
+          Math.abs(medianDrift) > 0.01) {
+        // AGGRESSIVE predictive correction: estimate where controller will be after RTT
+        const predictedExpected = expected + (typeof rtt === 'number' ? rtt / 1000 : 0) + predictedLag;
         audio.currentTime = predictedExpected;
         microRampPlaybackRate(audio, rampLockRef); // Smoothly ramp back
         lagSpikeCount.current = 0;
+        ultraCorrectionCount.current = 0;
         if (import.meta.env.MODE === 'development') {
           window._driftAnalytics = window._driftAnalytics || [];
-          window._driftAnalytics.push({ type: 'predictive_resync', predictedExpected, time: Date.now(), current: audio.currentTime });
+          window._driftAnalytics.push({ 
+            type: 'aggressive_predictive_resync', 
+            predictedExpected, 
+            predictedLag,
+            time: Date.now(), 
+            current: audio.currentTime 
+          });
         }
-        if (typeof onDriftDetected === 'function') onDriftDetected('predictive_resync');
+        if (typeof onDriftDetected === 'function') onDriftDetected('aggressive_predictive_resync');
       }
+      
       requestAnimationFrame(correctMicroDriftRAF);
     }
     let rafId = requestAnimationFrame(correctMicroDriftRAF);
+    
     // Page Visibility API: pause/resume correction loop
     function handleVisibility() {
       if (document.visibilityState === 'hidden') {

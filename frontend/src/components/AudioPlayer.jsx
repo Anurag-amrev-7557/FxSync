@@ -8,6 +8,7 @@ import useAudioElement from '../hooks/useAudioElement'
 import useResyncAnalytics from '../hooks/useResyncAnalytics'
 import SYNC_CONFIG from '../utils/syncConfig';
 import useUltraPreciseOffset from '../hooks/useUltraPreciseOffset';
+import useUltraPreciseLagDetection from '../hooks/useUltraPreciseLagDetection';
 import { createEMA } from '../utils/syncConfig';
 import PlayerControls from './AudioPlayer/PlayerControls';
 import ProgressBar from './AudioPlayer/ProgressBar';
@@ -339,6 +340,7 @@ export default function AudioPlayer({
   const [showDriftDebug, setShowDriftDebug] = useState(false);
   const [showLatencyCal, setShowLatencyCal] = useState(false);
   const [edgeCaseBanner, setEdgeCaseBanner] = useState(null);
+  const [showCalibrateBanner, setShowCalibrateBanner] = useState(false);
   const [firstSyncAttempted, setFirstSyncAttempted] = useState(false);
   const [firstSyncFailed, setFirstSyncFailed] = useState(false);
 
@@ -410,6 +412,53 @@ export default function AudioPlayer({
     },
     onMicroCorrection: (active) => setMicroCorrectionActive(active), // <-- new callback
   });
+
+  // Ultra-precise lag detection hook
+  const { getLagAnalytics } = useUltraPreciseLagDetection({
+    audioRef,
+    isController,
+    sessionSyncState,
+    audioLatency,
+    rtt,
+    smoothedOffset,
+    getServerTime,
+    onLagDetected: (lagInfo) => {
+      if (lagInfo.type === 'predictive_resync') {
+        setSyncStatus('Predictive re-sync');
+        setTimeout(() => setSyncStatus('In Sync'), 800);
+      } else if (lagInfo.type === 'lag_spike') {
+        setSyncStatus('Lag detected');
+        setTimeout(() => setSyncStatus('In Sync'), 600);
+      }
+    },
+    onLagCorrected: (correctionInfo) => {
+      if (correctionInfo.type === 'ultra_micro') {
+        // Ultra-micro corrections are imperceptible, no UI update needed
+      } else if (correctionInfo.type === 'predictive') {
+        setSyncStatus('Predictive correction');
+        setTimeout(() => setSyncStatus('In Sync'), 600);
+      }
+    },
+  });
+
+  // Debug analytics for development
+  useEffect(() => {
+    if (import.meta.env.MODE === 'development' && !isController) {
+      const interval = setInterval(() => {
+        const analytics = getLagAnalytics();
+        if (analytics.recentCorrections.length > 0) {
+          console.log('[Ultra-Precise Lag Detection]', {
+            avgDrift: analytics.avgDrift.toFixed(6),
+            avgRtt: analytics.avgRtt.toFixed(2),
+            recentCorrections: analytics.recentCorrections.length,
+            lastCorrection: analytics.recentCorrections[analytics.recentCorrections.length - 1],
+          });
+        }
+      }, 5000); // Log every 5 seconds
+      
+      return () => clearInterval(interval);
+    }
+  }, [getLagAnalytics, isController]);
 
   // Smooth appearance hooks for loading states and status changes
   const audioLoaded = useSmoothAppearance(!loading && !audioError, 200, 'animate-fade-in-slow');
@@ -623,6 +672,8 @@ export default function AudioPlayer({
       trackId,
       meta,
       serverTime,
+      highResTimestamp, // New: High-resolution timestamp from backend
+      emissionTime, // New: When the sync_state was emitted
     }) => {
       // Defensive: check for valid timestamp and lastUpdated
       if (
@@ -643,6 +694,9 @@ export default function AudioPlayer({
       let now = null;
       if (typeof serverTime === 'number' && isFinite(serverTime)) {
         now = serverTime;
+      } else if (typeof emissionTime === 'number' && isFinite(emissionTime)) {
+        // ULTRA-FAST: Use emission time if serverTime is not available
+        now = emissionTime;
       } else {
         now = getNow(getServerTime);
         log('warn', 'SYNC_STATE: serverTime missing, using getNow(getServerTime)', { now });
@@ -670,12 +724,16 @@ export default function AudioPlayer({
       });
       if (window._audioDriftHistory.length > 10) window._audioDriftHistory.shift();
 
-      // --- IMMEDIATE CORRECTION FOR EXTREME DRIFT ---
+      // --- ULTRA-PRECISE IMMEDIATE CORRECTION FOR EXTREME DRIFT ---
       if (drift > 1.0) { // 1 second or more
         maybeCorrectDrift(audio, expected);
         setSyncStatus('Major re-sync');
         if (typeof socket?.forceTimeSync === 'function') {
           socket.forceTimeSync();
+        }
+        // ULTRA-FAST: Also try ultra-fast sync if available
+        if (typeof socket?.ultraSyncRequest === 'function' && socket.sessionId) {
+          socket.ultraSyncRequest(socket.sessionId);
         }
         emitDriftReport(drift, expected, audio.currentTime, { ctrlId, trackId, meta, immediate: true });
         driftCountRef.current = 0;
@@ -690,12 +748,23 @@ export default function AudioPlayer({
         }
         return;
       }
-      // --- END IMMEDIATE CORRECTION ---
+      // --- END ULTRA-PRECISE IMMEDIATE CORRECTION ---
 
-      // Enhanced: show drift in UI if large
-      if (drift > SYNC_CONFIG.DRIFT_THRESHOLD) {
+      // --- AGGRESSIVE ULTRA-PRECISE DRIFT DETECTION ---
+      // Use ultra-precise thresholds if enabled - Much more sensitive
+      const driftThreshold = SYNC_CONFIG.ULTRA_LAG?.ENABLED ? 
+        Math.min(SYNC_CONFIG.DRIFT_THRESHOLD, SYNC_CONFIG.ULTRA_LAG.SPIKE_DRIFT) : 
+        SYNC_CONFIG.DRIFT_THRESHOLD;
+      
+      // BALANCED: Correct for significant drift with some tolerance
+      if (drift > driftThreshold || drift > 0.1) { // Increased threshold to 100ms
         driftCountRef.current += 1;
-        if (driftCountRef.current >= SYNC_CONFIG.DRIFT_JITTER_BUFFER) {
+        const jitterBuffer = SYNC_CONFIG.ULTRA_LAG?.ENABLED ? 
+          Math.min(SYNC_CONFIG.DRIFT_JITTER_BUFFER, SYNC_CONFIG.ULTRA_LAG.SPIKE_PERSIST) : 
+          SYNC_CONFIG.DRIFT_JITTER_BUFFER;
+          
+        // BALANCED: Wait for 2 detections to prevent over-correction
+        if (driftCountRef.current >= 2) { // Changed back to 2 for stability
           showSyncStatus('Drifted', 1000);
           maybeCorrectDrift(audio, expected);
           setSyncStatus('Re-syncing...');
@@ -704,6 +773,10 @@ export default function AudioPlayer({
 
           if (typeof socket?.forceTimeSync === 'function') {
             socket.forceTimeSync();
+          }
+          // ULTRA-FAST: Also try ultra-fast sync if available
+          if (typeof socket?.ultraSyncRequest === 'function' && socket.sessionId) {
+            socket.ultraSyncRequest(socket.sessionId);
           }
           emitDriftReport(drift, expected, audio.currentTime, { ctrlId, trackId, meta });
           driftCountRef.current = 0;
@@ -738,8 +811,6 @@ export default function AudioPlayer({
   // Enhanced periodic drift check (for followers)
   useEffect(() => {
     if (!socket || isController) return;
-    // Only run drift check if there's an active session
-    if (!sessionId) return;
 
     let lastCorrection = 0;
     let correctionCooldown = SYNC_CONFIG.CORRECTION_COOLDOWN; // ms, minimum time between corrections
@@ -756,14 +827,10 @@ export default function AudioPlayer({
         setTimeout(() => setEdgeCaseBanner(null), 4000);
         return;
       }
-      // Defensive check: only emit if sessionId is set and valid
-      if (!socket.sessionId || !sessionId) {
+      // Defensive check: only emit if sessionId is set
+      if (!socket.sessionId) {
         if (import.meta.env.MODE === 'development') {
-          console.warn('[DriftCheck] No sessionId set on socket or no active session, skipping sync_request', {
-            socketSessionId: socket.sessionId,
-            sessionId,
-            isController
-          });
+          console.warn('[DriftCheck] No sessionId set on socket, skipping sync_request');
         }
         return;
       }
@@ -771,10 +838,7 @@ export default function AudioPlayer({
         // Handle server error
         if (state && state.error) {
           if (import.meta.env.MODE === 'development') {
-            console.warn('[DriftCheck] Server error received', state.error, {
-              sessionId: socket.sessionId,
-              isController
-            });
+            console.warn('[DriftCheck] Server error received', state.error);
           }
           // Optionally, show a user-facing error or attempt to rejoin
           return;
@@ -815,10 +879,20 @@ export default function AudioPlayer({
         const nowMs = Date.now();
         const canCorrect = nowMs - lastCorrection > correctionCooldown && nowMs - lastSeekTime.current > 500;
 
-        if (drift > SYNC_CONFIG.DRIFT_THRESHOLD) {
+        // --- AGGRESSIVE ULTRA-PRECISE PERIODIC DRIFT DETECTION ---
+        const driftThreshold = SYNC_CONFIG.ULTRA_LAG?.ENABLED ? 
+          Math.min(SYNC_CONFIG.DRIFT_THRESHOLD, SYNC_CONFIG.ULTRA_LAG.SPIKE_DRIFT) : 
+          SYNC_CONFIG.DRIFT_THRESHOLD;
+          
+        // BALANCED: Correct for significant drift with some tolerance
+        if (drift > driftThreshold || drift > 0.1) { // Increased threshold to 100ms
           driftCountRef.current += 1;
+          const jitterBuffer = SYNC_CONFIG.ULTRA_LAG?.ENABLED ? 
+            Math.min(SYNC_CONFIG.DRIFT_JITTER_BUFFER, SYNC_CONFIG.ULTRA_LAG.SPIKE_PERSIST) : 
+            SYNC_CONFIG.DRIFT_JITTER_BUFFER;
 
-          if (driftCountRef.current >= SYNC_CONFIG.DRIFT_JITTER_BUFFER && canCorrect) {
+          // BALANCED: Wait for 2 detections to prevent over-correction
+          if (driftCountRef.current >= 2 && canCorrect) { // Changed back to 2 for stability
             setSyncStatus('Drifted');
             maybeCorrectDrift(audio, expectedSynced);
             setSyncStatus('Re-syncing...');
@@ -826,6 +900,10 @@ export default function AudioPlayer({
 
             if (typeof socket?.forceTimeSync === 'function') {
               socket.forceTimeSync();
+            }
+            // ULTRA-FAST: Also try ultra-fast sync if available
+            if (typeof socket?.ultraSyncRequest === 'function' && socket.sessionId) {
+              socket.ultraSyncRequest(socket.sessionId);
             }
 
             if (socket && socket.emit && socket.sessionId && typeof drift === 'number') {
@@ -849,13 +927,12 @@ export default function AudioPlayer({
     }, SYNC_CONFIG.TIMER_INTERVAL);
 
     return () => clearInterval(interval);
-  }, [socket, isController, sessionId, getServerTime, audioLatency, clientId, rtt, smoothedOffset]);
+  }, [socket, isController, getServerTime, audioLatency, clientId, rtt, smoothedOffset]);
 
   // Enhanced: On mount, immediately request sync state on join, with improved error handling, logging, and edge case resilience
   useEffect(() => {
     if (!socket) return;
     if (!socket.sessionId) return;
-    if (!sessionId) return;
 
     // Helper for logging (dev only)
     const log = (...args) => {
@@ -997,11 +1074,11 @@ export default function AudioPlayer({
         warn('Exception in sync_request callback', err);
       }
     });
-  }, [socket, sessionId, getServerTime, audioLatency, rtt, smoothedOffset]);
+  }, [socket, getServerTime, audioLatency, rtt, smoothedOffset]);
 
   // Enhanced: Emit play/pause/seek events (controller only) with improved logging, error handling, and latency compensation
   const emitPlay = () => {
-    if (isController && socket && getServerTime && sessionId) {
+    if (isController && socket && getServerTime) {
       const now = getNow(getServerTime);
       const audio = audioRef.current;
       const playAt = (audio ? audio.currentTime : 0) + SYNC_CONFIG.PLAY_OFFSET;
@@ -1025,7 +1102,7 @@ export default function AudioPlayer({
   };
 
   const emitPause = () => {
-    if (isController && socket && sessionId) {
+    if (isController && socket) {
       const audio = audioRef.current;
       const payload = {
         sessionId: socket.sessionId,
@@ -1045,7 +1122,7 @@ export default function AudioPlayer({
   };
 
   const emitSeek = (time) => {
-    if (isController && socket && sessionId) {
+    if (isController && socket) {
       const payload = {
         sessionId: socket.sessionId,
         timestamp: time,
@@ -1269,11 +1346,6 @@ export default function AudioPlayer({
         audioRef.current.loop = loop;
       }
     }, [loop, audioRef]);
-
-    // Early return if disabled to prevent interference with calibration
-    if (disabled) {
-      return null;
-    }
 
     // Drag event handlers
     const onHandleTouchStart = (e) => {
@@ -1798,7 +1870,12 @@ export default function AudioPlayer({
     smoothedOffset={smoothedOffset}
   />
 )}
-
+      {import.meta.env.MODE === 'development' && showCalibrateBanner && (
+  <LatencyCalBanner
+    onCalibrate={() => { setShowCalibrateBanner(false); }}
+    onDismiss={() => setShowCalibrateBanner(false)}
+  />
+)}
     </div>
   );
 } 

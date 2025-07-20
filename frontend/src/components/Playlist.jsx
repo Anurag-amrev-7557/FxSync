@@ -50,7 +50,23 @@ async function checkAudioAvailable(url) {
   }
 }
 
-// Removed hardcoded SAMPLE_TRACKS - now using actual backend data
+const SAMPLE_TRACKS = [
+  {
+    title: 'Tumhare Hi Rahenge Hum',
+    url: '/audio/uploads/samples/Tumhare%20Hi%20Rahenge%20Hum.mp3',
+    type: 'sample',
+  },
+  {
+    title: 'Jaana Samjho Na',
+    url: '/audio/uploads/samples/Jaana%20Samjho%20Na.mp3',
+    type: 'sample',
+  },
+  {
+    title: 'Khoobsurat - Stree 2',
+    url: '/audio/uploads/samples/Khoobsurat%20-%20Stree%202.mp3',
+    type: 'sample',
+  },
+];
 
 const Playlist = React.memo(function Playlist({ queue = [], isController, socket, sessionId, onSelectTrack, selectedTrackIdx, mobile = false, pendingRemoveId, handleRemove, confirmRemove }) {
   const reducedMotion = useContext(ReducedMotionContext);
@@ -393,7 +409,14 @@ const Playlist = React.memo(function Playlist({ queue = [], isController, socket
     };
   }, [allTracks.length]);
 
-  // Removed auto-population of hardcoded sample tracks - now using actual backend data
+  // Add all sample tracks to the queue by default if queue is empty
+  useEffect(() => {
+    if (queue.length === 0 && socket && sessionId) {
+      SAMPLE_TRACKS.forEach((track) => {
+        socket.emit('add_to_queue', { sessionId, ...track });
+      });
+    }
+  }, [queue.length, socket, sessionId]);
 
   const handleAdd = useCallback(async (e) => {
     e.preventDefault();
