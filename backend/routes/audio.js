@@ -135,20 +135,52 @@ router.get('/all-tracks', async (req, res) => {
     for (const file of files) {
       if (file.endsWith('.mp3')) {
         let albumArt = null;
+        let artist = '';
+        let album = '';
+        let duration = 0;
+        
         try {
           const metadata = await mm.parseFile(path.join(dir, file));
+          artist = metadata.common.artist || '';
+          album = metadata.common.album || '';
+          duration = metadata.format.duration || 0;
+          
           if (metadata.common.picture && metadata.common.picture.length > 0) {
             const pic = metadata.common.picture[0];
             albumArt = `data:${pic.format};base64,${pic.data.toString('base64')}`;
           }
         } catch (e) {
-          // ignore errors
+          // Try to extract basic info from filename as fallback
+          const filenameWithoutExt = file.replace(/\.mp3$/i, '');
+          if (filenameWithoutExt.includes(' - ')) {
+            const parts = filenameWithoutExt.split(' - ');
+            if (parts.length >= 2) {
+              artist = parts[0].trim();
+              album = parts.slice(1).join(' - ').trim();
+            }
+          }
+          
+          // Try to get duration using file size as fallback
+          try {
+            const stats = fs.statSync(path.join(dir, file));
+            const fileSizeMB = stats.size / (1024 * 1024);
+            const estimatedDuration = Math.round(fileSizeMB * 60);
+            if (estimatedDuration > 0 && estimatedDuration < 600) {
+              duration = estimatedDuration;
+            }
+          } catch (statsError) {
+            // Ignore stats errors
+          }
         }
+        
         tracks.push({
           title: file.replace(/\.mp3$/i, ''),
           url: `${AUDIO_BASE_PATH}${urlPrefix}/${file}`,
           type,
-          albumArt
+          albumArt,
+          artist,
+          album,
+          duration
         });
       }
     }

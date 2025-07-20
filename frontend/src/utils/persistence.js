@@ -4,7 +4,8 @@ const STORAGE_KEYS = {
   MESSAGES: 'fxsync_messages',
   QUEUE: 'fxsync_queue',
   SESSION_DATA: 'fxsync_session_data',
-  MOBILE_TAB: 'fxsync_mobile_tab'
+  MOBILE_TAB: 'fxsync_mobile_tab',
+  REACTIONS: 'fxsync_reactions'
 };
 
 // Get storage key for a specific session
@@ -100,6 +101,41 @@ export const loadMobileTab = (sessionId) => {
   }
 };
 
+// Save reactions for a session
+export const saveReactions = (sessionId, reactions) => {
+  try {
+    const key = getSessionKey(STORAGE_KEYS.REACTIONS, sessionId);
+    // Convert Map to object for JSON serialization
+    const reactionsObject = {};
+    reactions.forEach((value, key) => {
+      reactionsObject[key] = value;
+    });
+    localStorage.setItem(key, JSON.stringify(reactionsObject));
+  } catch (error) {
+    console.warn('Failed to save reactions to localStorage:', error);
+  }
+};
+
+// Load reactions for a session
+export const loadReactions = (sessionId) => {
+  try {
+    const key = getSessionKey(STORAGE_KEYS.REACTIONS, sessionId);
+    const stored = localStorage.getItem(key);
+    if (!stored) return new Map();
+    
+    const reactionsObject = JSON.parse(stored);
+    // Convert object back to Map
+    const reactions = new Map();
+    Object.entries(reactionsObject).forEach(([messageId, reactionsArray]) => {
+      reactions.set(messageId, reactionsArray);
+    });
+    return reactions;
+  } catch (error) {
+    console.warn('Failed to load reactions from localStorage:', error);
+    return new Map();
+  }
+};
+
 // Clear all data for a session
 export const clearSessionData = (sessionId) => {
   try {
@@ -107,7 +143,8 @@ export const clearSessionData = (sessionId) => {
       getSessionKey(STORAGE_KEYS.MESSAGES, sessionId),
       getSessionKey(STORAGE_KEYS.QUEUE, sessionId),
       getSessionKey(STORAGE_KEYS.SESSION_DATA, sessionId),
-      getSessionKey(STORAGE_KEYS.MOBILE_TAB, sessionId)
+      getSessionKey(STORAGE_KEYS.MOBILE_TAB, sessionId),
+      getSessionKey(STORAGE_KEYS.REACTIONS, sessionId)
     ];
     keys.forEach(key => localStorage.removeItem(key));
   } catch (error) {

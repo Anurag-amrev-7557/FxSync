@@ -339,7 +339,6 @@ export default function AudioPlayer({
   const [showDriftDebug, setShowDriftDebug] = useState(false);
   const [showLatencyCal, setShowLatencyCal] = useState(false);
   const [edgeCaseBanner, setEdgeCaseBanner] = useState(null);
-  const [showCalibrateBanner, setShowCalibrateBanner] = useState(false);
   const [firstSyncAttempted, setFirstSyncAttempted] = useState(false);
   const [firstSyncFailed, setFirstSyncFailed] = useState(false);
 
@@ -739,6 +738,8 @@ export default function AudioPlayer({
   // Enhanced periodic drift check (for followers)
   useEffect(() => {
     if (!socket || isController) return;
+    // Only run drift check if there's an active session
+    if (!sessionId) return;
 
     let lastCorrection = 0;
     let correctionCooldown = SYNC_CONFIG.CORRECTION_COOLDOWN; // ms, minimum time between corrections
@@ -755,10 +756,14 @@ export default function AudioPlayer({
         setTimeout(() => setEdgeCaseBanner(null), 4000);
         return;
       }
-      // Defensive check: only emit if sessionId is set
-      if (!socket.sessionId) {
+      // Defensive check: only emit if sessionId is set and valid
+      if (!socket.sessionId || !sessionId) {
         if (import.meta.env.MODE === 'development') {
-          console.warn('[DriftCheck] No sessionId set on socket, skipping sync_request');
+          console.warn('[DriftCheck] No sessionId set on socket or no active session, skipping sync_request', {
+            socketSessionId: socket.sessionId,
+            sessionId,
+            isController
+          });
         }
         return;
       }
@@ -766,7 +771,10 @@ export default function AudioPlayer({
         // Handle server error
         if (state && state.error) {
           if (import.meta.env.MODE === 'development') {
-            console.warn('[DriftCheck] Server error received', state.error);
+            console.warn('[DriftCheck] Server error received', state.error, {
+              sessionId: socket.sessionId,
+              isController
+            });
           }
           // Optionally, show a user-facing error or attempt to rejoin
           return;
@@ -841,12 +849,13 @@ export default function AudioPlayer({
     }, SYNC_CONFIG.TIMER_INTERVAL);
 
     return () => clearInterval(interval);
-  }, [socket, isController, getServerTime, audioLatency, clientId, rtt, smoothedOffset]);
+  }, [socket, isController, sessionId, getServerTime, audioLatency, clientId, rtt, smoothedOffset]);
 
   // Enhanced: On mount, immediately request sync state on join, with improved error handling, logging, and edge case resilience
   useEffect(() => {
     if (!socket) return;
     if (!socket.sessionId) return;
+    if (!sessionId) return;
 
     // Helper for logging (dev only)
     const log = (...args) => {
@@ -988,11 +997,11 @@ export default function AudioPlayer({
         warn('Exception in sync_request callback', err);
       }
     });
-  }, [socket, getServerTime, audioLatency, rtt, smoothedOffset]);
+  }, [socket, sessionId, getServerTime, audioLatency, rtt, smoothedOffset]);
 
   // Enhanced: Emit play/pause/seek events (controller only) with improved logging, error handling, and latency compensation
   const emitPlay = () => {
-    if (isController && socket && getServerTime) {
+    if (isController && socket && getServerTime && sessionId) {
       const now = getNow(getServerTime);
       const audio = audioRef.current;
       const playAt = (audio ? audio.currentTime : 0) + SYNC_CONFIG.PLAY_OFFSET;
@@ -1016,7 +1025,7 @@ export default function AudioPlayer({
   };
 
   const emitPause = () => {
-    if (isController && socket) {
+    if (isController && socket && sessionId) {
       const audio = audioRef.current;
       const payload = {
         sessionId: socket.sessionId,
@@ -1036,7 +1045,7 @@ export default function AudioPlayer({
   };
 
   const emitSeek = (time) => {
-    if (isController && socket) {
+    if (isController && socket && sessionId) {
       const payload = {
         sessionId: socket.sessionId,
         timestamp: time,
@@ -1260,6 +1269,11 @@ export default function AudioPlayer({
         audioRef.current.loop = loop;
       }
     }, [loop, audioRef]);
+
+    // Early return if disabled to prevent interference with calibration
+    if (disabled) {
+      return null;
+    }
 
     // Drag event handlers
     const onHandleTouchStart = (e) => {
@@ -1784,12 +1798,7 @@ export default function AudioPlayer({
     smoothedOffset={smoothedOffset}
   />
 )}
-      {import.meta.env.MODE === 'development' && showCalibrateBanner && (
-  <LatencyCalBanner
-    onCalibrate={() => { setShowCalibrateBanner(false); }}
-    onDismiss={() => setShowCalibrateBanner(false)}
-  />
-)}
+
     </div>
   );
 } 

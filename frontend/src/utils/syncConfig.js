@@ -2,12 +2,19 @@
 // All thresholds, smoothing windows, and correction parameters should be defined here
 
 const SYNC_CONFIG = {
+  // Timer intervals (in milliseconds)
+  TIMER_INTERVAL: 1200, // 1.2 seconds - drift check interval
+  TIMER_DRIFT_DETECTION: 2400, // 2.4 seconds - 2x the normal interval for drift detection
+  
   // Drift correction thresholds (in seconds)
   SMART_RESYNC_THRESHOLD: 0.25, // 250ms
   DRIFT_THRESHOLD: 0.3, // 300ms (was 0.2)
   DRIFT_JITTER_BUFFER: 4, // Number of consecutive drift checks before correction (was 2)
   RESYNC_COOLDOWN_MS: 5000, // 5 seconds
   PLAY_OFFSET: 0.04, // 40ms
+  
+  // Correction cooldown (in milliseconds)
+  CORRECTION_COOLDOWN: 1500, // 1.5 seconds - minimum time between drift corrections
 
   // Micro-correction parameters by quality tier
   DRIFT_PARAMS_BY_QUALITY: {

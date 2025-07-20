@@ -1,4 +1,4 @@
-import { getSession, createSession, deleteSession, addClient, removeClient, setController, getAllSessions, getClients, updatePlayback, updateTimestamp, getClientIdBySocket, getSocketIdByClientId, addControllerRequest, removeControllerRequest, getPendingControllerRequests, clearExpiredControllerRequests } from './managers/sessionManager.js';
+import { getSession, createSession, deleteSession, addClient, removeClient, setController, getAllSessions, getClients, updatePlayback, updateTimestamp, getClientIdBySocket, getSocketIdByClientId, addControllerRequest, removeControllerRequest, getPendingControllerRequests, clearExpiredControllerRequests, addReaction, removeReaction, getMessageReactions, getAllSessionReactions } from './managers/sessionManager.js';
 import { addToQueue, removeFromQueue, getQueue } from './managers/queueManager.js';
 import { formatChatMessage, formatReaction } from './managers/chatManager.js';
 import { log } from './utils/utils.js';
@@ -117,8 +117,37 @@ export function setupSocket(io) {
                 artist = metadata.common.artist || '';
                 album = metadata.common.album || '';
                 duration = metadata.format.duration || 0;
+                
+                // Log successful metadata extraction for debugging
+                log(`[METADATA] Successfully extracted metadata for ${file}: artist="${artist}", album="${album}", duration=${duration}`);
               } catch (e) {
-                // Ignore errors, fallback to empty
+                // Log the error for debugging
+                log(`[METADATA] Failed to extract metadata for ${file}: ${e.message}`);
+                
+                // Try to extract basic info from filename as fallback
+                const filenameWithoutExt = file.replace(/\.mp3$/i, '');
+                if (filenameWithoutExt.includes(' - ')) {
+                  const parts = filenameWithoutExt.split(' - ');
+                  if (parts.length >= 2) {
+                    artist = parts[0].trim();
+                    album = parts.slice(1).join(' - ').trim();
+                  }
+                }
+                
+                // Try to get duration using a different approach - read file size as fallback
+                try {
+                  const stats = fs.statSync(path.join(samplesDir, file));
+                  const fileSizeMB = stats.size / (1024 * 1024);
+                  // Rough estimate: 1MB ≈ 1 minute for 128kbps MP3
+                  // This is just a fallback estimate
+                  const estimatedDuration = Math.round(fileSizeMB * 60);
+                  if (estimatedDuration > 0 && estimatedDuration < 600) { // Between 0 and 10 minutes
+                    duration = estimatedDuration;
+                    log(`[METADATA] Used file size estimate for duration: ${duration}s for ${file}`);
+                  }
+                } catch (statsError) {
+                  log(`[METADATA] Failed to get file stats for ${file}: ${statsError.message}`);
+                }
               }
               addToQueue(
                 sessionId,
@@ -619,6 +648,81 @@ export function setupSocket(io) {
       io.to(sessionId).emit('reaction', formattedReaction);
     });
 
+    // Emoji reaction handlers
+    socket.on('emoji_reaction', ({ sessionId, messageId, emoji, clientId, displayName } = {}, callback) => {
+      if (!sessionId || !messageId || !emoji || !clientId) {
+        return callback && callback({ error: 'Missing required fields' });
+      }
+      
+      const session = getSession(sessionId);
+      if (!session) {
+        return callback && callback({ error: 'Session not found' });
+      }
+      
+      const success = addReaction(sessionId, messageId, emoji, clientId, displayName);
+      if (!success) {
+        return callback && callback({ error: 'Failed to add reaction' });
+      }
+      
+      const reactions = getMessageReactions(sessionId, messageId);
+      
+      // Broadcast to all clients in the session
+      io.to(sessionId).emit('message_reactions_updated', {
+        messageId,
+        reactions,
+        addedBy: clientId,
+        removedBy: null,
+        joinedBy: null
+      });
+      
+      log('Emoji reaction added:', emoji, 'to message:', messageId, 'by:', clientId);
+      callback && callback({ success: true, reactions });
+    });
+
+    socket.on('remove_emoji_reaction', ({ sessionId, messageId, emoji, clientId } = {}, callback) => {
+      if (!sessionId || !messageId || !emoji || !clientId) {
+        return callback && callback({ error: 'Missing required fields' });
+      }
+      
+      const session = getSession(sessionId);
+      if (!session) {
+        return callback && callback({ error: 'Session not found' });
+      }
+      
+      const success = removeReaction(sessionId, messageId, emoji, clientId);
+      if (!success) {
+        return callback && callback({ error: 'Failed to remove reaction' });
+      }
+      
+      const reactions = getMessageReactions(sessionId, messageId);
+      
+      // Broadcast to all clients in the session
+      io.to(sessionId).emit('message_reactions_updated', {
+        messageId,
+        reactions,
+        addedBy: null,
+        removedBy: clientId,
+        joinedBy: null
+      });
+      
+      log('Emoji reaction removed:', emoji, 'from message:', messageId, 'by:', clientId);
+      callback && callback({ success: true, reactions });
+    });
+
+    socket.on('get_session_reactions', ({ sessionId } = {}, callback) => {
+      if (!sessionId) {
+        return callback && callback({ error: 'Missing sessionId' });
+      }
+      
+      const session = getSession(sessionId);
+      if (!session) {
+        return callback && callback({ error: 'Session not found' });
+      }
+      
+      const reactions = getAllSessionReactions(sessionId);
+      callback && callback({ success: true, reactions });
+    });
+
     /**
      * Enhanced add_to_queue event:
      * - Validates input more strictly (URL, title).
@@ -1016,6 +1120,9 @@ export function setupSocket(io) {
         // Clean up any pending controller requests from this client
         if (clientId) {
           removeControllerRequest(sessionId, clientId);
+          // Clear typing indicator for disconnected user - emit to all clients in session
+          io.to(sessionId).emit('user_stop_typing', { clientId });
+          log(`[DISCONNECT] Cleared typing indicator for client ${clientId} in session ${sessionId}`);
         }
         if (session.controllerId === socket.id) {
           const newSocketId = getSocketIdByClientId(sessionId, session.controllerClientId);
