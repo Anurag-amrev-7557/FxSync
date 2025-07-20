@@ -9,13 +9,13 @@ const ULTRA_LAG_SPIKE_WINDOW = 2; // Number of samples to consider, reduced from
 const ULTRA_LAG_SPIKE_PERSIST = 1; // Number of consecutive spikes to trigger predictive resync, reduced from 2
 const MICRO_RAMP_DURATION = 1200; // ms, ramp playbackRate back to 1.0 after correction
 
-// --- New Ultra-Precise Detection Constants - BALANCED (less aggressive to prevent stuttering) ---
+// --- New Ultra-Precise Detection Constants - AGGRESSIVE (more sensitive for immediate sync) ---
 const ULTRA_MICRO_DRIFT_THRESHOLD = 0.00005; // 0.05ms - balanced sensitivity
 const ULTRA_MICRO_CORRECTION_THRESHOLD = 0.0001; // 0.1ms - balanced correction
-const ULTRA_PREDICTIVE_LAG_THRESHOLD = 0.02; // 20ms - balanced prediction
-const ULTRA_RTT_SPIKE_THRESHOLD = 100; // ms - balanced RTT detection
+const ULTRA_PREDICTIVE_LAG_THRESHOLD = 0.008; // Lowered from 0.02 to 0.008 (8ms)
+const ULTRA_RTT_SPIKE_THRESHOLD = 80; // Lowered from 100ms to 80ms
 const ULTRA_DRIFT_ACCELERATION_THRESHOLD = 0.001; // 1ms/s - balanced acceleration
-const ULTRA_LAG_PREDICTION_WINDOW = 3; // frames to predict future lag
+const ULTRA_LAG_PREDICTION_WINDOW = 2; // Lowered from 3 to 2
 
 // Helper: Smoothly fade audio volume in/out
 export function fadeAudio(audio, targetVolume, duration = 200) {
@@ -73,19 +73,13 @@ function median(arr) {
 
 // --- New: Ultra-precise lag prediction function ---
 function predictLag(driftHistory, rttHistory, frameTime) {
-  if (driftHistory.length < 3 || rttHistory.length < 3) return 0;
-  
-  // Calculate drift acceleration (rate of change)
+  // AGGRESSIVE: Remove history length check so prediction always runs
+  // if (driftHistory.length < 3 || rttHistory.length < 3) return 0;
   const recentDrifts = driftHistory.slice(-3);
-  const driftAcceleration = (recentDrifts[2] - recentDrifts[0]) / 2;
-  
-  // Calculate RTT trend
+  const driftAcceleration = recentDrifts.length === 3 ? (recentDrifts[2] - recentDrifts[0]) / 2 : 0;
   const recentRtts = rttHistory.slice(-3);
-  const rttTrend = (recentRtts[2] - recentRtts[0]) / 2;
-  
-  // Predict future lag based on current trends
+  const rttTrend = recentRtts.length === 3 ? (recentRtts[2] - recentRtts[0]) / 2 : 0;
   const predictedLag = driftAcceleration * frameTime + (rttTrend > 0 ? rttTrend * 0.001 : 0);
-  
   return Math.max(0, predictedLag);
 }
 
@@ -132,6 +126,7 @@ export default function useDriftCorrection({
   sessionId,
   onDriftDetected, // optional callback for timer drift/throttling
   onMicroCorrection, // optional callback for micro-correction visual feedback
+  aggressiveSync = false, // new prop
 }) {
   // Add a lock for ramp/fade overlap
   const rampLockRef = useRef(false);
@@ -172,6 +167,10 @@ export default function useDriftCorrection({
       adaptiveCorrectionCooldown *= 0.8;
     }
   }
+
+  // --- Adaptive predictive sync thresholds ---
+  const predictiveLagThreshold = aggressiveSync ? ULTRA_PREDICTIVE_LAG_THRESHOLD / 2 : ULTRA_PREDICTIVE_LAG_THRESHOLD;
+  const lagSpikePersist = aggressiveSync ? Math.max(0, ULTRA_LAG_SPIKE_PERSIST - 1) : ULTRA_LAG_SPIKE_PERSIST;
 
   /**
    * Ultra-Precise Micro-Drift Correction Effect (requestAnimationFrame version)
@@ -297,8 +296,8 @@ export default function useDriftCorrection({
       }
       
       // AGGRESSIVE predictive correction - Trigger immediately for any significant drift
-      if (lagSpikeCount.current >= ULTRA_LAG_SPIKE_PERSIST || 
-          predictedLag > ULTRA_PREDICTIVE_LAG_THRESHOLD || 
+      if (lagSpikeCount.current >= lagSpikePersist || 
+          predictedLag > predictiveLagThreshold || 
           Math.abs(medianDrift) > 0.01) {
         // AGGRESSIVE predictive correction: estimate where controller will be after RTT
         const predictedExpected = expected + (typeof rtt === 'number' ? rtt / 1000 : 0) + predictedLag;

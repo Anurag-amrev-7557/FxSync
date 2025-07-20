@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 
-function ExitRoomModal({ isOpen, onClose, onConfirm, roomName }) {
+function ExitRoomModal({ isOpen, onClose, onConfirm, roomName, title, description, confirmLabel, iconType }) {
   const modalRef = useRef(null);
   const [visible, setVisible] = useState(isOpen);
   const [exiting, setExiting] = useState(false);
@@ -116,25 +116,37 @@ function ExitRoomModal({ isOpen, onClose, onConfirm, roomName }) {
         {/* Header */}
         <div className="flex items-center gap-3 mb-5 sm:mb-7">
           <div className="w-10 h-10 flex items-center justify-center bg-neutral-900 border border-neutral-800 rounded-lg">
-            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="text-white">
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
-              <polyline points="16,17 21,12 16,7"></polyline>
-              <line x1="21" y1="12" x2="9" y2="12"></line>
-            </svg>
+            {iconType === 'clear' ? (
+              <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="text-white">
+                <path d="M3 6h18"></path>
+                <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
+                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
+                <line x1="10" y1="11" x2="10" y2="17"></line>
+                <line x1="14" y1="11" x2="14" y2="17"></line>
+              </svg>
+            ) : (
+              <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="text-white">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                <polyline points="16,17 21,12 16,7"></polyline>
+                <line x1="21" y1="12" x2="9" y2="12"></line>
+              </svg>
+            )}
           </div>
           <div className="flex-1">
-            <h3 id="exit-room-title" className="text-lg sm:text-xl font-bold text-white mb-0 tracking-tight">Exit Room</h3>
-            <p className="text-xs sm:text-sm text-neutral-400 font-normal mt-1">Are you sure you want to leave this session?</p>
+            <h3 id="exit-room-title" className="text-lg sm:text-xl font-bold text-white mb-0 tracking-tight">{title || 'Exit Room'}</h3>
+            <p className="text-xs sm:text-sm text-neutral-400 font-normal mt-1">{description || 'Are you sure you want to leave this session?'}</p>
           </div>
         </div>
         {/* Room Info */}
-        <div className="bg-neutral-900 rounded-lg p-3 sm:p-4 mb-5 sm:mb-7 border border-neutral-800 flex items-center gap-2">
-          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-400">
-            <circle cx="9" cy="7" r="4"></circle>
-            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
-          </svg>
-          <span className="text-xs sm:text-sm text-neutral-300"><span className="text-neutral-500">Room:</span> <span className="text-white font-mono">{roomName}</span></span>
-        </div>
+        {roomName && (
+          <div className="bg-neutral-900 rounded-lg p-3 sm:p-4 mb-5 sm:mb-7 border border-neutral-800 flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-400">
+              <circle cx="9" cy="7" r="4"></circle>
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+            </svg>
+            <span className="text-xs sm:text-sm text-neutral-300"><span className="text-neutral-500">Room:</span> <span className="text-white font-mono">{roomName}</span></span>
+          </div>
+        )}
         {/* Action Buttons */}
         <div className="flex flex-row gap-2 mt-2">
           <button
@@ -147,10 +159,10 @@ function ExitRoomModal({ isOpen, onClose, onConfirm, roomName }) {
           </button>
           <button
             onClick={handleConfirm}
-            className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-white text-black rounded-lg transition-all duration-150 border border-neutral-800 hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30 text-sm font-semibold"
+            className={`flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg transition-all duration-150 border border-neutral-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/30 text-sm font-semibold ${iconType === 'clear' ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-white text-black hover:bg-neutral-100'}`}
             disabled={exiting}
           >
-            Exit Room
+            {confirmLabel || 'Exit Room'}
           </button>
         </div>
       </div>

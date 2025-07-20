@@ -100,6 +100,27 @@ export const loadMobileTab = (sessionId) => {
   }
 };
 
+// Chat appearance settings (global)
+const CHAT_APPEARANCE_KEY = 'fxsync_chat_appearance';
+
+export const saveChatAppearanceSettings = (settings) => {
+  try {
+    localStorage.setItem(CHAT_APPEARANCE_KEY, JSON.stringify(settings));
+  } catch (error) {
+    console.warn('Failed to save chat appearance settings:', error);
+  }
+};
+
+export const loadChatAppearanceSettings = () => {
+  try {
+    const stored = localStorage.getItem(CHAT_APPEARANCE_KEY);
+    return stored ? JSON.parse(stored) : null;
+  } catch (error) {
+    console.warn('Failed to load chat appearance settings:', error);
+    return null;
+  }
+};
+
 // Clear all data for a session
 export const clearSessionData = (sessionId) => {
   try {

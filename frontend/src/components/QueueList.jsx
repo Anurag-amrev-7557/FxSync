@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo, useState, useRef, useEffect } from 'react';
 import { MusicIcon, RemoveIcon } from './Icons';
+import useDeviceType from '../hooks/useDeviceType';
 
 // Helper to format duration (e.g., 90 -> 1:30)
 function formatDuration(duration) {
@@ -63,7 +64,7 @@ const TrackRow = React.memo(function TrackRow({
   const lockedRemovalDirection = useRef(null);
 
   // Only enable swipe on mobile
-  const isMobile = typeof window !== 'undefined' && window.innerWidth < 640;
+  const { isMobile } = useDeviceType();
 
   const handleTouchStart = (e) => {
     if (!isMobile || loading || disableRemove) return;
@@ -242,7 +243,9 @@ const TrackRow = React.memo(function TrackRow({
           <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 transition-all duration-300 ${isSelected ? 'bg-white' : 'bg-neutral-800'}`}
             title={item.title || 'Unknown Track'}
           >
-            <MusicIcon className={isSelected ? 'text-black drop-shadow-lg' : 'text-neutral-400'} />
+            <span style={{ marginLeft: '-2px', display: 'inline-flex' }}>
+              <MusicIcon className={isSelected ? 'text-black drop-shadow-lg' : 'text-neutral-400'} />
+            </span>
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1 sm:gap-2 mb-0.5 sm:mb-1">
@@ -432,16 +435,7 @@ function QueueList({
   confirmRemove,
 }) {
   // All hooks must be called before any early return
-  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' ? window.innerWidth < 640 : false);
-
-  // Update isMobile on resize
-  React.useEffect(() => {
-    function handleResize() {
-      setIsMobile(window.innerWidth < 640);
-    }
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
+  const { isMobile } = useDeviceType();
 
   // Now do early return
   if (!queue || queue.length === 0) {

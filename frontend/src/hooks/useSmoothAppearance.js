@@ -17,9 +17,9 @@ import { useState, useEffect, useCallback } from 'react';
 export default function useSmoothAppearance(shouldShow, options = {}) {
   const {
     delay = 0,
-    animationClass = 'animate-fade-in',
-    enterClass = 'animate-slide-up',
-    exitClass = 'animate-slide-down',
+    animationClass = 'animate-fade-in', // Should match new 0.5s duration, cubic-bezier
+    enterClass = 'animate-slide-up',    // Should match new 0.5s duration, cubic-bezier
+    exitClass = 'animate-slide-down',   // Should match new 0.5s duration, cubic-bezier
     persistent = false,
     onEnter,
     onExit,
@@ -30,6 +30,8 @@ export default function useSmoothAppearance(shouldShow, options = {}) {
   const [hasAnimated, setHasAnimated] = useState(false);
   const [isExiting, setIsExiting] = useState(false);
   const [animationKey, setAnimationKey] = useState(0);
+  const entranceDuration = 500; // ms
+  const exitDuration = 500; // ms
 
   useEffect(() => {
     if (shouldShow && !isVisible) {
@@ -42,29 +44,24 @@ export default function useSmoothAppearance(shouldShow, options = {}) {
       const timer = setTimeout(() => {
         setIsVisible(true);
         setIsExiting(false);
-        
         // Trigger enter animation
         const animationTimer = setTimeout(() => {
           setHasAnimated(true);
           if (onEnter) onEnter();
         }, 50); // Small delay to ensure DOM update
-
         return () => clearTimeout(animationTimer);
       }, delay);
-
       return () => clearTimeout(timer);
     } else if (!shouldShow && isVisible) {
       // Handle exit animation
       setIsExiting(true);
-      
       const exitTimer = setTimeout(() => {
         setIsVisible(false);
         if (!persistent) {
           setHasAnimated(false);
         }
         if (onExit) onExit();
-      }, 400); // Exit animation duration (was 300)
-
+      }, exitDuration); // Exit animation duration now 500ms
       return () => clearTimeout(exitTimer);
     }
   }, [shouldShow, isVisible, delay, persistent, resetOnShow, onEnter, onExit]);
@@ -72,15 +69,12 @@ export default function useSmoothAppearance(shouldShow, options = {}) {
   // Enhanced animation class logic
   const getAnimationClass = () => {
     if (!isVisible) return 'opacity-0 scale-95';
-    
     if (isExiting) {
       return `${exitClass} opacity-0 scale-95`;
     }
-    
     if (!hasAnimated) {
       return `${animationClass} ${enterClass}`;
     }
-    
     return persistent ? '' : 'opacity-100 scale-100';
   };
 
@@ -92,14 +86,12 @@ export default function useSmoothAppearance(shouldShow, options = {}) {
         opacity: 0
       };
     }
-    
     if (isExiting) {
       return {
         transform: 'translateY(-20px) scale(0.95)',
         opacity: 0
       };
     }
-    
     return {
       transform: 'translateY(0) scale(1)',
       opacity: 1
@@ -145,7 +137,7 @@ export default function useSmoothAppearance(shouldShow, options = {}) {
  */
 export function useStaggeredAnimation(items, options = {}) {
   const {
-    staggerDelay = 60, // was 100
+    staggerDelay = 80, // ultra-smooth default
     animationClass = 'animate-slide-up',
     reverse = false,
     loop = false,

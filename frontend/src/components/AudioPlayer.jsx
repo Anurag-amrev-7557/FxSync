@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import SyncStatus from './SyncStatus';
+import { MusicIcon } from './Icons';
 import useSmoothAppearance from '../hooks/useSmoothAppearance';
 import LoadingSpinner from './LoadingSpinner';
 import ResyncAnalytics from './ResyncAnalytics';
@@ -246,6 +247,28 @@ function getNow(getServerTime) {
   }
 }
 
+// Utility: Safely play audio only after it is ready
+function safePlay(audio) {
+  return new Promise((resolve, reject) => {
+    if (!audio) return reject(new Error('No audio element'));
+    if (audio.readyState >= 3) { // HAVE_FUTURE_DATA or more
+      audio.play().then(resolve).catch(err => {
+        if (err.name !== 'AbortError') reject(err);
+        else resolve(); // Ignore AbortError
+      });
+    } else {
+      const onCanPlay = () => {
+        audio.removeEventListener('canplay', onCanPlay);
+        audio.play().then(resolve).catch(err => {
+          if (err.name !== 'AbortError') reject(err);
+          else resolve();
+        });
+      };
+      audio.addEventListener('canplay', onCanPlay, { once: true });
+    }
+  });
+}
+
 /**
  * AudioPlayer: Ultra-precise, micro-millisecond-level synchronized audio player.
  * Uses EMA smoothing for offset and drift, and micro-correction for imperceptible sync.
@@ -388,6 +411,14 @@ export default function AudioPlayer({
     }
   }, [canonicalUltraPreciseOffset, timeOffset]);
 
+  // --- Adaptive Aggressiveness State ---
+  const [aggressiveSync, setAggressiveSync] = useState(false);
+  useEffect(() => {
+    setAggressiveSync(true);
+    const timer = setTimeout(() => setAggressiveSync(false), 2500);
+    return () => clearTimeout(timer);
+  }, [isPlaying, currentTrack?.url]);
+
   // useDriftCorrection hook at the top level
   const { maybeCorrectDrift } = useDriftCorrection({
     audioRef,
@@ -411,6 +442,7 @@ export default function AudioPlayer({
       }
     },
     onMicroCorrection: (active) => setMicroCorrectionActive(active), // <-- new callback
+    aggressiveSync, // pass flag to hook
   });
 
   // Ultra-precise lag detection hook
@@ -527,7 +559,6 @@ export default function AudioPlayer({
       // If url is relative, prepend backend URL
       if (url.startsWith('/audio/')) {
         const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
-        // Remove trailing slash if present
         url = backendUrl.replace(/\/$/, '') + url;
       }
       setAudioUrl(url);
@@ -535,21 +566,38 @@ export default function AudioPlayer({
       const audio = audioRef.current;
       if (audio) {
         setCurrentTimeSafely(audio, 0, setDisplayedCurrentTime);
+        audio.src = url; // Force update src immediately
+        audio.load(); // Force reload
+        if (!isController && isPlaying) {
+          safePlay(audio).catch(() => {});
+        }
       } else {
         setDisplayedCurrentTime(0);
       }
     }
-  }, [currentTrack]);
+  }, [currentTrack, isPlaying, isController]);
 
   // --- Ensure playback starts from beginning when selectedTrackIdx changes (even if currentTrack does not) ---
   useEffect(() => {
     const audio = audioRef.current;
     if (audio) {
       setCurrentTimeSafely(audio, 0, setDisplayedCurrentTime);
+      if (currentTrack && currentTrack.url) {
+        let url = currentTrack.url;
+        if (url.startsWith('/audio/')) {
+          const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
+          url = backendUrl.replace(/\/$/, '') + url;
+        }
+        audio.src = url;
+        audio.load();
+        if (!isController && isPlaying) {
+          safePlay(audio).catch(() => {});
+        }
+      }
     } else {
       setDisplayedCurrentTime(0);
     }
-  }, [selectedTrackIdx]);
+  }, [selectedTrackIdx, currentTrack, isPlaying, isController]);
 
   // Auto-play audio for listeners when audioUrl changes and should be playing
   useEffect(() => {
@@ -557,7 +605,7 @@ export default function AudioPlayer({
     if (!audio) return;
     if (!isController && isPlaying && audioUrl) {
       // Try to play the audio (catch errors silently)
-      audio.play().catch(() => {});
+      safePlay(audio).catch(() => {});
     }
   }, [audioUrl, isPlaying, isController]);
 
@@ -731,7 +779,7 @@ export default function AudioPlayer({
         setTimeout(() => setSyncStatus('In Sync'), 1200);
         // Only play/pause if state differs
         if (isPlaying && audio.paused) {
-          audio.play().catch(e => {
+          safePlay(audio).catch(e => {
             log('warn', 'SYNC_STATE: failed to play audio', e);
           });
         } else if (!isPlaying && !audio.paused) {
@@ -777,7 +825,7 @@ export default function AudioPlayer({
 
       // Only play/pause if state differs
       if (isPlaying && audio.paused) {
-        audio.play().catch(e => {
+        safePlay(audio).catch(e => {
           log('warn', 'SYNC_STATE: failed to play audio', e);
         });
       } else if (!isPlaying && !audio.paused) {
@@ -912,6 +960,110 @@ export default function AudioPlayer({
     return () => clearInterval(interval);
   }, [socket, isController, getServerTime, audioLatency, clientId, rtt, smoothedOffset]);
 
+    // Provide syncQuality and selectedSource for UI display
+    const syncQuality = propSyncQuality || { label: 'Unknown', color: 'bg-gray-500', tooltip: 'Sync quality unknown.' };
+    const selectedSource = propSelectedSource || 'server';
+  
+    // --- Advanced Debounced & Phased Seek System ---
+    const seekDebounceRef = useRef(null);
+    const seekTargetRef = useRef(null);
+    const wasPlayingRef = useRef(false);
+    const phaseRafRef = useRef(null);
+    const [isDragging, setIsDragging] = useState(false);
+    const [seekTooltipTime, setSeekTooltipTime] = useState(null);
+  
+    // Call this when user starts dragging the seekbar
+    const onSeekStart = () => {
+      setIsDragging(true);
+      setSeekTooltipTime(displayedCurrentTime);
+      const audio = audioRef.current;
+      if (audio && !audio.paused) {
+        wasPlayingRef.current = true;
+        audio.pause();
+      } else {
+        wasPlayingRef.current = false;
+      }
+      // Cancel any pending phase animation
+      if (phaseRafRef.current) cancelAnimationFrame(phaseRafRef.current);
+    };
+  
+    // Call this on every seekbar change (drag or click)
+    const onSeekChange = (newTime) => {
+      setSeekTooltipTime(newTime);
+      // Update UI immediately for responsiveness
+      setDisplayedCurrentTime(newTime);
+      seekTargetRef.current = newTime;
+      // Remove debounce for fastest emission
+      const audio = audioRef.current;
+      if (audio && Math.abs(audio.currentTime - newTime) > 0.01) {
+        audio.currentTime = newTime;
+      }
+      // Start phasing displayed time toward actual audio time
+      phaseDisplayedTime();
+    };
+  
+    // Call this when user releases the seekbar
+    const onSeekEnd = () => {
+      setIsDragging(false);
+      setSeekTooltipTime(null);
+      // Immediately set audio to the final seek position
+      const audio = audioRef.current;
+      const finalTime = typeof seekTargetRef.current === 'number' ? seekTargetRef.current : displayedCurrentTime;
+      if (audio && Math.abs(audio.currentTime - finalTime) > 0.01) {
+        audio.currentTime = finalTime;
+        setDisplayedCurrentTime(finalTime);
+        if (isController) emitSeek(finalTime);
+      }
+      // Resume playback if it was playing before
+      if (wasPlayingRef.current) {
+        setTimeout(() => {
+          audioRef.current?.play();
+        }, 60); // Short wait for seek to apply
+      }
+      // Cancel any pending debounce or phase animation
+      if (seekDebounceRef.current) clearTimeout(seekDebounceRef.current);
+      if (phaseRafRef.current) cancelAnimationFrame(phaseRafRef.current);
+    };
+  
+    // Smoothly phase displayedCurrentTime toward audio.currentTime
+    const phaseDisplayedTime = () => {
+      if (phaseRafRef.current) cancelAnimationFrame(phaseRafRef.current);
+      const animate = () => {
+        const audio = audioRef.current;
+        if (!audio) return;
+        setDisplayedCurrentTime(prev => {
+          const actual = audio.currentTime;
+          if (Math.abs(prev - actual) < 0.01) return actual;
+          return prev + (actual - prev) * 0.35;
+        });
+        phaseRafRef.current = requestAnimationFrame(animate);
+      };
+      phaseRafRef.current = requestAnimationFrame(animate);
+    };
+  
+    // Clean up on unmount
+    useEffect(() => {
+      return () => {
+        if (seekDebounceRef.current) clearTimeout(seekDebounceRef.current);
+        if (phaseRafRef.current) cancelAnimationFrame(phaseRafRef.current);
+      };
+    }, []);
+
+  // --- Fail-safe: Hard correction if not synced after 1 second ---
+  useEffect(() => {
+    if (!isPlaying && !currentTrack?.url) return;
+    const audio = audioRef.current;
+    if (!audio) return;
+    let timeout = setTimeout(() => {
+      const expected = computeExpectedTime();
+      const drift = Math.abs(audio.currentTime - expected);
+      if (drift > 0.04 && typeof maybeCorrectDrift === 'function') {
+        maybeCorrectDrift(audio, expected);
+      }
+    }, 1000);
+    return () => clearTimeout(timeout);
+  }, [isPlaying, currentTrack?.url]);
+
   // Enhanced: On mount, immediately request sync state on join, with improved error handling, logging, and edge case resilience
   useEffect(() => {
     if (!socket) return;
@@ -1045,7 +1197,7 @@ export default function AudioPlayer({
         if (state.isPlaying) {
           playRequestedAt.current = Date.now();
           // Defensive: try/catch for play() (may throw in some browsers)
-          audio.play().catch((err) => {
+          safePlay(audio).catch((err) => {
             warn('audio.play() failed on sync_request', err);
           });
         } else {
@@ -1126,29 +1278,58 @@ export default function AudioPlayer({
 
   // Enhanced Play/Pause/Seek handlers with improved error handling, logging, and edge case resilience
 
+  const playPauseDebounceRef = useRef(0);
+
+  const getPreciseNow = () => (window.performance ? performance.now() : Date.now());
+
+  const computeExpectedTime = () => {
+    const audio = audioRef.current;
+    if (!audio) return 0;
+    const now = getNow(getServerTime);
+    const rttComp = rtt ? rtt / 2000 : 0;
+    return (sessionSyncState && typeof sessionSyncState.timestamp === 'number' && typeof sessionSyncState.lastUpdated === 'number')
+      ? sessionSyncState.timestamp + (now - sessionSyncState.lastUpdated) / 1000 + rttComp + smoothedOffset - (isController ? 0 : audioLatency)
+      : audio.currentTime;
+  };
+
   const handlePlay = async () => {
     const audio = audioRef.current;
     if (!audio) {
       if (import.meta.env.MODE === 'development') {
-         
         console.warn('[AudioPlayer][handlePlay] Audio element not available');
       }
       return;
     }
-    playRequestedAt.current = Date.now();
+    // Debounce rapid play/pause
+    const now = getPreciseNow();
+    if (now - playPauseDebounceRef.current < 150) return;
+    playPauseDebounceRef.current = now;
+    if (!audio.paused) {
+      // Already playing, do nothing
+      if (!isPlaying) setIsPlaying(true);
+      return;
+    }
+    playRequestedAt.current = Date.now(); // keep Date.now() for wall-clock timestamps
     try {
       const playPromise = audio.play();
       if (playPromise && typeof playPromise.then === 'function') {
         await playPromise;
+        // --- Force predictive correction immediately after playback starts ---
+        if (typeof maybeCorrectDrift === 'function') {
+          const expected = computeExpectedTime();
+          maybeCorrectDrift(audio, expected);
+        }
       }
-      setIsPlaying(true);
+      if (!isPlaying) setIsPlaying(true);
       emitPlay();
-     
     } catch (err) {
-      setIsPlaying(false);
-      if (import.meta.env.MODE === 'development') {
-         
-        console.error('[AudioPlayer][handlePlay] Failed to play audio', err);
+      if (err.name === 'AbortError') {
+        // Ignore: play() was interrupted by pause(), this is expected in rapid interactions
+      } else {
+        if (isPlaying) setIsPlaying(false);
+        if (import.meta.env.MODE === 'development') {
+          console.error('[AudioPlayer][handlePlay] Failed to play audio', err);
+        }
       }
     }
   };
@@ -1157,19 +1338,25 @@ export default function AudioPlayer({
     const audio = audioRef.current;
     if (!audio) {
       if (import.meta.env.MODE === 'development') {
-         
         console.warn('[AudioPlayer][handlePause] Audio element not available');
       }
       return;
     }
+    // Debounce rapid play/pause
+    const now = getPreciseNow();
+    if (now - playPauseDebounceRef.current < 150) return;
+    playPauseDebounceRef.current = now;
+    if (audio.paused) {
+      // Already paused, do nothing
+      if (isPlaying) setIsPlaying(false);
+      return;
+    }
     try {
       audio.pause();
-      setIsPlaying(false);
+      if (isPlaying) setIsPlaying(false);
       emitPause();
-     
     } catch (err) {
       if (import.meta.env.MODE === 'development') {
-         
         console.error('[AudioPlayer][handlePause] Failed to pause audio', err);
       }
     }
@@ -1256,6 +1443,19 @@ export default function AudioPlayer({
     }
     return `${minutes}:${seconds}`;
   };
+
+    // Add at the top of the AudioPlayer component, after hooks
+    const [isPortrait, setIsPortrait] = useState(false);
+
+    useEffect(() => {
+      function handleResize() {
+        const width = window.innerWidth;
+        setIsPortrait(width <= 1222 && width >= 768);
+      }
+      handleResize();
+      window.addEventListener('resize', handleResize);
+      return () => window.removeEventListener('resize', handleResize);
+    }, []);
 
   // --- Automatic device latency estimation using AudioContext.baseLatency ---
   useEffect(() => {
@@ -1510,8 +1710,12 @@ export default function AudioPlayer({
                       <ProgressBar
                         currentTime={displayedCurrentTime}
                         duration={duration}
-                        onSeek={handleSeekWithEmit}
                         disabled={disabled || !isController || !audioUrl}
+                        onSeekStart={onSeekStart}
+                        onSeek={onSeekChange}
+                        onSeekEnd={onSeekEnd}
+                        isDragging={isDragging}
+                        tooltipTime={seekTooltipTime}
                       />
                     </div>
                   </div>
@@ -1573,8 +1777,12 @@ export default function AudioPlayer({
                       <ProgressBar
                         currentTime={displayedCurrentTime}
                         duration={duration}
-                        onSeek={handleSeekWithEmit}
                         disabled={disabled || !isController || !audioUrl}
+                        onSeekStart={onSeekStart}
+                        onSeek={onSeekChange}
+                        onSeekEnd={onSeekEnd}
+                        isDragging={isDragging}
+                        tooltipTime={seekTooltipTime}
                       />
                     </div>
 
@@ -1669,9 +1877,205 @@ export default function AudioPlayer({
     );
   }
 
-  // Provide syncQuality and selectedSource for UI display
-  const syncQuality = propSyncQuality || { label: 'Unknown', color: 'bg-gray-500', tooltip: 'Sync quality unknown.' };
-  const selectedSource = propSelectedSource || 'server';
+  if (!mobile) {
+    // Portrait layout for 1222px and below, 768px and above
+    if (isPortrait) {
+      return (
+        <div className={`audio-player audio-player-portrait transition-all duration-500 ${audioLoaded.animationClass}`}>
+          {audioUrl && (
+            <audio
+              ref={audioRef}
+              src={audioUrl}
+              preload="auto"
+              onLoadedMetadata={() => {
+                const audio = audioRef.current;
+                if (audio && !isController && !isPlaying) {
+                  audio.pause();
+                  setDisplayedCurrentTime(0);
+                }
+              }}
+            />
+          )}
+          {errorBanner && (
+            <ErrorBanner
+              message={errorBanner}
+              color="#b91c1c"
+              onDismiss={() => setErrorBanner(null)}
+            />
+          )}
+          {edgeCaseBanner && (
+            <ErrorBanner
+              message={edgeCaseBanner}
+              color="#2563eb"
+              onDismiss={() => setEdgeCaseBanner(null)}
+              onResync={handleResync}
+              showResync={true}
+              resyncLabel="Re-sync now"
+            />
+          )}
+          <div className="w-full rounded-xl p-5 shadow-lg flex flex-col items-center gap-6 transition-all duration-500 group/audio-player-main">
+            {/* Album Art */}
+            <div className="w-16 h-16 bg-primary/30 rounded-2xl flex items-center justify-center overflow-hidden shadow-md transition-all duration-300">
+              {currentTrack?.albumArt ? (
+                <img
+                  src={currentTrack.albumArt}
+                  alt={currentTrack.title ? `Album art for ${currentTrack.title}` : "Album Art"}
+                  className="w-32 h-32 object-cover rounded-2xl transition-all duration-300"
+                  style={{ minWidth: 128, minHeight: 128 }}
+                  loading="lazy"
+                  draggable={false}
+                />
+              ) : (
+                <div
+                  className="w-28 h-28 rounded-2xl flex items-center justify-center flex-shrink-0 transition-all duration-300 bg-white shadow-md"
+                >
+                  <MusicIcon
+                    className="text-black"
+                    style={{ width: 32, height: 32, marginLeft: '-5px' }}
+                  />
+                </div>
+              )}
+            </div>
+            {/* Track Info */}
+            <div className="w-full flex flex-col items-center">
+              <div className="mb-1 text-white text-xl font-bold min-h-[1.5em] relative flex items-center justify-center transition-all duration-300 text-center w-full">
+                <TrackInfo
+                  title={displayedTitle}
+                  animating={animating}
+                  direction={direction}
+                />
+              </div>
+              <div className="text-xs text-neutral-400 truncate flex flex-row flex-wrap gap-x-2 gap-y-0.5 items-center font-medium justify-center">
+                {(() => {
+                  let artists = currentTrack?.artist;
+                  if (Array.isArray(artists)) artists = artists.filter(Boolean);
+                  else if (typeof artists === 'string') artists = artists.split(',').map(a => a.trim()).filter(Boolean);
+                  else artists = [];
+                  const shown = artists.slice(0, 2);
+                  return shown.map((a, i) => (
+                    <span key={i} className="truncate max-w-[120px]" title={a}>{a}</span>
+                  )).concat(artists.length > 2 ? <span key="more" className="opacity-70">...</span> : []);
+                })()}
+                {currentTrack?.artist && currentTrack?.album && <span className="opacity-60">•</span>}
+                {currentTrack?.album && (
+                  <span className="truncate max-w-[120px]" title={currentTrack.album}>{currentTrack.album}</span>
+                )}
+              </div>
+            </div>
+            {/* Progress Bar */}
+            <div className="w-full flex flex-col items-center gap-2">
+              <div className="w-full flex items-center justify-between text-xs">
+                <span className="text-neutral-400 font-mono">{formatTime(displayedCurrentTime)}</span>
+                <span className="text-neutral-400 font-mono">{formatTime(duration)}</span>
+              </div>
+              <div className="w-full">
+                <div className="relative group/progress-bar h-6 flex items-center">
+                  <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-1.5 rounded-lg overflow-hidden pointer-events-none" style={{zIndex: 1, background: '#262626'}}>
+                    <div
+                      className="absolute left-0 top-0 h-full bg-white transition-all duration-500"
+                      style={{
+                        width: `${isFinite(duration) && duration > 0 ? (displayedCurrentTime / duration) * 100 : 0}%`,
+                        zIndex: 2,
+                        borderRadius: '8px 0 0 8px'
+                      }}
+                    />
+                    <div
+                      className="absolute left-0 top-0 h-full bg-gradient-to-r from-primary to-white transition-all duration-500"
+                      style={{
+                        width: `${isFinite(duration) && duration > 0 ? (displayedCurrentTime / duration) * 100 : 0}%`,
+                        opacity: 0.5,
+                        zIndex: 3,
+                        borderRadius: '8px 0 0 8px'
+                      }}
+                    />
+                  </div>
+                  <div
+                    className="absolute top-1/2 left-0 z-10"
+                    style={{
+                      left: `${isFinite(duration) && duration > 0 ? (displayedCurrentTime / duration) * 100 : 0}%`,
+                      transform: 'translate(-50%, -50%)'
+                    }}
+                    aria-hidden="true"
+                  >
+                    <div className="w-5 h-5 bg-white rounded-full shadow-xl border-2 border-primary/30 transition-transform duration-200 group-hover/progress-bar:scale-110" />
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={isFinite(duration) ? duration : 0}
+                    step={0.01}
+                    value={isFinite(displayedCurrentTime) ? displayedCurrentTime : 0}
+                    onChange={e => handleSeekWithEmit(Number(e.target.value))}
+                    className="absolute inset-0 w-full h-6 opacity-0 cursor-pointer z-20"
+                    disabled={disabled || !isController || !audioUrl}
+                    aria-label="Seek audio"
+                    tabIndex={disabled || !isController || !audioUrl ? -1 : 0}
+                    style={{ WebkitAppearance: 'none', appearance: 'none' }}
+                  />
+                </div>
+              </div>
+            </div>
+            {/* Controls */}
+            <div className="w-full flex items-center justify-center mt-2">
+              <PlayerControls
+                isPlaying={isPlaying}
+                onPlay={handlePlay}
+                onPause={handlePause}
+                onNext={handleNext}
+                onPrevious={handlePrevious}
+                canGoNext={canGoNext}
+                canGoPrevious={canGoPrevious}
+                disabled={disabled}
+                isController={isController}
+                audioUrl={audioUrl}
+              />
+            </div>
+          </div>
+          {import.meta.env.MODE === 'development' && showLatencyCal && (
+            <div style={{
+              position: 'fixed',
+              bottom: 340,
+              left: 20,
+              zIndex: 10001,
+              background: 'rgba(30,30,30,0.97)',
+              color: '#fff',
+              padding: '16px 22px',
+              borderRadius: 10,
+              fontSize: 15,
+              maxWidth: 340,
+              boxShadow: '0 2px 8px rgba(0,0,0,0.25)'
+            }}>
+              <div style={{fontWeight: 'bold', marginBottom: 8}}>Audio Latency Calibration</div>
+              <div>Measured: <b>{audioLatency.toFixed(3)}s</b></div>
+              <div>Override: <input type="number" step="0.001" min="0" max="1" value={manualLatency ?? ''} onChange={e => setManualLatency(parseFloat(e.target.value) || 0)} style={{width: 80, marginLeft: 8}} /> s</div>
+              <button style={{marginTop: 10, padding: '4px 10px', borderRadius: 6, background: '#444', color: '#fff', border: 'none', cursor: 'pointer'}} onClick={() => { setManualLatency(null); localStorage.removeItem('audioLatencyOverride'); }}>Reset</button>
+              <div style={{color:'#aaa', fontSize:12, marginTop:8}}>Press <b>L</b> to toggle this panel.</div>
+            </div>
+          )}
+          {import.meta.env.MODE === 'development' && showDriftDebug && (
+            <DiagnosticsPanel
+              audioLatency={audioLatency}
+              manualLatency={manualLatency}
+              setManualLatency={setManualLatency}
+              resyncStats={resyncStats}
+              rtt={rtt}
+              jitter={jitter}
+              syncQuality={syncQuality}
+              selectedSource={selectedSource}
+              computedUltraPreciseOffset={canonicalUltraPreciseOffset}
+              smoothedOffset={smoothedOffset}
+            />
+          )}
+          {import.meta.env.MODE === 'development' && showCalibrateBanner && (
+            <LatencyCalBanner
+              onCalibrate={() => { setShowCalibrateBanner(false); }}
+              onDismiss={() => setShowCalibrateBanner(false)}
+            />
+          )}
+        </div>
+      );
+    }
+  }
 
   return (
     <div className={`audio-player transition-all duration-500 ${audioLoaded.animationClass}`}>
@@ -1709,33 +2113,35 @@ export default function AudioPlayer({
   />
 )}
       {/* Now Playing Section */}
-      <div className="bg-neutral-900/50 rounded-lg border border-neutral-800 p-4">
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-12 h-12 bg-primary/20 rounded-lg flex items-center justify-center overflow-hidden">
+      <div className="rounded-xl p-5 shadow-lg transition-all duration-500 group/audio-player-main">
+        <div className="flex items-center gap-4 mb-5">
+          <div className="w-14 h-14 bg-primary/30 rounded-xl flex items-center justify-center overflow-hidden shadow-md transition-all duration-300 group-hover/audio-player-main:scale-105">
             {currentTrack?.albumArt ? (
               <img
                 src={currentTrack.albumArt}
-                alt="Album Art"
-                className="w-12 h-12 object-cover rounded-lg"
-                style={{ minWidth: 48, minHeight: 48 }}
+                alt={currentTrack.title ? `Album art for ${currentTrack.title}` : "Album Art"}
+                className="w-14 h-14 object-cover rounded-xl transition-all duration-300"
+                style={{ minWidth: 56, minHeight: 56 }}
+                loading="lazy"
+                draggable={false}
               />
             ) : (
-              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary">
+              <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-primary opacity-80">
                 <path d="M9 18V5l12-2v13"></path>
                 <circle cx="6" cy="18" r="3"></circle>
                 <circle cx="18" cy="16" r="3"></circle>
               </svg>
             )}
           </div>
-          <div className="flex-1">
-            <div className="mb-1 text-white text-base font-semibold min-h-[1.5em] relative flex items-center">
+          <div className="flex-1 min-w-0">
+            <div className="mb-1 text-white text-lg font-bold min-h-[1.5em] relative flex items-center transition-all duration-300">
               <TrackInfo
                 title={displayedTitle}
                 animating={animating}
                 direction={direction}
               />
             </div>
-            <div className="text-[12px] text-neutral-400 truncate flex flex-row flex-wrap gap-x-2 gap-y-0.5 items-center">
+            <div className="text-xs text-neutral-400 truncate flex flex-row flex-wrap gap-x-2 gap-y-0.5 items-center font-medium">
               {(() => {
                 let artists = currentTrack?.artist;
                 if (Array.isArray(artists)) artists = artists.filter(Boolean);
@@ -1743,42 +2149,62 @@ export default function AudioPlayer({
                 else artists = [];
                 const shown = artists.slice(0, 2);
                 return shown.map((a, i) => (
-                  <span key={i} className="truncate max-w-xs" title={a}>{a}</span>
-                )).concat(artists.length > 2 ? <span key="more">...</span> : []);
+                  <span key={i} className="truncate max-w-[120px]" title={a}>{a}</span>
+                )).concat(artists.length > 2 ? <span key="more" className="opacity-70">...</span> : []);
               })()}
-              {currentTrack?.artist && currentTrack?.album && <span>•</span>}
+              {currentTrack?.artist && currentTrack?.album && <span className="opacity-60">•</span>}
               {currentTrack?.album && (
-                <span className="truncate max-w-xs" title={currentTrack.album}>{currentTrack.album}</span>
+                <span className="truncate max-w-[120px]" title={currentTrack.album}>{currentTrack.album}</span>
               )}
             </div>
           </div>
-          <div className="text-right">
-            <div className="text-white font-mono text-sm">
-              {formatTime(displayedCurrentTime)} / {formatTime(duration)}
+          <div className="text-right min-w-[80px]">
+            <div className="text-white font-mono text-base tabular-nums select-none">
+              <span className="transition-all duration-300">{formatTime(displayedCurrentTime)}</span>
+              <span className="opacity-60"> / </span>
+              <span className="opacity-80">{formatTime(duration)}</span>
             </div>
-            <div className="text-neutral-400 text-xs">Duration</div>
+            <div className="text-neutral-400 text-xs mt-0.5">Duration</div>
           </div>
         </div>
 
         {/* Progress Bar */}
-        <div className="mb-4">
-          <div className="relative">
-            <div className="h-2 bg-neutral-800 rounded-lg overflow-hidden">
-              <div 
-                className="h-full bg-white rounded-lg transition-all duration-300"
-                style={{ 
-                  width: `${isFinite(duration) && duration > 0 ? (displayedCurrentTime / duration) * 100 : 0}%` 
+        <div className="mb-5">
+          <div className="relative group/progress-bar h-6 flex items-center">
+            {/* Progress Track */}
+            <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-1.5 rounded-lg overflow-hidden pointer-events-none" style={{zIndex: 1, background: '#262626'}}>
+              {/* White trail for music covered */}
+              <div
+                className="absolute left-0 top-0 h-full bg-white transition-all duration-500"
+                style={{
+                  width: `${isFinite(duration) && duration > 0 ? (displayedCurrentTime / duration) * 100 : 0}%`,
+                  zIndex: 2,
+                  borderRadius: '8px 0 0 8px'
+                }}
+              />
+              {/* Colored progress overlay */}
+              <div
+                className="absolute left-0 top-0 h-full bg-gradient-to-r from-primary to-white transition-all duration-500"
+                style={{
+                  width: `${isFinite(duration) && duration > 0 ? (displayedCurrentTime / duration) * 100 : 0}%`,
+                  opacity: 0.5,
+                  zIndex: 3,
+                  borderRadius: '8px 0 0 8px'
                 }}
               />
             </div>
             {/* Custom Thumb */}
-            <div 
-              className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full shadow-lg border border-neutral-300 transition-all duration-200 hover:scale-110"
-              style={{ 
+            <div
+              className="absolute top-1/2 left-0 z-10"
+              style={{
                 left: `${isFinite(duration) && duration > 0 ? (displayedCurrentTime / duration) * 100 : 0}%`,
                 transform: 'translate(-50%, -50%)'
               }}
-            />
+              aria-hidden="true"
+            >
+              <div className="w-5 h-5 bg-white rounded-full shadow-xl border-2 border-primary/30 transition-transform duration-200 group-hover/progress-bar:scale-110" />
+            </div>
+            {/* Range Input */}
             <input
               type="range"
               min={0}
@@ -1786,14 +2212,17 @@ export default function AudioPlayer({
               step={0.01}
               value={isFinite(displayedCurrentTime) ? displayedCurrentTime : 0}
               onChange={e => handleSeekWithEmit(Number(e.target.value))}
-              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+              className="absolute inset-0 w-full h-6 opacity-0 cursor-pointer z-20"
               disabled={disabled || !isController || !audioUrl}
+              aria-label="Seek audio"
+              tabIndex={disabled || !isController || !audioUrl ? -1 : 0}
+              style={{ WebkitAppearance: 'none', appearance: 'none' }}
             />
           </div>
         </div>
 
         {/* Controls */}
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-center">
           <PlayerControls
             isPlaying={isPlaying}
             onPlay={handlePlay}
@@ -1806,16 +2235,6 @@ export default function AudioPlayer({
             isController={isController}
             audioUrl={audioUrl}
           />
-          <div className="text-right">
-            <SyncStatusBanner
-              status={syncStatus}
-              showSmartSuggestion={smartResyncSuggestion}
-              syncQuality={syncQuality}
-              selectedSource={selectedSource}
-              isController={isController}
-              resyncStats={resyncStats}
-            />
-          </div>
         </div>
       </div>
       {import.meta.env.MODE === 'development' && showLatencyCal && (

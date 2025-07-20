@@ -53,6 +53,28 @@ const ResizableLayout = ({
     return () => window.removeEventListener('resize', handleResize)
   }, [initialLeftWidth, initialMiddleWidth, leftMinWidth, middleMinWidth])
 
+  // Responsive: track window width
+  const [windowWidth, setWindowWidth] = useState(window.innerWidth);
+  useEffect(() => {
+    const handleResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // Determine layout mode
+  const isTwoPanel = windowWidth <= 1400 && windowWidth >= 768;
+  const isThreePanel = windowWidth > 1400;
+  // Below 768px, let mobile layout handle it (SessionPage)
+
+  // Calculate widths for two-panel mode
+  let leftPanelWidth = leftWidth;
+  let middlePanelWidth = middleWidth;
+  if (isTwoPanel) {
+    // AudioPlayer: 40%, Playlist: 60%
+    leftPanelWidth = '40%';
+    middlePanelWidth = '60%';
+  }
+
   const handleMouseDown = (e, resizerType) => {
     e.preventDefault()
     if (resizerType === 'left') {
@@ -111,45 +133,49 @@ const ResizableLayout = ({
       {/* Left Panel */}
       <div 
         className="flex-shrink-0 overflow-hidden"
-        style={{ width: `${leftWidth}px` }}
+        style={{ width: isTwoPanel ? leftPanelWidth : `${leftWidth}px` }}
       >
         {leftPanel}
       </div>
 
-      {/* Left Resizer */}
-      <div
-        ref={leftResizerRef}
-        className={`w-1 cursor-col-resize transition-all duration-200 relative resizer ${
-          isDraggingLeft ? 'dragging' : ''
-        }`}
-        onMouseDown={(e) => handleMouseDown(e, 'left')}
-      >
-        <div className="absolute inset-0 w-6 -left-2.5 cursor-col-resize"></div>
-      </div>
+      {/* Left Resizer (hide in two-panel mode) */}
+      {!isTwoPanel && (
+        <div
+          ref={leftResizerRef}
+          className={`w-1 cursor-col-resize transition-all duration-200 relative resizer ${
+            isDraggingLeft ? 'dragging' : ''
+          }`}
+          onMouseDown={(e) => handleMouseDown(e, 'left')}
+        >
+          <div className="absolute inset-0 w-6 -left-2.5 cursor-col-resize"></div>
+        </div>
+      )}
 
       {/* Middle Panel */}
       <div 
         className="flex-shrink-0 overflow-hidden"
-        style={{ width: middleWidth ? `${middleWidth}px` : '50%' }}
+        style={{ width: isTwoPanel ? middlePanelWidth : (middleWidth ? `${middleWidth}px` : '50%') }}
       >
         {middlePanel}
       </div>
 
-      {/* Right Resizer */}
-      <div
-        ref={rightResizerRef}
-        className={`w-1 cursor-col-resize transition-all duration-200 relative resizer ${
-          isDraggingRight ? 'dragging' : ''
-        }`}
-        onMouseDown={(e) => handleMouseDown(e, 'right')}
-      >
-        <div className="absolute inset-0 w-6 -left-2.5 cursor-col-resize"></div>
-      </div>
-
-      {/* Right Panel */}
-      <div className="flex-1 overflow-hidden">
-        {rightPanel}
-      </div>
+      {/* Right Resizer and Right Panel (hide in two-panel mode) */}
+      {isThreePanel && (
+        <>
+          <div
+            ref={rightResizerRef}
+            className={`w-1 cursor-col-resize transition-all duration-200 relative resizer ${
+              isDraggingRight ? 'dragging' : ''
+            }`}
+            onMouseDown={(e) => handleMouseDown(e, 'right')}
+          >
+            <div className="absolute inset-0 w-6 -left-2.5 cursor-col-resize"></div>
+          </div>
+          <div className="flex-1 overflow-hidden">
+            {rightPanel}
+          </div>
+        </>
+      )}
     </div>
   )
 }

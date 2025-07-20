@@ -27,6 +27,8 @@ import { VariableSizeList as List } from 'react-window';
 import { ReducedMotionContext } from '../App';
 import MessageList from './MessageList';
 import PropTypes from 'prop-types';
+import { saveChatAppearanceSettings, loadChatAppearanceSettings } from '../utils/persistence';
+import useDeviceType from '../hooks/useDeviceType';
 
 const EMOJIS = [
   '👏',
@@ -364,10 +366,12 @@ const ChatBox = React.memo(function ChatBox({
   displayName, // <-- add this prop
   messages = [],
   clients = [],
-  mobile = false,
+  mobile: mobileProp = undefined, // allow override, but default to undefined
   isChatTabActive = false,
   markDelivered,
 }) {
+  const { isMobile } = useDeviceType();
+  const mobile = typeof mobileProp === 'boolean' ? mobileProp : isMobile;
   const reducedMotion = useContext(ReducedMotionContext); // <-- Move this to the top
   // --- All hooks must be called at the top level, before any returns or conditionals ---
 
@@ -1345,6 +1349,32 @@ const ChatBox = React.memo(function ChatBox({
   const memoizedHandleReport = useCallback((msg) => handleReport(msg), [handleReport]);
   const memoizedHandleCopy = useCallback((msg) => handleCopy(msg), [handleCopy]);
 
+  // Load persisted chat appearance settings on mount
+  useEffect(() => {
+    const persisted = loadChatAppearanceSettings();
+    if (persisted) {
+      if (persisted.selectedTheme) dispatch({ type: 'SET', payload: { selectedTheme: persisted.selectedTheme } });
+      if (persisted.chatBgColor) dispatch({ type: 'SET', payload: { chatBgColor: persisted.chatBgColor } });
+      if (persisted.bubbleColor) dispatch({ type: 'SET', payload: { bubbleColor: persisted.bubbleColor } });
+      if (persisted.chatBgImage) dispatch({ type: 'SET', payload: { chatBgImage: persisted.chatBgImage } });
+      if (persisted.bubbleRadius) dispatch({ type: 'SET', payload: { bubbleRadius: persisted.bubbleRadius } });
+      if (persisted.fontFamily) dispatch({ type: 'SET', payload: { fontFamily: persisted.fontFamily } });
+    }
+  }, []);
+
+  // Persist chat appearance settings whenever they change
+  useEffect(() => {
+    const settings = {
+      selectedTheme: state.selectedTheme,
+      chatBgColor: state.chatBgColor,
+      bubbleColor: state.bubbleColor,
+      chatBgImage: state.chatBgImage,
+      bubbleRadius: state.bubbleRadius,
+      fontFamily: state.fontFamily,
+    };
+    saveChatAppearanceSettings(settings);
+  }, [state.selectedTheme, state.chatBgColor, state.bubbleColor, state.chatBgImage, state.bubbleRadius, state.fontFamily]);
+
   // --- MOBILE LAYOUT ---
   if (mobile) {
     return (
@@ -1413,9 +1443,9 @@ const ChatBox = React.memo(function ChatBox({
         </div>
 
         {/* Messages */}
-        {messages.length > 30 ? (
+        {Array.isArray(messages) && messages.length > 30 ? (
           <MessageList
-            messages={messages}
+            messages={Array.isArray(messages) ? messages : []}
             clientId={clientId}
             displayName={displayName}
             clients={clients}
@@ -1440,202 +1470,295 @@ const ChatBox = React.memo(function ChatBox({
             className="flex-1 overflow-y-auto p-4 space-y-2 pb-36 scrollable-container"
             tabIndex="0"
           >
-            {messages.map((msg, i) => {
+            {(Array.isArray(messages) ? messages : []).map((msg, i) => {
               const isOwn = msg.sender === clientId;
               const groupStart = isGroupStart(messages, i);
               const groupEnd = isGroupEnd(messages, i);
               return (
-                <div
-                  key={msg.messageId || `${msg.sender}-${msg.timestamp}-${i}`}
-                  className={`relative flex items-end transition-all duration-300 group ${isOwn ? 'justify-end' : 'justify-start'} enhanced-bubble-appear ${mobile ? '' : ''} ${groupStart ? 'mt-3' : ''} ${groupEnd ? 'mb-4' : 'mb-2'} ${mobile ? 'no-select-mobile' : ''}`}
-                  onContextMenu={(e) => memoizedHandleContextMenu(e, msg)}
-                  onTouchStart={mobile ? (e) => handleBubbleTouchStart(e, msg) : undefined}
-                  onTouchEnd={mobile ? handleBubbleTouchEnd : undefined}
-                >
-                  {/* Emoji row above bubble if active */}
-                  {(state.emojiRowMsgId === msg.messageId ||
-                    (emojiRowExiting && state.emojiRowMsgId === msg.messageId)) && (
-                    <div
-                      className={`flex gap-0.5 mb-0.5 px-0.5 py-0.5 rounded-full bg-neutral-900/90 shadow z-20 absolute -top-12 ${isOwn ? 'right-0' : 'left-0'} w-max transition-all duration-200
-                        ${emojiRowExiting ? 'animate-fade-scale-out' : 'animate-fade-scale-in'}
-                      `}
-                    >
-                      {EMOJIS.slice(0, 8).map((emoji, idx) => (
-                        <button
-                          key={emoji}
-                          className="w-5 h-5 flex items-center justify-center text-[20px] hover:scale-110 transition-transform duration-100 focus:outline-none rounded-full bg-neutral-800 hover:bg-neutral-700 emoji-pop-in"
-                          onClick={() => handleEmojiReaction(emoji, msg)}
-                          tabIndex={0}
-                          style={{
-                            animationDelay: `${idx * 40}ms`,
-                          }}
-                        >
-                          {emoji}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-
-                  {!isOwn && groupStart && (
-                    <div className="mr-2 flex-shrink-0">
-                      <div className="w-8 h-8 bg-neutral-800 rounded-full flex items-center justify-center border border-neutral-700">
-                        {getAvatar(msg.sender)}
-                      </div>
-                    </div>
-                  )}
-                  <div className={`max-w-xs lg:max-w-md ${isOwn ? 'order-2' : 'order-1'}`}>
-                    {msg.reaction ? (
+                <div key={msg.messageId || `${msg.sender}-${msg.timestamp}-${i}`} className={`relative${groupEnd ? ' mb-4' : groupStart ? ' mt-3' : ''}`}>
+                  <div
+                    className={`flex items-end transition-all duration-300 group ${isOwn ? 'justify-end' : 'justify-start'} enhanced-bubble-appear ${mobile ? '' : ''} ${mobile ? 'no-select-mobile' : ''}`}
+                    onContextMenu={(e) => memoizedHandleContextMenu(e, msg)}
+                    onTouchStart={mobile ? (e) => handleBubbleTouchStart(e, msg) : undefined}
+                    onTouchEnd={mobile ? handleBubbleTouchEnd : undefined}
+                  >
+                    {/* Emoji row above bubble if active */}
+                    {(state.emojiRowMsgId === msg.messageId ||
+                      (emojiRowExiting && state.emojiRowMsgId === msg.messageId)) && (
                       <div
-                        className={`flex items-center gap-2 ${isOwn ? 'justify-end' : 'justify-start'}`}
+                        className={`flex gap-0.5 mb-0.5 px-0.5 py-0.5 rounded-full bg-neutral-900/90 shadow z-20 absolute -top-12 ${isOwn ? 'right-0' : 'left-0'} w-max transition-all duration-200
+                          ${emojiRowExiting ? 'animate-fade-scale-out' : 'animate-fade-scale-in'}
+                        `}
                       >
-                        <div className="bg-neutral-800 rounded-lg px-3 py-2 text-lg">
-                          {msg.reaction}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex flex-col">
-                        <div
-                          className={`inline-block max-w-[80vw] md:max-w-md rounded-xl p-1 px-2 pt-0 shadow-sm transition-all duration-200 group-hover:scale-[1.02] relative${messageReactions.get(msg.messageId)?.length > 0 ? ' mb-4' : ''}`}
-                          style={{
-                            background: state.bubbleColor,
-                            color: state.selectedTheme.bubbleText || '#fff',
-                            borderRadius: state.bubbleRadius,
-                            fontFamily: state.fontFamily,
-                            position: 'relative',
-                          }}
-                        >
-                          <div className="flex items-center gap-2 mb-1"></div>
-                          <div className="flex flex-row items-end w-full">
-                            {msg.deleted || !msg.message ? (
-                              <span className="flex-1 text-sm italic text-neutral-500 bg-neutral-800/80 rounded-lg px-3 py-2 select-none cursor-default">
-                                <svg
-                                  className="inline-block mr-1 mb-0.5"
-                                  width="16"
-                                  height="16"
-                                  viewBox="0 0 24 24"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  strokeWidth="2"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                >
-                                  <path d="M3 6h18" />
-                                  <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-                                  <line x1="10" y1="11" x2="10" y2="17" />
-                                  <line x1="14" y1="11" x2="14" y2="17" />
-                                </svg>
-                                This message was deleted
-                              </span>
-                            ) : (
-                              <span
-                                className={`flex-1 text-base break-words ${msg.message && msg.message.includes('@' + displayName) ? 'bg-yellow-400/20' : ''}`}
-                                style={{ color: state.selectedTheme.bubbleText || '#fff' }}
-                              >
-                                {memoizedHighlightMentions(msg.message, clients, displayName)}
-                                {msg.edited && (
-                                  <span className="text-xs text-neutral-400 ml-1">(edited)</span>
-                                )}
-                              </span>
-                            )}
-                            <span className="flex items-end gap-1 text-[11px] opacity-70 ml-4 relative top-[4px]">
-                              <span>
-                                {msg.timestamp
-                                  ? new Date(msg.timestamp).toLocaleTimeString([], {
-                                      hour: '2-digit',
-                                      minute: '2-digit',
-                                      hour12: true,
-                                    })
-                                  : 'now'}
-                              </span>
-                              {/* Delivery status for own messages */}
-                              {msg.sender === clientId &&
-                                (msg.read ? (
-                                  <span title="Read" className="">
-                                    <DoubleCheckBlue />
-                                  </span>
-                                ) : msg.delivered ? (
-                                  <span title="Delivered" className="">
-                                    <DoubleCheckGray />
-                                  </span>
-                                ) : (
-                                  <span title="Sent" className="">
-                                    <SingleCheck />
-                                  </span>
-                                ))}
-                            </span>
-                          </div>
-                        </div>
-
-                        {/* Emoji reactions display with absolute positioning at bottom right of bubble */}
-                        {messageReactions.get(msg.messageId) &&
-                          messageReactions.get(msg.messageId).length > 0 && (
-                            <div
-                              className={`absolute
-                              ${mobile ? 'bottom-[-12px] right-1 left-auto max-w-[90vw] px-0.5 py-0' : 'bottom-[-30px] right-0'}
-                              flex gap-0.5
-                              rounded-3xl
-                              bg-neutral-900/95
-                              backdrop-blur-sm
-                              shadow-lg
-                              border border-neutral-800/50
-                              w-max
-                              transition-all duration-200
-                              animate-fade-scale-in
-                              z-10
-                              ${mobile ? 'text-sm' : ''}
-                            `}
-                              style={mobile ? { minHeight: 8, minWidth: 0, fontSize: 14 } : {}}
-                            >
-                              {messageReactions.get(msg.messageId).map((reaction, idx) => {
-                                const hasReacted = reaction.users.includes(clientId);
-                                return (
-                                  <button
-                                    key={reaction.emoji}
-                                    className={`flex items-center gap-0.5
-                                    ${mobile ? 'px-1 py-0.5 min-w-[24px] text-sm' : 'p-0 text-xs'}
-                                    rounded-3xl
-                                    transition-all duration-200
-                                    hover:scale-110
-                                    focus:outline-none
-                                    emoji-reaction-button
-                                    emoji-pop-in
-                                    ${
-                                      hasReacted
-                                        ? 'bg-primary/20 text-primary border border-primary/30'
-                                        : 'bg-neutral-800/80 text-neutral-300 hover:bg-neutral-700/80'
-                                    }`}
-                                    onClick={() =>
-                                      hasReacted
-                                        ? handleRemoveEmojiReaction(reaction.emoji, msg)
-                                        : handleEmojiReaction(reaction.emoji, msg)
-                                    }
-                                    title={`${reaction.count} reaction${reaction.count !== 1 ? 's' : ''}${hasReacted ? ' - Click to remove' : ' - Click to add'}`}
-                                    style={{
-                                      ...(mobile
-                                        ? { fontSize: 14, minWidth: 24, minHeight: 24 }
-                                        : {}),
-                                      animationDelay: `${idx * 40}ms`,
-                                    }}
-                                  >
-                                    <span className={mobile ? 'text-sm' : 'text-sm'}>
-                                      {reaction.emoji}
-                                    </span>
-                                    {reaction.count > 1 && (
-                                      <span
-                                        className={`${mobile ? 'text-xs font-semibold ml-0.5' : 'text-xs font-medium'}`}
-                                      >
-                                        {reaction.count}
-                                      </span>
-                                    )}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          )}
+                        {EMOJIS.slice(0, 8).map((emoji, idx) => (
+                          <button
+                            key={emoji}
+                            className="w-5 h-5 flex items-center justify-center text-[20px] hover:scale-110 transition-transform duration-100 focus:outline-none rounded-full bg-neutral-800 hover:bg-neutral-700 emoji-pop-in"
+                            onClick={() => handleEmojiReaction(emoji, msg)}
+                            tabIndex={0}
+                            style={{
+                              animationDelay: `${idx * 40}ms`,
+                            }}
+                          >
+                            {emoji}
+                          </button>
+                        ))}
                       </div>
                     )}
+                    {/* Bubble content here (unchanged) */}
+                    {!isOwn && groupStart && (
+                      <div className="mr-2 flex-shrink-0">
+                        <div className="w-8 h-8 bg-neutral-800 rounded-full flex items-center justify-center border border-neutral-700">
+                          {getAvatar(msg.sender)}
+                        </div>
+                      </div>
+                    )}
+                    <div className={`max-w-xs lg:max-w-md ${isOwn ? 'order-2' : 'order-1'}`}>
+                      {msg.reaction ? (
+                        <div
+                          className={`flex items-center gap-2 ${isOwn ? 'justify-end' : 'justify-start'}`}
+                        >
+                          <div className="bg-neutral-800 rounded-lg px-3 py-2 text-lg">
+                            {msg.reaction}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col">
+                          <div
+                            className={`inline-block max-w-[80vw] md:max-w-md rounded-xl p-1 px-2 pt-0 shadow-sm transition-all duration-200 group-hover:scale-[1.02] relative${messageReactions.get(msg.messageId)?.length > 0 ? ' mb-4' : ''}`}
+                            style={{
+                              background: state.bubbleColor,
+                              color: state.selectedTheme.bubbleText || '#fff',
+                              borderRadius: state.bubbleRadius,
+                              fontFamily: state.fontFamily,
+                              position: 'relative',
+                            }}
+                          >
+                            <div className="flex items-center gap-2 mb-1"></div>
+                            <div className="flex flex-row items-end w-full">
+                              {msg.deleted || !msg.message ? (
+                                <span className="flex-1 text-sm italic text-neutral-500 bg-neutral-800/80 rounded-lg px-3 py-2 select-none cursor-default">
+                                  <svg
+                                    className="inline-block mr-1 mb-0.5"
+                                    width="16"
+                                    height="16"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="2"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                  >
+                                    <path d="M3 6h18" />
+                                    <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                                    <line x1="10" y1="11" x2="10" y2="17" />
+                                    <line x1="14" y1="11" x2="14" y2="17" />
+                                  </svg>
+                                  This message was deleted
+                                </span>
+                              ) : (
+                                <span
+                                  className={`flex-1 text-base break-words ${msg.message && msg.message.includes('@' + displayName) ? 'bg-yellow-400/20' : ''}`}
+                                  style={{ color: state.selectedTheme.bubbleText || '#fff' }}
+                                >
+                                  {memoizedHighlightMentions(msg.message, clients, displayName)}
+                                  {msg.edited && (
+                                    <span className="text-xs text-neutral-400 ml-1">(edited)</span>
+                                  )}
+                                </span>
+                              )}
+                              <span className="flex items-end gap-1 text-[11px] opacity-70 ml-4 relative top-[4px]">
+                                <span>
+                                  {msg.timestamp
+                                    ? new Date(msg.timestamp).toLocaleTimeString([], {
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                        hour12: true,
+                                      })
+                                    : 'now'}
+                                </span>
+                                {/* Delivery status for own messages */}
+                                {msg.sender === clientId &&
+                                  (msg.read ? (
+                                    <span title="Read" className="">
+                                      <DoubleCheckBlue />
+                                    </span>
+                                  ) : msg.delivered ? (
+                                    <span title="Delivered" className="">
+                                      <DoubleCheckGray />
+                                    </span>
+                                  ) : (
+                                    <span title="Sent" className="">
+                                      <SingleCheck />
+                                    </span>
+                                  ))}
+                              </span>
+                            </div>
+
+                            {/* Emoji reactions display with absolute positioning at bottom right of bubble */}
+                            {messageReactions.get(msg.messageId) &&
+                              messageReactions.get(msg.messageId).length > 0 && (
+                                <div
+                                  className={`absolute
+                                  ${mobile ? 'bottom-[-12px] right-1 left-auto max-w-[90vw] px-0.5 py-0' : 'bottom-[-30px] right-0'}
+                                  flex gap-0.5
+                                  rounded-3xl
+                                  bg-neutral-900/95
+                                  backdrop-blur-sm
+                                  shadow-lg
+                                  border border-neutral-800/50
+                                  w-max
+                                  transition-all duration-200
+                                  animate-fade-scale-in
+                                  z-10
+                                  ${mobile ? 'text-sm' : ''}
+                                `}
+                                  style={mobile ? { minHeight: 8, minWidth: 0, fontSize: 14 } : {}}
+                                >
+                                  {messageReactions.get(msg.messageId).map((reaction, idx) => {
+                                    const hasReacted = reaction.users.includes(clientId);
+                                    return (
+                                      <button
+                                        key={reaction.emoji}
+                                        className={`flex items-center gap-0.5
+                                        ${mobile ? 'px-1 py-0.5 min-w-[24px] text-sm' : 'p-0 text-xs'}
+                                        rounded-3xl
+                                        transition-all duration-200
+                                        hover:scale-110
+                                        focus:outline-none
+                                        emoji-reaction-button
+                                        emoji-pop-in
+                                        ${
+                                          hasReacted
+                                            ? 'bg-primary/20 text-primary border border-primary/30'
+                                            : 'bg-neutral-800/80 text-neutral-300 hover:bg-neutral-700/80'
+                                        }`}
+                                        onClick={() =>
+                                          hasReacted
+                                            ? handleRemoveEmojiReaction(reaction.emoji, msg)
+                                            : handleEmojiReaction(reaction.emoji, msg)
+                                        }
+                                        title={`${reaction.count} reaction${reaction.count !== 1 ? 's' : ''}${hasReacted ? ' - Click to remove' : ' - Click to add'}`}
+                                        style={{
+                                          ...(mobile
+                                            ? { fontSize: 14, minWidth: 24, minHeight: 24 }
+                                            : {}),
+                                          animationDelay: `${idx * 40}ms`,
+                                        }}
+                                      >
+                                        <span className={mobile ? 'text-sm' : 'text-sm'}>
+                                          {reaction.emoji}
+                                        </span>
+                                        {reaction.count > 1 && (
+                                          <span
+                                            className={`${mobile ? 'text-xs font-semibold ml-0.5' : 'text-xs font-medium'}`}
+                                          >
+                                            {reaction.count}
+                                          </span>
+                                        )}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
+                  {/* Context menu below bubble if active for this message */}
+                  {!mobile && state.contextMenu.visible && state.contextMenu.msg && state.contextMenu.msg.messageId === msg.messageId && (
+                    <div
+                      ref={contextMenuRef}
+                      className={`z-50 min-w-[140px] max-w-[220px] bg-neutral-900/95 border border-neutral-800 rounded-xl shadow-2xl py-2 px-0 text-sm text-white backdrop-blur-md transition-all duration-200 ease-out absolute ${isOwn ? 'right-0' : 'left-0'} w-max ${state.menuExiting ? 'animate-fade-scale-out' : 'animate-fade-scale-in'}`}
+                      style={{
+                        top: '100%',
+                        marginTop: '48px', // match emoji row gap
+                        boxShadow: '0 8px 32px 0 rgba(0,0,0,0.18), 0 1.5px 6px 0 rgba(0,0,0,0.10)',
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      role="menu"
+                      aria-label="Message options"
+                      tabIndex={-1}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Escape') dispatch({ type: 'SET', payload: { menuExiting: true } });
+                      }}
+                    >
+                      {/* Edit button */}
+                      {state.contextMenu.msg.sender === clientId &&
+                        !state.contextMenu.msg.reaction &&
+                        isDeletable(state.contextMenu.msg) && (
+                          <button
+                            className="block w-full text-left px-4 py-2 font-medium hover:bg-neutral-800/80 focus:bg-neutral-800/90 focus:outline-none transition-colors duration-150 rounded-md flex items-center justify-between gap-2"
+                            onClick={() => {
+                              dispatch({
+                                type: 'SET',
+                                payload: { menuExiting: true, emojiRowMsgId: null },
+                              });
+                              setTimeout(() => {
+                                memoizedHandleEdit(state.contextMenu.msg);
+                                setTimeout(() => {
+                                  chatInputRef.current?.focus();
+                                }, 50);
+                              }, 160);
+                            }}
+                          >
+                            <span>Edit</span>
+                            <FiEdit size={16} />
+                          </button>
+                        )}
+                      {/* Delete button */}
+                      {state.contextMenu.msg.sender === clientId &&
+                        !state.contextMenu.msg.reaction &&
+                        isDeletable(state.contextMenu.msg) && (
+                          <button
+                            className="block w-full text-left px-4 py-2 font-medium hover:bg-neutral-800/80 focus:bg-neutral-800/90 focus:outline-none transition-colors duration-150 rounded-md flex items-center justify-between gap-2 text-red-100"
+                            onClick={() => {
+                              dispatch({
+                                type: 'SET',
+                                payload: { menuExiting: true, emojiRowMsgId: null },
+                              });
+                              setTimeout(() => memoizedHandleDelete(state.contextMenu.msg), 160);
+                            }}
+                          >
+                            <span className="text-red-300">Delete</span>
+                            <FiTrash2 size={16} className="text-red-300" />
+                          </button>
+                        )}
+                      {!state.contextMenu.msg.reaction && (
+                        <button
+                          className="block w-full text-left px-4 py-2 hover:bg-neutral-800 flex items-center justify-between gap-2"
+                          onClick={() => {
+                            dispatch({ type: 'SET', payload: { menuExiting: true, emojiRowMsgId: null } });
+                            setTimeout(() => memoizedHandleReport(state.contextMenu.msg), 160);
+                          }}
+                        >
+                          <span>Report</span>
+                          <FiFlag size={16} />
+                        </button>
+                      )}
+                      {/* Copy option (always available if not a reaction and not deleted) */}
+                      {!state.contextMenu.msg.reaction &&
+                        !state.contextMenu.msg.deleted &&
+                        state.contextMenu.msg.message && (
+                          <button
+                            className="block w-full text-left px-4 py-2 hover:bg-neutral-800 flex items-center justify-between gap-2"
+                            onClick={() => {
+                              dispatch({ type: 'SET', payload: { menuExiting: true, emojiRowMsgId: null } });
+                              memoizedHandleCopy(state.contextMenu.msg);
+                              setTimeout(() => {
+                                dispatch({ type: 'SET', payload: { copyFeedback: true } });
+                                setTimeout(() => dispatch({ type: 'SET', payload: { copyFeedback: false } }), 1200);
+                              }, 160);
+                            }}
+                          >
+                            <span>Copy</span>
+                            <FiCopy size={16} />
+                          </button>
+                        )}
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -1938,7 +2061,7 @@ const ChatBox = React.memo(function ChatBox({
           </div>
         )}
         {/* Context Menu for mobile */}
-        {state.contextMenu.visible && state.contextMenu.msg && (
+        {mobile && state.contextMenu.visible && state.contextMenu.msg && (
           <>
             <div
               ref={contextMenuRef}
@@ -2392,9 +2515,9 @@ const ChatBox = React.memo(function ChatBox({
       </div>
 
       {/* Messages */}
-      {messages.length > 30 ? (
+      {Array.isArray(messages) && messages.length > 30 ? (
         <MessageList
-          messages={messages}
+          messages={Array.isArray(messages) ? messages : []}
           clientId={clientId}
           displayName={displayName}
           clients={clients}
@@ -2419,171 +2542,264 @@ const ChatBox = React.memo(function ChatBox({
           className="flex-1 overflow-y-auto p-4 space-y-2 pb-36 scrollable-container"
           tabIndex="0"
         >
-          {messages.map((msg, i) => {
+          {(Array.isArray(messages) ? messages : []).map((msg, i) => {
             const isOwn = msg.sender === clientId;
             const groupStart = isGroupStart(messages, i);
             const groupEnd = isGroupEnd(messages, i);
             return (
-              <div
-                key={msg.messageId || `${msg.sender}-${msg.timestamp}-${i}`}
-                className={`relative flex items-end transition-all duration-300 group ${isOwn ? 'justify-end' : 'justify-start'} enhanced-bubble-appear ${mobile ? '' : ''} ${groupStart ? 'mt-3' : ''} ${groupEnd ? 'mb-4' : 'mb-2'} ${mobile ? 'no-select-mobile' : ''}`}
-                onContextMenu={(e) => memoizedHandleContextMenu(e, msg)}
-                onTouchStart={mobile ? (e) => handleBubbleTouchStart(e, msg) : undefined}
-                onTouchEnd={mobile ? handleBubbleTouchEnd : undefined}
-              >
-                {/* Emoji row above bubble if active */}
-                {(state.emojiRowMsgId === msg.messageId ||
-                  (emojiRowExiting && state.emojiRowMsgId === msg.messageId)) && (
-                  <div
-                    className={`flex gap-2 mb-1 px-2 py-1 rounded-full bg-neutral-900/90 shadow z-20 absolute -top-12 ${isOwn ? 'right-0' : 'left-0'} w-max transition-all duration-200
-                      ${emojiRowExiting ? 'animate-fade-scale-out' : 'animate-fade-scale-in'}
-                    `}
-                  >
-                    {EMOJIS.slice(0, 8).map((emoji, idx) => (
-                      <button
-                        key={emoji}
-                        className="w-8 h-8 flex items-center justify-center text-xl transition-colors transition-shadow duration-200 focus:outline-none rounded-full bg-neutral-800 hover:bg-white hover:text-black hover:shadow-lg emoji-pop-in"
-                        onClick={() => handleEmojiReaction(emoji, msg)}
-                        tabIndex={0}
-                        style={{
-                          animationDelay: `${idx * 40}ms`,
-                        }}
-                      >
-                        {emoji}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                {!isOwn && groupStart && (
-                  <div className="mr-2 flex-shrink-0">
-                    <div className="w-8 h-8 bg-neutral-800 rounded-full flex items-center justify-center border border-neutral-700">
-                      {getAvatar(msg.sender)}
-                    </div>
-                  </div>
-                )}
-                <div className={`max-w-xs lg:max-w-md ${isOwn ? 'order-2' : 'order-1'}`}>
-                  {msg.reaction ? (
+              <div key={msg.messageId || `${msg.sender}-${msg.timestamp}-${i}`} className={`relative${groupEnd ? ' mb-4' : groupStart ? ' mt-3' : ''}`}>
+                <div
+                  className={`flex items-end transition-all duration-300 group ${isOwn ? 'justify-end' : 'justify-start'} enhanced-bubble-appear ${mobile ? '' : ''} ${mobile ? 'no-select-mobile' : ''}`}
+                  onContextMenu={(e) => memoizedHandleContextMenu(e, msg)}
+                  onTouchStart={mobile ? (e) => handleBubbleTouchStart(e, msg) : undefined}
+                  onTouchEnd={mobile ? handleBubbleTouchEnd : undefined}
+                >
+                  {/* Emoji row above bubble if active */}
+                  {(state.emojiRowMsgId === msg.messageId ||
+                    (emojiRowExiting && state.emojiRowMsgId === msg.messageId)) && (
                     <div
-                      className={`flex items-center gap-2 ${isOwn ? 'justify-end' : 'justify-start'}`}
+                      className={`flex gap-2 mb-1 px-2 py-1 rounded-full bg-neutral-900/90 shadow z-20 absolute -top-12 ${isOwn ? 'right-0' : 'left-0'} w-max transition-all duration-200
+                        ${emojiRowExiting ? 'animate-fade-scale-out' : 'animate-fade-scale-in'}
+                      `}
                     >
-                      <div className="bg-neutral-800 rounded-lg px-3 py-2 text-lg">
-                        {msg.reaction}
-                      </div>
+                      {EMOJIS.slice(0, 8).map((emoji, idx) => (
+                        <button
+                          key={emoji}
+                          className="w-8 h-8 flex items-center justify-center text-xl transition-colors transition-shadow duration-200 focus:outline-none rounded-full bg-neutral-800 hover:bg-white hover:text-black hover:shadow-lg emoji-pop-in"
+                          onClick={() => handleEmojiReaction(emoji, msg)}
+                          tabIndex={0}
+                          style={{
+                            animationDelay: `${idx * 40}ms`,
+                          }}
+                        >
+                          {emoji}
+                        </button>
+                      ))}
                     </div>
-                  ) : (
-                    <div className="flex flex-col">
-                      <div
-                        className={`inline-block max-w-[80vw] md:max-w-md rounded-xl p-1 px-2 pt-0 shadow-sm transition-all duration-200 group-hover:scale-[1.02] relative${messageReactions.get(msg.messageId)?.length > 0 ? ' mb-5' : ''}`}
-                        style={{
-                          background: state.bubbleColor,
-                          color: state.selectedTheme.bubbleText || '#fff',
-                          borderRadius: state.bubbleRadius,
-                          fontFamily: state.fontFamily,
-                          position: 'relative',
-                        }}
-                      >
-                        <div className="flex items-center gap-2 mb-1"></div>
-                        <div className="flex flex-row items-end w-full">
-                          {msg.deleted || !msg.message ? (
-                            <span className="flex-1 text-sm italic text-neutral-500 bg-neutral-800/80 rounded-lg px-3 py-2 select-none cursor-default">
-                              <svg
-                                className="inline-block mr-1 mb-0.5"
-                                width="16"
-                                height="16"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="2"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                              >
-                                <path d="M3 6h18" />
-                                <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
-                                <line x1="10" y1="11" x2="10" y2="17" />
-                                <line x1="14" y1="11" x2="14" y2="17" />
-                              </svg>
-                              This message was deleted
-                            </span>
-                          ) : (
-                            <span
-                              className={`flex-1 text-base break-words ${msg.message && msg.message.includes('@' + displayName) ? 'bg-yellow-400/20' : ''}`}
-                              style={{ color: state.selectedTheme.bubbleText || '#fff' }}
-                            >
-                              {memoizedHighlightMentions(msg.message, clients, displayName)}
-                              {msg.edited && (
-                                <span className="text-xs text-neutral-400 ml-1">(edited)</span>
-                              )}
-                            </span>
-                          )}
-                          <span className="flex items-end gap-1 text-[11px] opacity-70 ml-4 relative top-[4px]">
-                            <span>
-                              {msg.timestamp
-                                ? new Date(msg.timestamp).toLocaleTimeString([], {
-                                    hour: '2-digit',
-                                    minute: '2-digit',
-                                    hour12: true,
-                                  })
-                                : 'now'}
-                            </span>
-                            {/* Delivery status for own messages */}
-                            {msg.sender === clientId &&
-                              (msg.read ? (
-                                <span title="Read" className="">
-                                  <DoubleCheckBlue />
-                                </span>
-                              ) : msg.delivered ? (
-                                <span title="Delivered" className="">
-                                  <DoubleCheckGray />
-                                </span>
-                              ) : (
-                                <span title="Sent" className="">
-                                  <SingleCheck />
-                                </span>
-                              ))}
-                          </span>
-                        </div>
-
-                        {/* Emoji reactions display with absolute positioning at bottom right of bubble */}
-                        {messageReactions.get(msg.messageId) &&
-                          messageReactions.get(msg.messageId).length > 0 && (
-                            <div
-                              className={`absolute bottom-[-25px] right-0 flex gap-0.5 px-0.5 py-0.5 rounded-full bg-neutral-900/95 backdrop-blur-sm shadow-lg border border-neutral-800/50 w-max transition-all duration-200 animate-fade-scale-in z-10`}
-                            >
-                              {messageReactions.get(msg.messageId).map((reaction, idx) => {
-                                const hasReacted = reaction.users.includes(clientId);
-                                return (
-                                  <button
-                                    key={reaction.emoji}
-                                    className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs transition-all duration-200 hover:scale-110 focus:outline-none emoji-reaction-button emoji-pop-in ${
-                                      hasReacted
-                                        ? 'bg-primary/20 text-primary border border-primary/30'
-                                        : 'bg-neutral-800/80 text-neutral-300 hover:bg-neutral-700/80'
-                                    }`}
-                                    onClick={() =>
-                                      hasReacted
-                                        ? handleRemoveEmojiReaction(reaction.emoji, msg)
-                                        : handleEmojiReaction(reaction.emoji, msg)
-                                    }
-                                    title={`${reaction.count} reaction${reaction.count !== 1 ? 's' : ''}${hasReacted ? ' - Click to remove' : ' - Click to add'}`}
-                                    style={{
-                                      animationDelay: `${idx * 40}ms`,
-                                    }}
-                                  >
-                                    <span className="text-sm">{reaction.emoji}</span>
-                                    {reaction.count > 1 && (
-                                      <span className="text-xs font-medium">{reaction.count}</span>
-                                    )}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          )}
+                  )}
+                  {/* Bubble content here (unchanged) */}
+                  {!isOwn && groupStart && (
+                    <div className="mr-2 flex-shrink-0">
+                      <div className="w-8 h-8 bg-neutral-800 rounded-full flex items-center justify-center border border-neutral-700">
+                        {getAvatar(msg.sender)}
                       </div>
                     </div>
                   )}
+                  <div className={`max-w-xs lg:max-w-md ${isOwn ? 'order-2' : 'order-1'}`}>
+                    {msg.reaction ? (
+                      <div
+                        className={`flex items-center gap-2 ${isOwn ? 'justify-end' : 'justify-start'}`}
+                      >
+                        <div className="bg-neutral-800 rounded-lg px-3 py-2 text-lg">
+                          {msg.reaction}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col">
+                        <div
+                          className={`inline-block max-w-[80vw] md:max-w-md rounded-xl p-1 px-2 pt-0 shadow-sm transition-all duration-200 group-hover:scale-[1.02] relative${messageReactions.get(msg.messageId)?.length > 0 ? ' mb-4' : ''}`}
+                          style={{
+                            background: state.bubbleColor,
+                            color: state.selectedTheme.bubbleText || '#fff',
+                            borderRadius: state.bubbleRadius,
+                            fontFamily: state.fontFamily,
+                            position: 'relative',
+                          }}
+                        >
+                          <div className="flex items-center gap-2 mb-1"></div>
+                          <div className="flex flex-row items-end w-full">
+                            {msg.deleted || !msg.message ? (
+                              <span className="flex-1 text-sm italic text-neutral-500 bg-neutral-800/80 rounded-lg px-3 py-2 select-none cursor-default">
+                                <svg
+                                  className="inline-block mr-1 mb-0.5"
+                                  width="16"
+                                  height="16"
+                                  viewBox="0 0 24 24"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="2"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                >
+                                  <path d="M3 6h18" />
+                                  <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+                                  <line x1="10" y1="11" x2="10" y2="17" />
+                                  <line x1="14" y1="11" x2="14" y2="17" />
+                                </svg>
+                                This message was deleted
+                              </span>
+                            ) : (
+                              <span
+                                className={`flex-1 text-base break-words ${msg.message && msg.message.includes('@' + displayName) ? 'bg-yellow-400/20' : ''}`}
+                                style={{ color: state.selectedTheme.bubbleText || '#fff' }}
+                              >
+                                {memoizedHighlightMentions(msg.message, clients, displayName)}
+                                {msg.edited && (
+                                  <span className="text-xs text-neutral-400 ml-1">(edited)</span>
+                                )}
+                              </span>
+                            )}
+                            <span className="flex items-end gap-1 text-[11px] opacity-70 ml-4 relative top-[4px]">
+                              <span>
+                                {msg.timestamp
+                                  ? new Date(msg.timestamp).toLocaleTimeString([], {
+                                      hour: '2-digit',
+                                      minute: '2-digit',
+                                      hour12: true,
+                                    })
+                                  : 'now'}
+                              </span>
+                              {/* Delivery status for own messages */}
+                              {msg.sender === clientId &&
+                                (msg.read ? (
+                                  <span title="Read" className="">
+                                    <DoubleCheckBlue />
+                                  </span>
+                                ) : msg.delivered ? (
+                                  <span title="Delivered" className="">
+                                    <DoubleCheckGray />
+                                  </span>
+                                ) : (
+                                  <span title="Sent" className="">
+                                    <SingleCheck />
+                                  </span>
+                                ))}
+                            </span>
+                          </div>
+
+                          {/* Emoji reactions display with absolute positioning at bottom right of bubble */}
+                          {messageReactions.get(msg.messageId) &&
+                            messageReactions.get(msg.messageId).length > 0 && (
+                              <div
+                                className={`absolute bottom-[-25px] right-0 flex gap-0.5 px-0.5 py-0.5 rounded-full bg-neutral-900/95 backdrop-blur-sm shadow-lg border border-neutral-800/50 w-max transition-all duration-200 animate-fade-scale-in z-10`}
+                              >
+                                {messageReactions.get(msg.messageId).map((reaction, idx) => {
+                                  const hasReacted = reaction.users.includes(clientId);
+                                  return (
+                                    <button
+                                      key={reaction.emoji}
+                                      className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-xs transition-all duration-200 hover:scale-110 focus:outline-none emoji-reaction-button emoji-pop-in ${
+                                        hasReacted
+                                          ? 'bg-primary/20 text-primary border border-primary/30'
+                                          : 'bg-neutral-800/80 text-neutral-300 hover:bg-neutral-700/80'
+                                      }`}
+                                      onClick={() =>
+                                        hasReacted
+                                          ? handleRemoveEmojiReaction(reaction.emoji, msg)
+                                          : handleEmojiReaction(reaction.emoji, msg)
+                                      }
+                                      title={`${reaction.count} reaction${reaction.count !== 1 ? 's' : ''}${hasReacted ? ' - Click to remove' : ' - Click to add'}`}
+                                      style={{
+                                        animationDelay: `${idx * 40}ms`,
+                                      }}
+                                    >
+                                      <span className="text-sm">{reaction.emoji}</span>
+                                      {reaction.count > 1 && (
+                                        <span className="text-xs font-medium">{reaction.count}</span>
+                                      )}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
+                {/* Context menu above bubble if active for this message */}
+                {!mobile && state.contextMenu.visible && state.contextMenu.msg && state.contextMenu.msg.messageId === msg.messageId && (
+                  <div
+                    ref={contextMenuRef}
+                    className={`z-50 min-w-[140px] max-w-[220px] bg-neutral-900/95 border border-neutral-800 rounded-xl shadow-2xl py-2 px-0 text-sm text-white backdrop-blur-md transition-all duration-200 ease-out absolute ${isOwn ? 'right-0' : 'left-0'} w-max ${state.menuExiting ? 'animate-fade-scale-out' : 'animate-fade-scale-in'}`}
+                    style={{
+                      top: '100%',
+                      marginTop: '8px', // match emoji row gap
+                      boxShadow: '0 8px 32px 0 rgba(0,0,0,0.18), 0 1.5px 6px 0 rgba(0,0,0,0.10)',
+                    }}
+                    onClick={(e) => e.stopPropagation()}
+                    role="menu"
+                    aria-label="Message options"
+                    tabIndex={-1}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') dispatch({ type: 'SET', payload: { menuExiting: true } });
+                    }}
+                  >
+                    {/* Edit button */}
+                    {state.contextMenu.msg.sender === clientId &&
+                      !state.contextMenu.msg.reaction &&
+                      isDeletable(state.contextMenu.msg) && (
+                        <button
+                          className="block w-full text-left px-4 py-2 font-medium hover:bg-neutral-800/80 focus:bg-neutral-800/90 focus:outline-none transition-colors duration-150 rounded-md flex items-center justify-between gap-2"
+                          onClick={() => {
+                            dispatch({
+                              type: 'SET',
+                              payload: { menuExiting: true, emojiRowMsgId: null },
+                            });
+                            setTimeout(() => {
+                              memoizedHandleEdit(state.contextMenu.msg);
+                              setTimeout(() => {
+                                chatInputRef.current?.focus();
+                              }, 50);
+                            }, 160);
+                          }}
+                        >
+                          <span>Edit</span>
+                          <FiEdit size={16} />
+                        </button>
+                      )}
+                    {!state.contextMenu.msg.reaction && (
+                      <button
+                        className="block w-full text-left px-4 py-2 hover:bg-neutral-800 flex items-center justify-between gap-2"
+                        onClick={() => {
+                          dispatch({ type: 'SET', payload: { menuExiting: true, emojiRowMsgId: null } });
+                          setTimeout(() => memoizedHandleReport(state.contextMenu.msg), 160);
+                        }}
+                      >
+                        <span>Report</span>
+                        <FiFlag size={16} />
+                      </button>
+                    )}
+                    {/* Copy option (always available if not a reaction and not deleted) */}
+                    {!state.contextMenu.msg.reaction &&
+                      !state.contextMenu.msg.deleted &&
+                      state.contextMenu.msg.message && (
+                        <button
+                          className="block w-full text-left px-4 py-2 hover:bg-neutral-800 flex items-center justify-between gap-2"
+                          onClick={() => {
+                            dispatch({ type: 'SET', payload: { menuExiting: true, emojiRowMsgId: null } });
+                            memoizedHandleCopy(state.contextMenu.msg);
+                            setTimeout(() => {
+                              dispatch({ type: 'SET', payload: { copyFeedback: true } });
+                              setTimeout(() => dispatch({ type: 'SET', payload: { copyFeedback: false } }), 1200);
+                            }, 160);
+                          }}
+                        >
+                          <span>Copy</span>
+                          <FiCopy size={16} />
+                        </button>
+                      )}
+                                          {/* Delete button */}
+                    {state.contextMenu.msg.sender === clientId &&
+                      !state.contextMenu.msg.reaction &&
+                      isDeletable(state.contextMenu.msg) && (
+                        <button
+                          className="block w-full text-left px-4 py-2 font-medium hover:bg-neutral-800/80 focus:bg-neutral-800/90 focus:outline-none transition-colors duration-150 rounded-md flex items-center justify-between gap-2 text-red-100"
+                          onClick={() => {
+                            dispatch({
+                              type: 'SET',
+                              payload: { menuExiting: true, emojiRowMsgId: null },
+                            });
+                            setTimeout(() => memoizedHandleDelete(state.contextMenu.msg), 160);
+                          }}
+                        >
+                          <span className="text-red-300">Delete</span>
+                          <FiTrash2 size={16} className="text-red-300" />
+                        </button>
+                      )}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -2647,7 +2863,10 @@ const ChatBox = React.memo(function ChatBox({
                   state.editingId
                     ? handleEditCancel
                     : () =>
-                        dispatch({ type: 'SET', payload: { showPlusMenu: !state.showPlusMenu } })
+                        dispatch({
+                          type: 'SET',
+                          payload: { showPlusMenu: !state.showPlusMenu },
+                        })
                 }
                 tabIndex={0}
                 aria-label={state.editingId ? 'Cancel editing' : 'Add file'}
@@ -2862,26 +3081,23 @@ const ChatBox = React.memo(function ChatBox({
           </div>
         </div>
       )}
-      {state.contextMenu.visible && state.contextMenu.msg && (
+      {mobile && state.contextMenu.visible && state.contextMenu.msg && (
         <>
           <div
-            ref={(el) => {
-              contextMenuRef.current = el;
-              contextMenuTrapRef.current = el;
-            }}
+            ref={contextMenuRef}
             className={`fixed z-50 min-w-[140px] max-w-[220px] bg-neutral-900/95 border border-neutral-800 rounded-xl shadow-2xl py-2 px-0 text-sm text-white backdrop-blur-md transition-all duration-200 ease-out ${state.menuExiting ? 'animate-fade-scale-out' : 'animate-fade-scale-in'}`}
             style={{
-              top: state.contextMenu.y,
+              top: state.contextMenu.y + 60,
               left: state.contextMenu.x + 50,
               boxShadow: '0 8px 32px 0 rgba(0,0,0,0.18), 0 1.5px 6px 0 rgba(0,0,0,0.10)',
             }}
+            onClick={(e) => e.stopPropagation()}
             role="menu"
             aria-label="Message options"
             tabIndex={-1}
             onKeyDown={(e) => {
               if (e.key === 'Escape') dispatch({ type: 'SET', payload: { menuExiting: true } });
             }}
-            onClick={(e) => e.stopPropagation()}
           >
             {state.contextMenu.msg.sender === clientId &&
               !state.contextMenu.msg.reaction &&
@@ -2889,7 +3105,10 @@ const ChatBox = React.memo(function ChatBox({
                 <button
                   className="block w-full text-left px-4 py-2 font-medium hover:bg-neutral-800/80 focus:bg-neutral-800/90 focus:outline-none transition-colors duration-150 rounded-md flex items-center justify-between gap-2"
                   onClick={() => {
-                    dispatch({ type: 'SET', payload: { menuExiting: true, emojiRowMsgId: null } });
+                    dispatch({
+                      type: 'SET',
+                      payload: { menuExiting: true, emojiRowMsgId: null },
+                    });
                     setTimeout(() => {
                       memoizedHandleEdit(state.contextMenu.msg);
                       // Focus the input after the edit state is set
@@ -2923,7 +3142,10 @@ const ChatBox = React.memo(function ChatBox({
                 <button
                   className="block w-full text-left px-4 py-2 hover:bg-neutral-800 flex items-center justify-between gap-2"
                   onClick={() => {
-                    dispatch({ type: 'SET', payload: { menuExiting: true, emojiRowMsgId: null } });
+                    dispatch({
+                      type: 'SET',
+                      payload: { menuExiting: true, emojiRowMsgId: null },
+                    });
                     memoizedHandleCopy(state.contextMenu.msg);
                     setTimeout(() => {
                       if (contextMenuRef.current) {
@@ -2940,9 +3162,12 @@ const ChatBox = React.memo(function ChatBox({
               !state.contextMenu.msg.reaction &&
               isDeletable(state.contextMenu.msg) && (
                 <button
-                  className="block w-full text-left px-4 py-2 hover:bg-neutral-800 flex items-center justify-between gap-2 text-red-500"
+                  className="block w-full text-left px-4 py-2 hover:bg-neutral-800 flex items-center justify-between gap-2 text-red-100"
                   onClick={() => {
-                    dispatch({ type: 'SET', payload: { menuExiting: true, emojiRowMsgId: null } });
+                    dispatch({
+                      type: 'SET',
+                      payload: { menuExiting: true, emojiRowMsgId: null },
+                    });
                     setTimeout(() => memoizedHandleDelete(state.contextMenu.msg), 160);
                   }}
                 >

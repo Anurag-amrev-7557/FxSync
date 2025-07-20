@@ -52,6 +52,14 @@ function getSessionMessages(sessionId) {
   return session.messages;
 }
 
+// --- In-memory emoji reaction storage per session ---
+function getSessionReactions(sessionId) {
+  const session = getSession(sessionId);
+  if (!session) return null;
+  if (!session.reactions) session.reactions = {};
+  return session.reactions;
+}
+
 // --- Validation helpers ---
 function isValidSessionId(id) {
   return typeof id === 'string' && id.length >= 1 && id.length <= 64 && /^[a-zA-Z0-9_-]+$/.test(id);
@@ -605,6 +613,18 @@ export function setupSocket(io) {
       callback && callback({ success: true });
     });
 
+    // --- MESSAGE READ EVENT ---
+    socket.on('message_read', ({ sessionId, messageId, clientId }) => {
+      if (!sessionId || !messageId || !clientId) return;
+      const sessionMessages = getSessionMessages(sessionId);
+      if (!sessionMessages) return;
+      const msg = sessionMessages.find(m => m.messageId === messageId);
+      if (!msg) return;
+      // Optionally: track per-user read receipts for group chat
+      msg.read = true;
+      io.to(sessionId).emit('message_read', { messageId, reader: clientId });
+    });
+
     socket.on('reaction', ({ sessionId, reaction, sender } = {}) => {
       if (!sessionId || !reaction || typeof reaction !== 'string') {
         return;
@@ -877,8 +897,16 @@ export function setupSocket(io) {
         ...(extra && typeof extra === 'object' ? { extra } : {})
       };
 
-      io.to(sessionId).emit('queue_update', queue);
+      // Emit track_change and sync_state BEFORE queue_update for fastest listener update
       io.to(sessionId).emit('track_change', payload);
+      io.to(sessionId).emit('sync_state', {
+        isPlaying: session.isPlaying,
+        timestamp: session.timestamp,
+        lastUpdated: session.lastUpdated,
+        controllerId: session.controllerId,
+        serverTime: Date.now()
+      });
+      io.to(sessionId).emit('queue_update', queue);
       log('Track change in session', sessionId, ':', payload);
 
       // Emit sync_state after track change so all clients get the latest play state and timestamp
@@ -1007,6 +1035,78 @@ export function setupSocket(io) {
     socket.on('stop_typing', ({ sessionId, clientId }) => {
       if (!sessionId || !clientId) return;
       socket.to(sessionId).emit('user_stop_typing', { clientId });
+    });
+
+    // --- Emoji Reaction Events ---
+    socket.on('emoji_reaction', ({ sessionId, messageId, emoji, clientId, displayName }, callback) => {
+      if (!sessionId || !messageId || !emoji || !clientId) {
+        if (typeof callback === 'function') callback({ error: 'Invalid reaction data' });
+        return;
+      }
+      const reactions = getSessionReactions(sessionId);
+      if (!reactions) {
+        if (typeof callback === 'function') callback({ error: 'Session not found' });
+        return;
+      }
+      if (!reactions[messageId]) reactions[messageId] = [];
+      let reaction = reactions[messageId].find(r => r.emoji === emoji);
+      if (!reaction) {
+        reaction = { emoji, users: [], count: 0 };
+        reactions[messageId].push(reaction);
+      }
+      if (!reaction.users.includes(clientId)) {
+        reaction.users.push(clientId);
+        reaction.count = reaction.users.length;
+      }
+      // Remove duplicate users (defensive)
+      reaction.users = Array.from(new Set(reaction.users));
+      reaction.count = reaction.users.length;
+      // Broadcast updated reactions for this message
+      io.to(sessionId).emit('message_reactions_updated', {
+        messageId,
+        reactions: reactions[messageId],
+        addedBy: clientId,
+        joinedBy: displayName,
+      });
+      if (typeof callback === 'function') callback({ success: true, reactions: reactions[messageId] });
+    });
+
+    socket.on('remove_emoji_reaction', ({ sessionId, messageId, emoji, clientId }, callback) => {
+      if (!sessionId || !messageId || !emoji || !clientId) {
+        if (typeof callback === 'function') callback({ error: 'Invalid reaction data' });
+        return;
+      }
+      const reactions = getSessionReactions(sessionId);
+      if (!reactions) {
+        if (typeof callback === 'function') callback({ error: 'Session not found' });
+        return;
+      }
+      if (!reactions[messageId]) return;
+      let reaction = reactions[messageId].find(r => r.emoji === emoji);
+      if (reaction && reaction.users.includes(clientId)) {
+        reaction.users = reaction.users.filter(u => u !== clientId);
+        reaction.count = reaction.users.length;
+        // Remove reaction if no users left
+        if (reaction.count === 0) {
+          reactions[messageId] = reactions[messageId].filter(r => r.emoji !== emoji);
+        }
+        // Broadcast updated reactions for this message
+        io.to(sessionId).emit('message_reactions_updated', {
+          messageId,
+          reactions: reactions[messageId],
+          removedBy: clientId,
+        });
+        if (typeof callback === 'function') callback({ success: true, reactions: reactions[messageId] });
+      }
+    });
+
+    socket.on('get_session_reactions', ({ sessionId }, callback) => {
+      const reactions = getSessionReactions(sessionId);
+      if (!reactions) {
+        if (typeof callback === 'function') callback({ error: 'Session not found' });
+        return;
+      }
+      if (typeof callback === 'function') callback({ success: true, reactions });
     });
 
     socket.on('disconnect', () => {

@@ -9,6 +9,7 @@ import UploadForm from './UploadForm';
 import QueueList from './QueueList';
 import Toast from './Toast';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import useDeviceType from '../hooks/useDeviceType';
 
 // Helper to format duration in seconds to mm:ss
 function formatDuration(seconds) {
@@ -55,16 +56,9 @@ const SAMPLE_TRACKS = [
     title: 'Tumhare Hi Rahenge Hum',
     url: '/audio/uploads/samples/Tumhare%20Hi%20Rahenge%20Hum.mp3',
     type: 'sample',
-  },
-  {
-    title: 'Jaana Samjho Na',
-    url: '/audio/uploads/samples/Jaana%20Samjho%20Na.mp3',
-    type: 'sample',
-  },
-  {
-    title: 'Khoobsurat - Stree 2',
-    url: '/audio/uploads/samples/Khoobsurat%20-%20Stree%202.mp3',
-    type: 'sample',
+    artist: 'Varun Jain, Shilpa Rao',
+    album: 'Stree 2',
+    duration: 230.13877551020408
   },
 ];
 
@@ -80,6 +74,7 @@ const Playlist = React.memo(function Playlist({ queue = [], isController, socket
   const queryClient = useQueryClient();
   const [uploadError, setUploadError] = useState("");
   const [toast, setToast] = useState("");
+  const { isMobile, isDesktop } = useDeviceType();
 
   // Fetch all tracks with React Query
   const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
@@ -120,7 +115,7 @@ const Playlist = React.memo(function Playlist({ queue = [], isController, socket
   const [expandedFiles, setExpandedFiles] = useState(new Set());
 
   // Helper to detect desktop
-  const isDesktop = typeof window !== 'undefined' ? window.innerWidth >= 768 : false;
+  // const isDesktop = typeof window !== 'undefined' ? window.innerWidth >= 768 : false;
 
   // Move modal open/close handlers up
   const openUploadModal = useCallback(() => {

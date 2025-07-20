@@ -4,10 +4,13 @@
 const SYNC_CONFIG = {
   // Drift correction thresholds (in seconds)
   SMART_RESYNC_THRESHOLD: 0.25, // 250ms
-  DRIFT_THRESHOLD: 0.3, // 300ms (was 0.2)
+  DRIFT_THRESHOLD: 0.08, // 80ms (was 0.3) - more aggressive for faster correction
   DRIFT_JITTER_BUFFER: 4, // Number of consecutive drift checks before correction (was 2)
   RESYNC_COOLDOWN_MS: 5000, // 5 seconds
   PLAY_OFFSET: 0.04, // 40ms
+
+  // Periodic drift check interval (ms)
+  TIMER_INTERVAL: 350, // Lowered from default for faster emission
 
   // Ultra-precise lag detection parameters - BALANCED (less aggressive to prevent stuttering)
   ULTRA_LAG: {

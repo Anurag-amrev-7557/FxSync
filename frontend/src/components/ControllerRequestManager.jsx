@@ -220,7 +220,7 @@ export default function ControllerRequestManager({
   const offerDeclinedVisible = reducedMotion ? { isVisible: true, animationClass: '' } : useSmoothAppearance(showOfferDeclined, 400, 'animate-shake');
   
   return (
-    <div className={`space-y-3 ${(isController && (showRequestReceived || pendingControllerRequests.length > 0)) || (!isController && (requestStatus || requestResult)) ? 'border-t border-neutral-800 pt-4' : ''}`}>
+    <div className={`mb-4 ${isController && (showRequestReceived || pendingControllerRequests.length > 0) ? 'border-t border-neutral-800 pt-4' : ''}`}>
       {/* Request Result Notification */}
       {requestResult && (
         <div className={`rounded-lg p-3 ${requestResultVisible.animationClass} bg-neutral-900 border border-neutral-800`}> 
@@ -283,13 +283,13 @@ export default function ControllerRequestManager({
             <div className="flex items-center gap-2">
               <button
                 onClick={handleAcceptControllerOffer}
-                className="px-3 py-1.5 bg-white text-black border border-black text-xs rounded-md hover:border-2 hover:text-neutral-800 transition-all duration-200"
+                className="px-3 py-1.5 bg-white text-black border border-black text-xs rounded-full hover:border-2 hover:text-neutral-800 transition-all duration-200"
               >
                 Accept
               </button>
               <button
                 onClick={handleDeclineControllerOffer}
-                className="px-3 py-1.5 bg-white text-black border border-black text-xs rounded-md hover:border-2 hover:text-neutral-800 transition-all duration-200"
+                className="px-3 py-1.5 bg-white text-black border border-black text-xs rounded-full hover:border-2 hover:text-neutral-800 transition-all duration-200"
               >
                 Decline
               </button>
@@ -460,7 +460,7 @@ export default function ControllerRequestManager({
             {requestStatus === 'sent' && (
               <button
                 onClick={handleCancelRequest}
-                className="px-3 py-1.5 bg-white text-black border border-black text-xs rounded-md hover:border-2 hover:text-neutral-800 transition-all duration-200"
+                className="px-3 py-1.5 bg-white text-black border border-black text-xs rounded-full hover:border-2 hover:text-neutral-800 transition-all duration-200"
               >
                 Cancel
               </button>
@@ -501,13 +501,13 @@ export default function ControllerRequestManager({
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => handleApproveRequest(request.clientId)}
-                    className="px-3 py-1.5 bg-white text-black border border-black text-xs rounded-md hover:border-2 hover:text-neutral-800 transition-all duration-200"
+                    className="px-3 py-1.5 bg-white text-black border border-black text-xs rounded-full hover:border-2 hover:text-neutral-800 transition-all duration-200"
                   >
                     Approve
                   </button>
                   <button
                     onClick={() => handleDenyRequest(request.clientId)}
-                    className="px-3 py-1.5 bg-white text-black border border-black text-xs rounded-md hover:border-2 hover:text-neutral-800 transition-all duration-200"
+                    className="px-3 py-1.5 bg-white text-black border border-black text-xs rounded-full hover:border-2 hover:text-neutral-800 transition-all duration-200"
                   >
                     Deny
                   </button>
@@ -536,7 +536,8 @@ export default function ControllerRequestManager({
           </div>
           <button
             onClick={handleRequestController}
-            className="px-3 py-1.5 bg-white text-black border border-black text-xs rounded-md hover:border-2 hover:text-neutral-800 transition-all duration-200 flex items-center gap-1.5 border border-neutral-700/50 hover:border-neutral-600/50 hover:scale-105 shadow-md hover:shadow-lg"
+            className="px-3 py-0.5 bg-white text-black border border-black text-xs rounded-full hover:border-2 hover:text-neutral-800 transition-all duration-200 flex items-center gap-1.5 border border-neutral-700/50 hover:border-neutral-600/50 hover:scale-105 shadow-md hover:shadow-lg"
+            style={{ minHeight: 28, height: 28, lineHeight: '1.1', paddingTop: 2, paddingBottom: 2, paddingLeft: 12, paddingRight: 12, fontSize: 13 }}
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="transition-all duration-300 group-hover:scale-110">
               <path d="M9 12l2 2 4-4"></path>

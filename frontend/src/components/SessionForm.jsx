@@ -9,6 +9,7 @@ import SessionHero from './SessionHero';
 import SessionFormContainer from './SessionFormContainer';
 import SessionFooter from './SessionFooter';
 import SessionPage from './SessionPage';
+import useDeviceType from '../hooks/useDeviceType';
 
 // --- State management with useReducer ---
 // Refactored: Use useState for form state, refs for animation state
@@ -43,11 +44,7 @@ function formReducer(state, action) {
   }
 }
 
-// Utility function to detect mobile or tablet devices
-function isMobileOrTablet() {
-  if (typeof navigator === 'undefined') return false;
-  return /Mobi|Android|iPhone|iPad|iPod|Opera Mini|IEMobile|BlackBerry|webOS|Windows Phone|Tablet|Mobile/i.test(navigator.userAgent);
-}
+// Remove isMobileOrTablet utility and use the hook instead
 
 export default function SessionForm({ onJoin, currentSessionId }) {
   // Form state

@@ -25,12 +25,12 @@ const MessageList = React.memo(function MessageList({
 }) {
   // Always use virtualization
   const itemSize = () => 64;
-  if (messages.length > 0) {
+  if (Array.isArray(messages) && messages.length > 0) {
     return (
       <ListComponent
         ref={chatListRef}
         height={400}
-        itemCount={messages.length}
+        itemCount={Array.isArray(messages) ? messages.length : 0}
         itemSize={itemSize}
         width={'100%'}
         className="flex-1 overflow-y-auto p-4 space-y-2 pb-36 scrollable-container"
@@ -38,6 +38,7 @@ const MessageList = React.memo(function MessageList({
         aria-label="Chat messages list"
       >
         {({ index, style }) => {
+          if (!Array.isArray(messages) || !messages[index]) return null;
           const msg = messages[index];
           const isOwn = msg.sender === clientId;
           const groupStart = isGroupStart(messages, index);

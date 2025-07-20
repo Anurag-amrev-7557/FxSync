@@ -77,8 +77,8 @@ body {
 /* Smooth transitions for all elements */
 * {
   transition-property: color, background-color, border-color, text-decoration-color, fill, stroke, opacity, box-shadow, transform, filter, backdrop-filter;
-  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  transition-duration: 200ms;
 }
 
 /* Enhanced smooth transitions for specific elements */
@@ -94,7 +94,8 @@ body {
 .animate-slide-in-right,
 .animate-bounce-in {
   will-change: transform, opacity;
-  animation-duration: 0.4s;
+  transform: translateZ(0);
+  animation-duration: 0.5s;
   animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
@@ -265,8 +266,12 @@ body {
 }
 
 /* Hover effects */
-.hover-lift {
-  transition: transform 0.3s ease, box-shadow 0.3s ease;
+.hover-lift,
+.hover-lift-enhanced,
+.btn-primary,
+.btn-secondary,
+.btn-magnetic {
+  transition: all 0.3s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .hover-lift:hover {
@@ -337,10 +342,6 @@ body {
 }
 
 /* Enhanced hover effects */
-.hover-lift-enhanced {
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
 .hover-lift-enhanced:hover {
   transform: translateY(-4px) scale(1.02);
   box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
@@ -504,6 +505,21 @@ body {
   animation: bottom-up-scale-in 0.4s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+@keyframes fadeSlideInUp {
+  0% {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.controller-request-appear {
+  animation: fadeSlideInUp 0.6s cubic-bezier(0.22,1,0.36,1);
+  will-change: opacity, transform;
+}
+
 @media (pointer: coarse) {
   .no-select-mobile {
     user-select: none;
@@ -525,4 +541,68 @@ button:focus, button:focus-visible {
 @keyframes blink-cursor {
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }
+}
+
+/* Smooth dimension transitions for DeviceList */
+.smooth-list {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.smooth-list-item {
+  overflow: hidden;
+  max-height: 60px;
+  opacity: 1;
+  margin-bottom: 2px;
+  transition:
+    max-height 0.5s cubic-bezier(0.22,1,0.36,1),
+    opacity 0.5s cubic-bezier(0.22,1,0.36,1),
+    margin 0.5s cubic-bezier(0.22,1,0.36,1);
+  will-change: max-height, opacity, margin;
+  transform: translateZ(0);
+}
+.smooth-list-item-leave {
+  max-height: 0 !important;
+  opacity: 0 !important;
+  margin-bottom: 0 !important;
+  pointer-events: none;
+}
+.smooth-list-item-enter {
+  max-height: 60px;
+  opacity: 1;
+  margin-bottom: 2px;
+}
+
+@media (max-width: 600px) {
+  .mobile-make-controller {
+    padding-top: 2px !important;
+    padding-bottom: 2px !important;
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+    font-size: 11px !important;
+    min-height: 28px !important;
+    height: 28px !important;
+    line-height: 1.1 !important;
+  }
+  .mobile-make-controller span {
+    font-size: 11px !important;
+  }
+}
+
+.audio-player-portrait {
+  max-width: 420px;
+  margin: 32px auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  box-shadow: 0 8px 32px 0 rgba(0,0,0,0.18);
+  background: transparent;
+  border-radius: 1.25rem;
+  transition: max-width 0.3s cubic-bezier(0.22,1,0.36,1), margin 0.3s cubic-bezier(0.22,1,0.36,1);
+}
+@media (max-width: 1222px) and (min-width: 768px) {
+  .audio-player-portrait {
+    max-width: 95vw;
+    padding: 0;
+  }
 }

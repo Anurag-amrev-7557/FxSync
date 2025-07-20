@@ -47,11 +47,7 @@ export default function PlayerControls({
       </button>
       {/* Play/Pause Button */}
       <button
-        className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-200 ${
-          isPlaying 
-            ? 'bg-white text-black' 
-            : 'bg-primary hover:bg-primary/90 text-white'
-        } disabled:opacity-50 disabled:cursor-not-allowed`}
+        className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-200 bg-white text-black disabled:opacity-50 disabled:cursor-not-allowed`}
         onClick={isPlaying ? onPause : onPlay}
         disabled={disabled || !isController || !audioUrl}
         aria-label={isPlaying ? 'Pause' : 'Play'}

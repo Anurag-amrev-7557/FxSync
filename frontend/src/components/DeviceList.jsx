@@ -16,6 +16,7 @@ import { useStaggeredAnimation } from '../hooks/useSmoothAppearance';
 import { VariableSizeList as List } from 'react-window';
 import { ReducedMotionContext } from '../App';
 import PropTypes from 'prop-types';
+import useDeviceType from '../hooks/useDeviceType';
 
 // Helper: Minimalist & Modern Device avatar with status indicator (Black & White Dark Theme)
 function DeviceAvatar({ isController, isCurrentUser }) {
@@ -134,7 +135,7 @@ function MakeControllerButton({ onClick, displayName, className = "" }) {
   return (
     <button
       onClick={onClick}
-      className={`group flex items-center gap-2 px-3 py-1.5 rounded-full bg-neutral-900/80 hover:bg-primary/90 border border-primary/20 hover:border-primary/60 text-primary hover:text-white text-xs font-semibold transition-all duration-200 shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:bg-primary/80 active:scale-95 ${className}`}
+      className={`group flex items-center gap-2 px-3 py-1.5 rounded-full bg-neutral-900/80 hover:bg-primary/90 border border-primary/20 hover:border-primary/60 text-primary hover:text-white text-xs font-semibold transition-all duration-200 shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:bg-primary/80 active:scale-95 mobile-make-controller ${className}`}
       title={`Offer controller role to ${displayName}`}
       tabIndex={0}
       aria-label={`Offer controller role to ${displayName}`}
@@ -213,12 +214,56 @@ const DeviceListItem = React.memo(function DeviceListItem({ c, index, clientId, 
   );
 });
 
-const DeviceList = React.memo(function DeviceList({ clients = [], controllerClientId, clientId, socket, mobile = false, isAudioTabActive = false }) {
+// --- SmoothList for animated dimension changes ---
+function SmoothList({ items, renderItem, getKey }) {
+  const [renderedItems, setRenderedItems] = useState(items);
+  const [leaving, setLeaving] = useState([]);
+
+  // Handle items leaving (for exit animation)
+  useEffect(() => {
+    // Find removed items
+    const removed = renderedItems.filter(
+      oldItem => !items.some(newItem => getKey(newItem) === getKey(oldItem))
+    );
+    if (removed.length > 0) {
+      setLeaving(leaving => [...leaving, ...removed.map(getKey)]);
+      // Remove after animation
+      setTimeout(() => {
+        setRenderedItems(current => current.filter(item => !removed.includes(item)));
+        setLeaving(current => current.filter(key => !removed.map(getKey).includes(key)));
+      }, 500); // match transition duration
+    } else {
+      setRenderedItems(items);
+    }
+  }, [items, getKey, renderedItems]);
+
+  // Add new items immediately
+  useEffect(() => {
+    setRenderedItems(current => {
+      const currentKeys = current.map(getKey);
+      const newItems = items.filter(item => !currentKeys.includes(getKey(item)));
+      return [...current, ...newItems];
+    });
+  }, [items, getKey]);
+
+  return (
+    <ul className="smooth-list">
+      {renderedItems.map((item, idx) => {
+        const key = getKey(item);
+        const isLeaving = leaving.includes(key);
+        return renderItem(item, idx, isLeaving);
+      })}
+    </ul>
+  );
+}
+
+const DeviceList = React.memo(function DeviceList({ clients = [], controllerClientId, clientId, socket, dropdown = false }) {
   const isController = controllerClientId && clientId && controllerClientId === clientId;
   const [shouldAnimate, setShouldAnimate] = useState(false);
   const deviceListScrollRef = useRef(null);
   const deviceListVirtRef = useRef();
   const reducedMotion = useContext(ReducedMotionContext);
+  const { isMobile } = useDeviceType();
   // Add state for toast/snackbar feedback
   const [toast, setToast] = useState(null);
   // Add state for search/filter
@@ -267,24 +312,23 @@ const DeviceList = React.memo(function DeviceList({ clients = [], controllerClie
 
   // Trigger animation for mobile device list
   useEffect(() => {
-    if (mobile) {
+    if (isMobile) {
       const timer = setTimeout(() => {
         setShouldAnimate(true);
       }, 400); // was 100
       return () => clearTimeout(timer);
     }
-  }, [mobile]);
+  }, [isMobile]);
 
   // Trigger animation when audio tab becomes active
   useEffect(() => {
-    if (mobile && isAudioTabActive) {
-      setShouldAnimate(false);
+    if (isMobile) {
       const timer = setTimeout(() => {
-        setShouldAnimate(true);
+        setShouldAnimate(false);
       }, 400); // was 50
       return () => clearTimeout(timer);
     }
-  }, [mobile, isAudioTabActive]);
+  }, [isMobile]);
 
   // Restore scroll position for device list
   useEffect(() => {
@@ -326,163 +370,102 @@ const DeviceList = React.memo(function DeviceList({ clients = [], controllerClie
     });
   }, [socket, isController]);
 
-  // --- MOBILE LAYOUT ---
-  if (mobile) {
-    return (
-      <div className={`space-y-2 px-2 pt-2 pb-4 transition-all duration-500 ${shouldAnimate ? 'animate-slide-down-from-top' : 'opacity-0 -translate-y-full'}`}>
-        {/* Sticky header for mobile */}
-        <div className="sticky top-0 z-20 bg-gradient-to-b from-neutral-900/90 to-neutral-900/80 backdrop-blur border-b border-neutral-800 flex items-center gap-2 px-2 py-2 rounded-t-xl shadow-md">
-          <div className="w-7 h-7 bg-gradient-to-br from-neutral-800 to-neutral-900 rounded-lg flex items-center justify-center shadow">
-            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-400">
-              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
-              <circle cx="9" cy="7" r="4"></circle>
-              <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
-              <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
-            </svg>
-          </div>
-          <div>
-            <h3 className="text-white font-semibold text-base leading-tight tracking-wide">Devices</h3>
-            <p className="text-neutral-400 text-xs">{clients.length} device{clients.length !== 1 ? 's' : ''}</p>
-          </div>
-        </div>
-        {toast && (
-          <div className={`mx-2 mt-2 mb-1 px-3 py-2 rounded-lg text-sm font-medium shadow-lg transition-all duration-300
-            ${toast.type === 'success' ? 'bg-green-700/90 text-white' : 'bg-red-700/90 text-white'}`}
-            role="status"
-            aria-live="polite"
-          >
-            {toast.message}
-          </div>
-        )}
-        {/* Search Bar */}
-        {clients.length > 10 && (
-          <div className="px-2 pt-2">
-            <input
-              type="text"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search devices..."
-              className="w-full px-3 py-2 rounded-lg bg-neutral-800 text-white placeholder-neutral-400 border border-neutral-700 focus:outline-none focus:ring-2 focus:ring-primary/40 text-sm transition-all"
-              aria-label="Search devices"
-            />
-          </div>
-        )}
-        {/* Device List */}
-        <div className="bg-gradient-to-br from-neutral-900/90 to-neutral-900/80 rounded-xl border border-neutral-800 overflow-hidden shadow-xl scrollable-container" tabIndex="0" aria-label="Device list">
-          {sortedClients.length === 0 ? (
-            <EmptyState mobile />
-          ) : (
-            sortedClients.length > 10 ? (
-              <List
-                ref={deviceListVirtRef}
-                height={320}
-                itemCount={sortedClients.length}
-                itemSize={() => 56}
-                width={'100%'}
-                className="divide-y divide-neutral-800 scrollable-container"
-                tabIndex={0}
-                aria-label="Device list"
-              >
-                {renderVirtListItem}
-              </List>
-            ) : (
-              <ul className="divide-y divide-neutral-800">
-                {sortedClients.map((c, index) => (
-                  <DeviceListItem
-                    key={c.clientId || c.id}
-                    c={c}
-                    index={index}
-                    clientId={clientId}
-                    controllerClientId={controllerClientId}
-                    isController={isController}
-                    handleOfferController={handleOfferController}
-                    clientAnimations={clientAnimations}
-                  />
-                ))}
-              </ul>
-            )
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // --- DESKTOP LAYOUT (default) ---
+  // Always use the ultra-minimalist desktop layout for all views
   return (
-    <div className="space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-gradient-to-br from-neutral-800 to-neutral-900 rounded-lg flex items-center justify-center shadow">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-neutral-400">
-              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
-              <circle cx="9" cy="7" r="4"></circle>
-              <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
-              <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
-            </svg>
-          </div>
-          <div>
-            <h3 className="text-white font-semibold text-base tracking-wide">Connected Devices</h3>
-            <p className="text-neutral-400 text-xs">{clients.length} device{clients.length !== 1 ? 's' : ''}</p>
-          </div>
-        </div>
+    <div className="py-2">
+      <div className="flex items-center gap-2 px-3 pb-2">
+        <svg width="18" height="18" viewBox="0 0 24 24" className="text-neutral-400">
+          <circle cx="9" cy="7" r="4" stroke="currentColor" strokeWidth="2" fill="none"/>
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" stroke="currentColor" strokeWidth="2" fill="none"/>
+        </svg>
+        <span className="text-neutral-300 text-sm font-medium">
+          {clients.length} Device{clients.length !== 1 ? 's' : ''}
+        </span>
       </div>
-      {toast && (
-        <div className={`mb-2 px-4 py-2 rounded-lg text-sm font-medium shadow-lg transition-all duration-300
-          ${toast.type === 'success' ? 'bg-green-700/90 text-white' : 'bg-red-700/90 text-white'}`}
-          role="status"
-          aria-live="polite"
-        >
-          {toast.message}
-        </div>
-      )}
-      {/* Search Bar */}
       {clients.length > 10 && (
-        <div className="mb-2 px-2">
-          <input
-            type="text"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Search devices..."
-            className="w-full px-3 py-2 rounded-lg bg-neutral-800 text-white placeholder-neutral-400 border border-neutral-700 focus:outline-none focus:ring-2 focus:ring-primary/40 text-sm transition-all"
-            aria-label="Search devices"
-          />
-        </div>
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search..."
+          className="w-full px-3 py-2 rounded bg-transparent text-white placeholder-neutral-400 border-none focus:ring-2 focus:ring-primary/30 text-sm"
+          aria-label="Search devices"
+        />
       )}
-      {/* Device List */}
-      <div ref={deviceListScrollRef} className="bg-gradient-to-br from-neutral-900/80 to-neutral-900/60 rounded-xl border border-neutral-800 overflow-hidden shadow-xl scrollable-container" tabIndex="0" aria-label="Device list">
+      <div
+        ref={deviceListScrollRef}
+        className="overflow-y-auto"
+        tabIndex="0"
+        aria-label="Device list"
+        style={{ background: 'none', maxHeight: 340 }}
+      >
         {sortedClients.length === 0 ? (
-          <EmptyState />
+          <EmptyState mobile={isMobile} />
+        ) : sortedClients.length > 10 ? (
+          <List
+            ref={deviceListVirtRef}
+            height={320}
+            itemCount={sortedClients.length}
+            itemSize={() => 44}
+            width={'100%'}
+            className=""
+            tabIndex={0}
+            aria-label="Device list"
+          >
+            {renderVirtListItem}
+          </List>
         ) : (
-          sortedClients.length > 10 ? (
-            <List
-              ref={deviceListVirtRef}
-              height={320}
-              itemCount={sortedClients.length}
-              itemSize={() => 56}
-              width={'100%'}
-              className="divide-y divide-neutral-800 scrollable-container"
-              tabIndex={0}
-              aria-label="Device list"
-            >
-              {renderVirtListItem}
-            </List>
-          ) : (
-            <ul className="divide-y divide-neutral-800">
-              {sortedClients.map((c, index) => (
-                <DeviceListItem
+          <SmoothList
+            items={sortedClients}
+            getKey={c => c.clientId || c.id}
+            renderItem={(c, index, isLeaving) => {
+              const isCurrentUser = c.clientId === clientId;
+              const isController = controllerClientId === c.clientId;
+              const canMakeController = !isController && clientId === controllerClientId;
+              return (
+                <li
                   key={c.clientId || c.id}
-                  c={c}
-                  index={index}
-                  clientId={clientId}
-                  controllerClientId={controllerClientId}
-                  isController={isController}
-                  handleOfferController={handleOfferController}
-                  clientAnimations={clientAnimations}
-                />
-              ))}
-            </ul>
-          )
+                  className={`flex items-center justify-between gap-2 px-3 py-2 rounded-xl hover:bg-white/5 transition-colors duration-150 group smooth-list-item${isLeaving ? ' smooth-list-item-leave' : ' smooth-list-item-enter'}`}
+                  style={{
+                    borderBottom: index !== sortedClients.length - 1 ? '1px solid rgba(255,255,255,0.06)' : 'none'
+                  }}
+                >
+                  {/* Left: Avatar + Name + Tags */}
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <span className="flex-shrink-0 w-7 h-7 rounded-full bg-neutral-700 flex items-center justify-center text-xs text-white font-semibold">
+                      {c.displayName ? c.displayName.charAt(0).toUpperCase() : '?'}
+                    </span>
+                    <span className="text-neutral-200 text-sm truncate" title={c.displayName || c.clientId}>
+                      {c.displayName || c.clientId}
+                      {isCurrentUser && (
+                        <span className="ml-2 px-2 py-0.5 rounded bg-primary/20 text-primary text-xs font-medium">You</span>
+                      )}
+                      {isController && (
+                        <span className="ml-2 px-2 py-0.5 rounded bg-green-600/20 text-green-500 text-xs font-medium">Controller</span>
+                      )}
+                    </span>
+                  </div>
+                  {/* Right: Make Controller button (if present) */}
+                  {canMakeController && (
+                    <button
+                      type="button"
+                      className="ml-auto px-2 py-1 rounded-full border border-black text-black text-xs font-medium bg-white hover:bg-black hover:text-white transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-black/40 mobile-make-controller"
+                      style={{
+                        background: '#fff',
+                        color: '#000',
+                        borderColor: '#000',
+                        transition: 'opacity 0.2s cubic-bezier(.4,0,.2,1), background 0.2s cubic-bezier(.4,0,.2,1), color 0.2s cubic-bezier(.4,0,.2,1), border-color 0.2s cubic-bezier(.4,0,.2,1)'
+                      }}
+                      aria-label={`Make ${c.displayName || c.clientId} controller`}
+                      onClick={() => handleOfferController(c.clientId)}
+                    >
+                      Make Controller
+                    </button>
+                  )}
+                </li>
+              );
+            }}
+          />
         )}
       </div>
     </div>
@@ -519,8 +502,7 @@ DeviceList.propTypes = {
   controllerClientId: PropTypes.string,
   clientId: PropTypes.string,
   socket: PropTypes.object,
-  mobile: PropTypes.bool,
-  isAudioTabActive: PropTypes.bool,
+  dropdown: PropTypes.bool,
 };
 
 export default DeviceList;

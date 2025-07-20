@@ -503,32 +503,60 @@ input[type="range"]::-moz-range-thumb {
 }
 
 /* Animation utility classes */
+.animate-slide-in-right,
+.animate-fade-in-scale,
+.animate-bounce-in,
+.animate-shake,
+.animate-fade-in,
+.animate-scale-in,
+.animate-slide-in-left,
+.animate-slide-up-from-bottom,
+.animate-slide-down-from-top,
+.animate-glow-pulse,
+.animate-gradient-shift,
+.animate-float-up,
+.animate-particle-burst,
+.animate-magnetic-pull,
+.animate-ripple,
+.animate-glow-pulse-enhanced,
+.animate-text-reveal,
+.animate-stagger-in,
+.animate-cursor-blink,
+.animate-hover-lift-enhanced,
+.animate-parallax-float,
+.animate-wave,
+.animate-bounce-rotate,
+.animate-shimmer {
+  will-change: transform, opacity;
+  transform: translateZ(0);
+}
+
 .animate-slide-in-right {
-  animation: slide-in-right 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: slide-in-right 0.5s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .animate-fade-in-scale {
-  animation: fade-in-scale 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: fade-in-scale 0.5s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .animate-bounce-in {
-  animation: bounce-in 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: bounce-in 0.5s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .animate-shake {
-  animation: shake 0.3s ease-out;
+  animation: shake 0.3s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .animate-fade-in {
-  animation: fade-in 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: fade-in 0.5s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .animate-scale-in {
-  animation: scale-in 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: scale-in 0.5s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .animate-slide-in-left {
-  animation: slide-in-left 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: slide-in-left 0.5s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .animate-slide-up-from-bottom {
-  animation: slide-up-from-bottom 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: slide-up-from-bottom 0.5s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .animate-slide-down-from-top {
-  animation: slide-down-from-top 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: slide-down-from-top 0.5s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .animate-glow-pulse {
   animation: glow-pulse 2s ease-in-out infinite;
@@ -603,13 +631,11 @@ input[type="range"]::-moz-range-thumb {
 }
 
 /* Enhanced hover effects */
-.hover-lift {
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.hover-lift:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+.hover-lift,
+.card-enhanced,
+.btn-enhanced,
+.interactive-element {
+  transition: all 0.3s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* Gradient text effect */
@@ -681,8 +707,8 @@ input[type="range"]::-moz-range-thumb {
 /* Smooth transitions for all interactive elements */
 * {
   transition-property: color, background-color, border-color, text-decoration-color, fill, stroke, opacity, box-shadow, transform, filter, backdrop-filter;
-  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  transition-duration: 200ms;
 }
 
 /* Custom animations for enhanced visual appeal */
