@@ -21,6 +21,17 @@ export function removeFromQueue(sessionId, index) {
   return true;
 }
 
+export function removeFromQueueById(sessionId, trackId) {
+  const session = getSession(sessionId);
+  if (!session || !trackId) return false;
+  const idx = session.queue.findIndex(
+    t => t && (t.url === trackId || t.id === trackId || t.title === trackId)
+  );
+  if (idx === -1) return false;
+  session.queue.splice(idx, 1);
+  return true;
+}
+
 export function getQueue(sessionId) {
   const session = getSession(sessionId);
   return session ? session.queue : [];

@@ -612,18 +612,26 @@ function SessionPage({
 
   // Delayed removal state for swipe-to-remove animation
   const [pendingRemoveId, setPendingRemoveId] = useState(null);
+  const [pendingRemoveIds, setPendingRemoveIds] = useState([]); // Track all tracks pending removal
+
   const handleRemove = useCallback((trackId) => {
     setPendingRemoveId(trackId);
+    setPendingRemoveIds(ids => [...ids, trackId]);
   }, []);
+
   const confirmRemove = useCallback((trackId) => {
-    if (pendingRemoveId === null) return; // Prevent double remove
-    // Find the index of the track in the queue
-    const idx = queue.findIndex(item => (item.url || item.id || item.title) === trackId);
-    if (isController && socket && idx !== -1) {
-      socket.emit('remove_from_queue', { sessionId: currentSessionId, index: idx });
+    // Use trackId (url or id) for removal
+    if (isController && socket && trackId) {
+      socket.emit('remove_from_queue', { sessionId: currentSessionId, trackId });
     }
     setPendingRemoveId(null);
-  }, [setQueue, pendingRemoveId, isController, socket, currentSessionId, queue]);
+    // Do NOT remove from pendingRemoveIds here; wait for animation end
+  }, [setQueue, isController, socket, currentSessionId]);
+
+  // Called by QueueList/TrackRow after animation is done
+  const handleRemoveAnimationEnd = useCallback((trackId) => {
+    setPendingRemoveIds(ids => ids.filter(id => id !== trackId));
+  }, []);
 
   // Remove the useEffects that handle queue_update, track_change, and related queue/track state, as this is now in the hook
 

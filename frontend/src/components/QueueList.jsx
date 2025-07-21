@@ -28,6 +28,8 @@ const TrackRow = React.memo(function TrackRow({
   disableRemove,
   pendingRemoveId,
   confirmRemove,
+  onOptimisticRemove, // <-- new prop
+  isAnimatingOut, // <-- new prop
 }) {
   const trackId = item.url || item.id || item.title;
   const isSelected = selectedTrackIdx === idx;
@@ -37,6 +39,13 @@ const TrackRow = React.memo(function TrackRow({
   // Only animate on first appearance
   const hasAnimatedRef = useRef(new Set());
   const [shouldAnimate, setShouldAnimate] = useState(false);
+  const [fadeIn, setFadeIn] = useState(false); // NEW: for fade-in animation
+
+  useEffect(() => {
+    // Staggered fade-in for each row
+    const timeout = setTimeout(() => setFadeIn(true), 60 + idx * 40);
+    return () => clearTimeout(timeout);
+  }, [idx]);
 
   useEffect(() => {
     if (!hasAnimatedRef.current.has(trackId)) {
@@ -53,7 +62,8 @@ const TrackRow = React.memo(function TrackRow({
   const [touchStartX, setTouchStartX] = useState(null);
   const [touchDeltaX, setTouchDeltaX] = useState(0);
   const [swiping, setSwiping] = useState(false);
-  const [removing, setRemoving] = useState(false);
+  const [isRemoving, setIsRemoving] = useState(false);
+  const [collapsing, setCollapsing] = useState(false); // NEW: for collapse animation
   const [shouldAnimateBack, setShouldAnimateBack] = useState(false);
   const [swipeDirection, setSwipeDirection] = useState(null); // Store direction for removal animation
   const [removalDirection, setRemovalDirection] = useState(null); // Separate state for removal direction
@@ -62,12 +72,57 @@ const TrackRow = React.memo(function TrackRow({
   const removalSwipeX = useRef(null);
   const [removalKey, setRemovalKey] = useState(0);
   const lockedRemovalDirection = useRef(null);
+  const rowRef = useRef(null);
+  const collapseRef = useRef(null);
 
   // Only enable swipe on mobile
   const { isMobile } = useDeviceType();
 
+  // Listen for collapse transition end to remove from queue
+  useEffect(() => {
+    if (!collapsing) return;
+    const node = collapseRef.current;
+    if (!node) return;
+    let called = false;
+    const handleTransitionEnd = (e) => {
+      if (e.propertyName === 'height') {
+        console.log('[QueueList] transitionend: height, calling confirmRemove for', trackId);
+        called = true;
+        if (confirmRemove) confirmRemove(trackId);
+      }
+    };
+    node.addEventListener('transitionend', handleTransitionEnd);
+    // Fallback: call confirmRemove after 600ms if transitionend doesn't fire
+    const fallbackTimeout = setTimeout(() => {
+      if (!called) {
+        console.warn('[QueueList] Fallback: transitionend did not fire, calling confirmRemove for', trackId);
+        if (confirmRemove) confirmRemove(trackId);
+      }
+    }, 600);
+    return () => {
+      node.removeEventListener('transitionend', handleTransitionEnd);
+      clearTimeout(fallbackTimeout);
+    };
+  }, [collapsing, confirmRemove, trackId]);
+
+  // Listen for transition end to remove from queue (for swipe out)
+  useEffect(() => {
+    if (!isRemoving) return;
+    const node = rowRef.current;
+    if (!node) return;
+    const handleTransitionEnd = (e) => {
+      if (e.propertyName === 'transform') {
+        // Instead of removing immediately, start collapse
+        setIsRemoving(false);
+        setCollapsing(true);
+      }
+    };
+    node.addEventListener('transitionend', handleTransitionEnd);
+    return () => node.removeEventListener('transitionend', handleTransitionEnd);
+  }, [isRemoving]);
+
   const handleTouchStart = (e) => {
-    if (!isMobile || loading || disableRemove) return;
+    if (!isMobile || !isController || loading || disableRemove) return;
     if (e.touches && e.touches.length === 1) {
       setTouchStartX(e.touches[0].clientX);
       setSwiping(true);
@@ -78,7 +133,7 @@ const TrackRow = React.memo(function TrackRow({
   };
 
   const handleTouchMove = (e) => {
-    if (!isMobile || !swiping || loading || disableRemove) return;
+    if (!isMobile || !isController || !swiping || loading || disableRemove) return;
     if (e.touches && e.touches.length === 1 && touchStartX !== null) {
       const deltaX = e.touches[0].clientX - touchStartX;
       setTouchDeltaX(deltaX);
@@ -90,7 +145,7 @@ const TrackRow = React.memo(function TrackRow({
   };
 
   const handleTouchEnd = () => {
-    if (!isMobile || !swiping || loading || disableRemove) {
+    if (!isMobile || !isController || !swiping || loading || disableRemove) {
       setTouchStartX(null);
       setTouchDeltaX(0);
       setSwiping(false);
@@ -99,6 +154,7 @@ const TrackRow = React.memo(function TrackRow({
       setRemovalDirection(null);
       removalPositionRef.current = null;
       removalSwipeX.current = null;
+      lockedRemovalDirection.current = null;
       return;
     }
     if (Math.abs(touchDeltaX) > swipeThreshold) {
@@ -106,21 +162,8 @@ const TrackRow = React.memo(function TrackRow({
       const finalDirection = touchDeltaX > 0 ? 'right' : 'left';
       setSwipeDirection(finalDirection);
       setRemovalDirection(finalDirection); // Set removal direction
-      // Set removal position directly in ref to avoid state timing issues
-      removalPositionRef.current = finalDirection === 'right' ? 500 : -500;
-      removalSwipeX.current = removalPositionRef.current; // <--- set local ref
-      setRemoving(true);
-      setRemovalKey(k => k + 1); // <--- force re-render
-      setTimeout(() => {
-        handleRemove(item.url || item.id || item.title);
-        setRemoving(false);
-        setSwipeDirection(null);
-        setRemovalDirection(null);
-        removalPositionRef.current = null;
-        removalSwipeX.current = null; // <--- clear after animation
-        setTouchDeltaX(0);
-        setRemovalKey(k => k + 1); // <--- force re-render
-      }, 200); // allow animation
+      lockedRemovalDirection.current = finalDirection; // <-- lock direction for animation
+      setIsRemoving(true);
     } else {
       // Animate back to position
       setShouldAnimateBack(true);
@@ -131,7 +174,8 @@ const TrackRow = React.memo(function TrackRow({
         setRemovalDirection(null);
         removalPositionRef.current = null;
         removalSwipeX.current = null;
-        setRemovalKey(k => k + 1); // <--- force re-render
+        lockedRemovalDirection.current = null;
+        setRemovalKey(k => k + 1);
       }, 250);
     }
     setTouchStartX(null);
@@ -140,71 +184,75 @@ const TrackRow = React.memo(function TrackRow({
 
   // Style for swipe translation - completely isolate removal animation
   let swipeX = 0;
-  if (removing && removalSwipeX.current !== null) {
-    swipeX = removalSwipeX.current;
-  } else if (removing && removalPositionRef.current !== null) {
-    swipeX = removalPositionRef.current;
+  if (isRemoving) {
+    swipeX = lockedRemovalDirection.current === 'right' ? 500 : -500;
   } else if (shouldAnimateBack) {
     swipeX = 0;
   } else if (swiping) {
     swipeX = touchDeltaX;
   }
 
-  const swipeStyle = isMobile && (swiping || removing || shouldAnimateBack)
+  // Collapsing style
+  const collapseStyle = collapsing
     ? {
-        transform: `translateX(${swipeX}px)`,
+        height: 0,
+        margin: 0,
+        padding: 0,
+        overflow: 'hidden',
+        transition: 'height 0.44s cubic-bezier(0.22,0.61,0.36,1), margin 0.44s cubic-bezier(0.22,0.61,0.36,1), padding 0.44s cubic-bezier(0.22,0.61,0.36,1)',
+      }
+    : {
+        height: '5rem',
+        transition: 'height 0.44s cubic-bezier(0.22,0.61,0.36,1), margin 0.44s cubic-bezier(0.22,0.61,0.36,1), padding 0.44s cubic-bezier(0.22,0.61,0.36,1)',
+      };
+
+  const swipeStyle = isMobile && (swiping || isRemoving || shouldAnimateBack)
+    ? {
+        transform: `translateX(${swipeX}px)` + (isRemoving ? ' scale(0.92) translateY(8px)' : ''),
+        filter: isRemoving ? 'blur(1.5px) brightness(0.95)' : 'none',
+        boxShadow: isRemoving ? '0 8px 32px 0 rgba(0,0,0,0.18)' : '0 2px 8px 0 rgba(0,0,0,0.08)',
         transition:
-          removing
-            ? 'transform 0.35s cubic-bezier(0.4,0,0.2,1), opacity 0.25s cubic-bezier(0.4,0,0.2,1)'
+          isRemoving
+            ? 'transform 0.44s cubic-bezier(0.22,0.61,0.36,1), opacity 0.44s cubic-bezier(0.22,0.61,0.36,1), filter 0.44s cubic-bezier(0.22,0.61,0.36,1), box-shadow 0.44s cubic-bezier(0.22,0.61,0.36,1)'
             : shouldAnimateBack
               ? 'transform 0.25s cubic-bezier(0.4,0,0.2,1)'
               : 'none',
-        opacity: removing ? 0 : 1,
-        zIndex: 2,
-        position: 'relative',
-        willChange: 'transform',
+        opacity: isRemoving ? 0 : 1,
+        zIndex: 99,
+        position: isRemoving ? 'absolute' : 'relative',
+        left: 0,
+        width: '100%',
+        willChange: 'transform, opacity, filter, box-shadow',
       }
     : { position: 'relative', zIndex: 2 };
 
   // Only show red background if user has actually swiped (not just tapped)
-  const hasSwiped = Math.abs(touchDeltaX) > 10;
+  const hasSwiped = Math.abs(touchDeltaX) > 10 || isRemoving;
 
-  const iconDirection = (removing && lockedRemovalDirection.current)
+  const iconDirection = (isRemoving && lockedRemovalDirection.current)
     ? lockedRemovalDirection.current
     : swipeDirection;
 
-  React.useEffect(() => {
-    const trackId = item.url || item.id || item.title;
-    if (pendingRemoveId) {
+  useEffect(() => {
+    console.log('[TrackRow] Rendered for', trackId, 'collapsing:', collapsing);
+  }, [trackId, collapsing]);
+
+  // Add a handler for desktop delete
+  const handleDesktopRemove = (trackId) => {
+    if (!isMobile) {
+      setCollapsing(true);
     }
-    if (trackId === pendingRemoveId) {
-      setRemoving(true);
-      const direction = iconDirection;
-      setRemovalDirection(direction);
-      lockedRemovalDirection.current = direction; // lock the direction
-      removalPositionRef.current = direction === 'right' ? 500 : -500;
-      removalSwipeX.current = removalPositionRef.current;
-      setRemovalKey(k => k + 1); // Force re-render to trigger animation
-      setTimeout(() => {
-        confirmRemove(trackId);
-        setRemoving(false);
-        setSwipeDirection(null);
-        setRemovalDirection(null);
-        removalPositionRef.current = null;
-        removalSwipeX.current = null;
-        lockedRemovalDirection.current = null;
-        setRemovalKey(k => k + 1); // Force re-render
-      }, 200); // Allow animation
-    }
-  }, [pendingRemoveId, item, iconDirection, confirmRemove]);
+    handleRemove(trackId);
+  };
 
   return (
     <div
-      className="relative"
-      style={{ height: '5rem' }} // match h-20
+      ref={collapseRef}
+      className={`relative track-row-animate${fadeIn ? ' queue-fade-in' : ''}`}
+      style={collapseStyle}
     >
       {/* Red background revealed during swipe */}
-      {isMobile && (removing || hasSwiped) && (
+      {isMobile && (isRemoving || hasSwiped) && (
         <div
           className="absolute inset-0 flex items-center justify-between px-4 pointer-events-none"
           style={{ background: 'rgba(239, 68, 68, 0.15)', zIndex: 1 }}
@@ -221,7 +269,8 @@ const TrackRow = React.memo(function TrackRow({
       )}
       {/* Swipable item */}
       <div
-        className={`p-3 sm:p-4 h-20 sm:h-20 border-l-4 border-transparent hover:bg-primary/20 focus:bg-primary/30 transition-all duration-300 group cursor-pointer outline-none ${appliedAnimationClass} ${isSelected ? '' : ''} ${isMobile && (swiping || removing) ? 'hide-scrollbar' : ''}`}
+        ref={rowRef}
+        className={`p-3 sm:p-4 h-20 sm:h-20 border-l-4 border-transparent hover:bg-primary/20 focus:bg-primary/30 transition-all duration-300 group cursor-pointer outline-none ${appliedAnimationClass} ${isSelected ? '' : ''} ${isMobile && (swiping || isRemoving) ? 'hide-scrollbar' : ''} ${isRemoving ? 'removing' : ''}`}
         style={swipeStyle}
         onClick={() => isController && onSelectTrack && onSelectTrack(idx)}
         onKeyDown={e => {
@@ -357,7 +406,7 @@ const TrackRow = React.memo(function TrackRow({
           {isController && !isMobile && (
             <button
               className="opacity-100 sm:opacity-0 group-hover:opacity-100 focus:opacity-100 p-2 sm:p-2.5 text-neutral-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all duration-200 ml-1 sm:ml-0 min-w-[36px] min-h-[36px]"
-              onClick={e => { e.stopPropagation(); handleRemove(item.url || item.id || item.title); }}
+              onClick={e => { e.stopPropagation(); console.log('[TrackRow] Delete button clicked for', trackId); handleDesktopRemove(trackId); }}
               disabled={loading || disableRemove}
               title="Remove track"
               aria-label={`Remove track ${item.title || 'Unknown Track'}`}
@@ -433,9 +482,40 @@ function QueueList({
   queueScrollRef,
   pendingRemoveId,
   confirmRemove,
+  pendingRemoveIds = [],
+  onRemoveAnimationEnd,
 }) {
   // All hooks must be called before any early return
   const { isMobile } = useDeviceType();
+
+  // Local cache of animating-out items
+  const [optimisticRemovals, setOptimisticRemovals] = useState([]); // [{id, item, direction, uniqueKey}]
+
+  // Remove from cache after animation
+  const handleOptimisticRemove = useCallback((trackId, uniqueKey) => {
+    console.log('[QueueList] handleOptimisticRemove called for', trackId, 'uniqueKey:', uniqueKey);
+    setOptimisticRemovals(removals => removals.filter(r => r.uniqueKey !== uniqueKey));
+  }, []);
+
+  // When a swipe triggers removal, add to optimisticRemovals
+  const handleRemoveWithOptimism = useCallback((trackId, item, direction = 'right') => {
+    console.log('[QueueList] handleRemoveWithOptimism called for', trackId, 'direction:', direction);
+    setOptimisticRemovals(removals => {
+      // Use a unique key for each removal instance
+      const uniqueKey = `${trackId}-removing-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      if (removals.some(r => r.id === trackId)) return removals;
+      return [...removals, { id: trackId, item: { ...item }, direction, uniqueKey }];
+    });
+    if (handleRemove) {
+      console.log('[QueueList] handleRemove called for', trackId);
+      handleRemove(trackId);
+    }
+  }, [handleRemove]);
+
+  // Clear all optimisticRemovals when the queue updates to match backend exactly
+  useEffect(() => {
+    setOptimisticRemovals([]);
+  }, [queue]);
 
   // Now do early return
   if (!queue || queue.length === 0) {
@@ -452,6 +532,9 @@ function QueueList({
     );
   }
 
+  // Only render the backend queue, do not merge in optimisticRemovals
+  const fullList = queue.map((item, idx) => ({ item, idx, isAnimatingOut: false, uniqueKey: item.url || item.id || item.title }));
+
   // Single non-drag version for all users
   return (
     <div
@@ -466,20 +549,22 @@ function QueueList({
       aria-label="Queue list"
       data-testid="queue-list"
     >
-      {queue.map((item, idx) => (
+      {fullList.map(({ item, idx, isAnimatingOut, direction, uniqueKey }) => (
         <TrackRow
-          key={item.url || idx}
+          key={uniqueKey}
           item={item}
           idx={idx}
           selectedTrackIdx={selectedTrackIdx}
           queueAnimations={queueAnimations}
           onSelectTrack={onSelectTrack}
-          handleRemove={handleRemove}
+          handleRemove={(trackId) => handleRemoveWithOptimism(trackId, item, direction)}
           loading={loading}
           isController={isController}
           disableRemove={false}
           pendingRemoveId={pendingRemoveId}
           confirmRemove={confirmRemove}
+          isAnimatingOut={isAnimatingOut}
+          onOptimisticRemove={(trackId) => handleOptimisticRemove(trackId, uniqueKey)}
         />
       ))}
     </div>

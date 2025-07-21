@@ -1,5 +1,5 @@
 import { getSession, createSession, deleteSession, addClient, removeClient, setController, getAllSessions, getClients, updatePlayback, updateTimestamp, getClientIdBySocket, getSocketIdByClientId, addControllerRequest, removeControllerRequest, getPendingControllerRequests, clearExpiredControllerRequests } from './managers/sessionManager.js';
-import { addToQueue, removeFromQueue, getQueue } from './managers/queueManager.js';
+import { addToQueue, removeFromQueue, removeFromQueueById, getQueue } from './managers/queueManager.js';
 import { formatChatMessage, formatReaction } from './managers/chatManager.js';
 import { log } from './utils/utils.js';
 import { getSessionFiles, removeSessionFiles } from './managers/fileManager.js';
@@ -105,12 +105,14 @@ export function setupSocket(io) {
         return typeof callback === "function" && callback({ error: 'No sessionId provided' });
       }
       let session = getSession(sessionId);
+      let isNewSession = false;
       if (!session) {
         session = createSession(sessionId, socket.id, clientId);
         log('Session created:', sessionId);
+        isNewSession = true;
       }
-      // Auto-populate queue with all sample tracks if empty
-      if ((session.queue?.length ?? 0) === 0) {
+      // Auto-populate queue with all sample tracks if empty, but only on new session creation
+      if (isNewSession && (session.queue?.length ?? 0) === 0) {
         const samplesDir = path.join(process.cwd(), 'uploads', 'samples');
         if (fs.existsSync(samplesDir)) {
           const files = fs.readdirSync(samplesDir);
@@ -700,9 +702,9 @@ export function setupSocket(io) {
      * - Returns detailed result in callback.
      * - Logs for debugging.
      */
-    socket.on('remove_from_queue', ({ sessionId, index } = {}, callback) => {
+    socket.on('remove_from_queue', ({ sessionId, index, trackId } = {}, callback) => {
       // Validate input
-      if (!sessionId || typeof sessionId !== 'string' || typeof index !== 'number' || index < 0) {
+      if (!sessionId || typeof sessionId !== 'string') {
         return typeof callback === "function" && callback({ error: 'Invalid input' });
       }
       const session = getSession(sessionId);
@@ -710,15 +712,26 @@ export function setupSocket(io) {
       const clientId = getClientIdBySocket(sessionId, socket.id);
       if (session.controllerClientId !== clientId) return typeof callback === "function" && callback({ error: 'Not allowed' });
 
-      const queue = getQueue(sessionId) || [];
-      if (index >= queue.length) {
-        return typeof callback === "function" && callback({ error: 'Index out of bounds' });
+      let queue = getQueue(sessionId) || [];
+      let removedTrack = null;
+      let removed = false;
+      let removedIndex = -1;
+      // Prefer removal by trackId if provided
+      if (trackId) {
+        removedIndex = queue.findIndex(t => t && (t.url === trackId || t.id === trackId || t.title === trackId));
+        if (removedIndex === -1) {
+          return typeof callback === "function" && callback({ error: 'Track not found' });
+        }
+        removedTrack = queue[removedIndex];
+        removed = removeFromQueueById(sessionId, trackId);
+      } else if (typeof index === 'number' && index >= 0 && index < queue.length) {
+        removedTrack = queue[index];
+        removed = removeFromQueue(sessionId, index);
+        removedIndex = index;
+      } else {
+        return typeof callback === "function" && callback({ error: 'Invalid index or trackId' });
       }
-      const removedTrack = queue[index];
-
-      // Remove the track
-      const removed = removeFromQueue(sessionId, index);
-      if (!removed) return typeof callback === "function" && callback({ error: 'Invalid index' });
+      if (!removed) return typeof callback === "function" && callback({ error: 'Remove failed' });
 
       // --- Delete uploaded file if it's a user upload (not a sample) ---
       if (removedTrack && removedTrack.url && typeof removedTrack.url === 'string') {
@@ -752,11 +765,11 @@ export function setupSocket(io) {
       }
 
       const updatedQueue = getQueue(sessionId) || [];
-      log('[DEBUG] remove_from_queue: session', sessionId, 'removed index', index, 'track:', removedTrack, 'queue now:', updatedQueue);
+      log('[DEBUG] remove_from_queue: session', sessionId, 'removed', trackId ? `trackId ${trackId}` : `index ${removedIndex}`, 'track:', removedTrack, 'queue now:', updatedQueue);
 
       // If the removed track was the current track, emit a track_change to update current track
       let trackChangePayload = null;
-      if (typeof session.selectedTrackIdx === 'number' && session.selectedTrackIdx === index) {
+      if (typeof session.selectedTrackIdx === 'number' && session.selectedTrackIdx === removedIndex) {
         // If queue is not empty, select next track (or previous if last was removed), else null
         let newIdx = 0;
         if (updatedQueue.length === 0) {
@@ -770,7 +783,7 @@ export function setupSocket(io) {
           };
         } else {
           // If we removed the last track, move to previous; else, stay at same index
-          newIdx = Math.min(index, updatedQueue.length - 1);
+          newIdx = Math.min(removedIndex, updatedQueue.length - 1);
           session.selectedTrackIdx = newIdx;
           trackChangePayload = {
             idx: newIdx,
@@ -783,7 +796,7 @@ export function setupSocket(io) {
         io.to(sessionId).emit('track_change', trackChangePayload);
       } else if (
         typeof session.selectedTrackIdx === 'number' &&
-        index < session.selectedTrackIdx
+        removedIndex < session.selectedTrackIdx
       ) {
         // If a track before the current was removed, decrement selectedTrackIdx
         session.selectedTrackIdx = Math.max(0, session.selectedTrackIdx - 1);
@@ -793,7 +806,7 @@ export function setupSocket(io) {
 
       typeof callback === "function" && callback({
         success: true,
-        removedIndex: index,
+        removedIndex,
         removedTrack,
         queue: updatedQueue,
         ...(trackChangePayload ? { trackChange: trackChangePayload } : {})

@@ -404,14 +404,14 @@ const Playlist = React.memo(function Playlist({ queue = [], isController, socket
     };
   }, [allTracks.length]);
 
-  // Add all sample tracks to the queue by default if queue is empty
-  useEffect(() => {
-    if (queue.length === 0 && socket && sessionId) {
-      SAMPLE_TRACKS.forEach((track) => {
-        socket.emit('add_to_queue', { sessionId, ...track });
-      });
-    }
-  }, [queue.length, socket, sessionId]);
+  // Remove this useEffect to prevent re-adding sample tracks when queue is empty
+  // useEffect(() => {
+  //   if (queue.length === 0 && socket && sessionId) {
+  //     SAMPLE_TRACKS.forEach((track) => {
+  //       socket.emit('add_to_queue', { sessionId, ...track });
+  //     });
+  //   }
+  // }, [queue.length, socket, sessionId]);
 
   const handleAdd = useCallback(async (e) => {
     e.preventDefault();
@@ -439,14 +439,15 @@ const Playlist = React.memo(function Playlist({ queue = [], isController, socket
   }, [input, socket, sessionId]);
 
   // Update handleRemove to call the prop if provided
-  const handleRemoveInternal = useCallback((idx) => {
+  const handleRemoveInternal = useCallback((trackId) => {
     if (typeof handleRemove === 'function') {
-      handleRemove(idx);
+      handleRemove(trackId);
       return;
     }
     if (!socket) return;
     setLoading(true);
-    socket.emit('remove_from_queue', { sessionId, idx }, (res) => {
+    // Remove by trackId only
+    socket.emit('remove_from_queue', { sessionId, trackId }, (res) => {
       setLoading(false);
       if (res && res.error) {
         setToast(res.error);
