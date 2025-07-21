@@ -75,5 +75,34 @@ export default function useQueue(socket, initialQueue = [], pendingTrackIdxRef =
     }
   }, [queue, pendingTrackIdxRef]);
 
-  return [queue, setQueue, selectedTrackIdx, setSelectedTrackIdx, currentTrackOverride, setCurrentTrackOverride];
+  // Enhanced setQueue to safely update selectedTrackIdx on removal
+  const safeSetQueue = (updater) => {
+    setQueue(prevQueue => {
+      const newQueue = typeof updater === 'function' ? updater(prevQueue) : updater;
+      // Detect removal: if prevQueue is longer than newQueue
+      if (prevQueue.length > newQueue.length) {
+        // Find the removed index (first mismatch)
+        let removedIdx = -1;
+        for (let i = 0; i < prevQueue.length; i++) {
+          if (!newQueue[i] || prevQueue[i]?.url !== newQueue[i]?.url) {
+            removedIdx = i;
+            break;
+          }
+        }
+        if (removedIdx === -1) removedIdx = prevQueue.length - 1; // fallback: last
+        setSelectedTrackIdx(prevIdx => {
+          if (removedIdx < prevIdx) return prevIdx - 1;
+          if (removedIdx === prevIdx) {
+            if (newQueue.length > prevIdx) return prevIdx; // play next
+            if (newQueue.length > 0) return prevIdx - 1;   // play previous
+            return -1; // or 0, if you want to reset
+          }
+          return prevIdx;
+        });
+      }
+      return newQueue;
+    });
+  };
+
+  return [queue, safeSetQueue, selectedTrackIdx, setSelectedTrackIdx, currentTrackOverride, setCurrentTrackOverride];
 } 

@@ -9,7 +9,7 @@ import PropTypes from 'prop-types';
  * @param {function} props.onSeek
  * @param {boolean} props.disabled
  */
-export default function ProgressBar({ currentTime, duration, onSeek, disabled, onSeekStart, onSeekEnd, isDragging, tooltipTime }) {
+export default function ProgressBar({ currentTime, duration, onSeek, disabled, onSeekStart, onSeekEnd, isDragging, tooltipTime, thin }) {
   const percent = isFinite(duration) && duration > 0 ? (currentTime / duration) * 100 : 0;
   const [dragging, setDragging] = useState(false);
 
@@ -56,19 +56,21 @@ export default function ProgressBar({ currentTime, duration, onSeek, disabled, o
 
   return (
     <div className="relative">
-      <div className="h-1 bg-neutral-800 rounded-full overflow-hidden">
+      <div className={thin ? "h-0.5 bg-neutral-800 rounded-full overflow-hidden" : "h-1 bg-neutral-800 rounded-full overflow-hidden"}>
         <div 
-          className="h-full bg-white rounded-full transition-all duration-300"
+          className={thin ? "h-0.5 bg-white rounded-full transition-all duration-300" : "h-full bg-white rounded-full transition-all duration-300"}
           style={{ width: `${percent}%` }}
         />
       </div>
-      {/* Custom Thumb */}
-      <div 
-        className={`absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full shadow-lg border border-neutral-300 transition-all duration-200 ${dragging || isDragging ? 'ring-2 ring-primary scale-110' : 'hover:scale-110'}`}
-        style={{ left: `${percent}%`, transform: 'translate(-50%, -50%)' }}
-      />
-      {/* Tooltip on drag */}
-      {(dragging || isDragging) && (
+      {/* Custom Thumb (hide in thin mode) */}
+      {!thin && (
+        <div 
+          className={`absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full shadow-lg border border-neutral-300 transition-all duration-200 ${dragging || isDragging ? 'ring-2 ring-primary scale-110' : 'hover:scale-110'}`}
+          style={{ left: `${percent}%`, transform: 'translate(-50%, -50%)' }}
+        />
+      )}
+      {/* Tooltip on drag (hide in thin mode) */}
+      {!thin && (dragging || isDragging) && (
         <div
           className="absolute z-10 left-0"
           style={{
@@ -113,4 +115,5 @@ ProgressBar.propTypes = {
   onSeekEnd: PropTypes.func,
   isDragging: PropTypes.bool,
   tooltipTime: PropTypes.number,
+  thin: PropTypes.bool,
 }; 

@@ -25,10 +25,11 @@ export default function PlayerControls({
   canGoPrevious,
   disabled,
   isController,
-  audioUrl
+  audioUrl,
+  className = ''
 }) {
   return (
-    <div className="flex items-center gap-3">
+    <div className={`audio-player-control flex items-center gap-3 ${className}`}>
       {/* Previous Button */}
       <button
         className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-200 border-none bg-transparent p-0 ${

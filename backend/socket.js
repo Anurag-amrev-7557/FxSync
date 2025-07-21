@@ -122,11 +122,17 @@ export function setupSocket(io) {
               let artist = '';
               let album = '';
               let duration = 0;
+              let albumArt = null;
               try {
                 const metadata = await mm.parseFile(path.join(samplesDir, file));
                 artist = metadata.common.artist || '';
                 album = metadata.common.album || '';
                 duration = metadata.format.duration || 0;
+                if (metadata.common.picture && metadata.common.picture.length > 0) {
+                  const pic = metadata.common.picture[0];
+                  // Ensure pic.data is a Buffer and encode as base64
+                  albumArt = `data:${pic.format};base64,${Buffer.from(pic.data).toString('base64')}`;
+                }
               } catch (e) {
                 // Ignore errors, fallback to empty
               }
@@ -134,7 +140,7 @@ export function setupSocket(io) {
                 sessionId,
                 `/audio/uploads/samples/${encodeURIComponent(file)}`,
                 file.replace(/\.mp3$/i, ''),
-                { type: 'sample', artist, album, duration }
+                { type: 'sample', artist, album, duration, albumArt }
               );
             }
           }

@@ -17,6 +17,7 @@ import ErrorBanner from './AudioPlayer/ErrorBanner';
 import TrackInfo from './AudioPlayer/TrackInfo';
 import SyncStatusBanner from './AudioPlayer/SyncStatusBanner';
 import DiagnosticsPanel from './AudioPlayer/DiagnosticsPanel';
+import { motion } from 'framer-motion';
 
 // Add global error handlers
 if (typeof window !== 'undefined' && !window._audioPlayerErrorHandlerAdded) {
@@ -971,6 +972,27 @@ export default function AudioPlayer({
     const phaseRafRef = useRef(null);
     const [isDragging, setIsDragging] = useState(false);
     const [seekTooltipTime, setSeekTooltipTime] = useState(null);
+
+    const [compactAnimating, setCompactAnimating] = useState(false);
+    const [compactDirection, setCompactDirection] = useState('left');
+    const prevTrackIdx = useRef(selectedTrackIdx);
+    const prevTrackUrl = useRef(currentTrack?.url);
+    useEffect(() => {
+      if (currentTrack?.url !== prevTrackUrl.current) {
+        setCompactAnimating(true);
+        // Determine direction: next (left), prev (right)
+        if (selectedTrackIdx > prevTrackIdx.current) {
+          setCompactDirection('left');
+        } else if (selectedTrackIdx < prevTrackIdx.current) {
+          setCompactDirection('right');
+        }
+        setTimeout(() => {
+          prevTrackUrl.current = currentTrack?.url;
+          prevTrackIdx.current = selectedTrackIdx;
+          setCompactAnimating(false);
+        }, 320);
+      }
+    }, [currentTrack?.url, selectedTrackIdx]);
   
     // Call this when user starts dragging the seekbar
     const onSeekStart = () => {
@@ -1597,20 +1619,24 @@ export default function AudioPlayer({
       dragProgress = expanded ? 1 : 0;
     }
     // Interpolated values
-    const minHeight = 80, maxHeight = expanded ? 500 : 340; // Allow more height when expanded
+    const minHeight = 64, maxHeight = expanded ? 500 : 340; // Allow more height when expanded
     const interpHeight = minHeight + (maxHeight - minHeight) * dragProgress;
-    const interpPadding = 8 + (20 * dragProgress);
+    const interpPadding = 2.5;
+
+    // At the top of the AudioPlayer component, after other useState/useRef hooks
+    const swipeStartX = useRef(null);
+    const swipeDeltaX = useRef(0);
 
     if (loading) {
       return (
-        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 w-[95vw] max-w-sm z-40 pointer-events-auto">
+        <div className="fixed bottom-20 left-0 right-0 w-full z-40 pointer-events-auto px-3 sm:px-4">
           <LoadingSpinner size="md" text="Loading..." />
         </div>
       );
     }
     if (audioError) {
       return (
-        <div className="fixed bottom-20 left-1/2 -translate-x-1/2 w-[95vw] max-w-sm z-40 pointer-events-auto">
+        <div className="fixed bottom-20 left-0 right-0 w-full z-40 pointer-events-auto px-3 sm:px-4">
           <div className="p-4 bg-red-900/80 rounded-2xl shadow-xl border border-red-700 text-center animate-fade-in">
             <div className="flex flex-col items-center gap-2">
               <svg xmlns="http://www.w3.org/2000/svg" className="h-7 w-7 text-red-400" viewBox="0 0 20 20" fill="currentColor">
@@ -1624,7 +1650,7 @@ export default function AudioPlayer({
       );
     }
     return (
-      <div className="fixed bottom-20 left-1/2 w-[95vw] max-w-sm z-40 pointer-events-auto -translate-x-1/2">
+      <div className="fixed bottom-20 left-0 right-0 w-full z-40 pointer-events-auto px-3 sm:px-4">
         {/* Only one audio element for mobile, outside compact/expanded content */}
         {audioUrl && (
           <audio
@@ -1644,69 +1670,177 @@ export default function AudioPlayer({
         <div className={`${shouldAnimate ? 'animate-slide-up-from-bottom' : 'opacity-0 translate-y-full'}`}>
           <div
             className={
-              `bg-neutral-900/95 backdrop-blur-xl rounded-3xl shadow-2xl flex flex-col gap-2 border border-neutral-700/50 overflow-hidden` +
+              `bg-neutral-900/95 backdrop-blur-xl rounded-xl shadow-2xl flex flex-col gap-2 border border-neutral-700/50 overflow-hidden` +
               (dragging ? '' : ' transition-all duration-300')
             }
             style={{
               minHeight: expanded ? 'auto' : interpHeight,
               maxHeight: expanded ? 'none' : interpHeight + 60,
               paddingTop: interpPadding,
-              paddingBottom: expanded ? 12 : interpPadding,
+              paddingBottom: !expanded ? 0 : 12, // Remove bottom padding in compact state
+              width: '100%', // Use 100% to respect outer px-3 gap
+              maxWidth: '100%',
+              borderRadius: 18, // Restore subtle border radius
             }}
           >
-            {/* Drag handle / tap area */}
-            <div
-              className="flex justify-center items-center cursor-pointer select-none"
-              onClick={toggleExpanded}
-              onTouchStart={onHandleTouchStart}
-              onTouchMove={onHandleTouchMove}
-              onTouchEnd={onHandleTouchEnd}
-              onMouseDown={onHandleMouseDown}
-              style={{ touchAction: 'none' }}
-            >
-              <div className={`w-10 h-1 rounded-full transition-all duration-200 ${dragging ? 'bg-primary shadow-lg' : 'bg-neutral-600'}`} />
-            </div>
             {/* Interpolated content: fade/slide between compact and expanded */}
             <div style={{ position: 'relative', flex: 1 }}>
               {/* Compact content */}
-              <div
-                style={{
+              <motion.div
+                animate={{
                   opacity: 1 - dragProgress,
+                  y: dragProgress * 40,
+                  scale: 1 - dragProgress * 0.02,
+                }}
+                transition={{
+                  type: 'spring',
+                  stiffness: 340,
+                  damping: 32,
+                  mass: 0.9,
+                }}
+                style={{
                   pointerEvents: dragProgress < 0.5 ? 'auto' : 'none',
                   position: dragProgress > 0 ? 'absolute' : 'relative',
                   width: '100%',
                   top: 0,
                   left: 0,
-                  transition: dragging ? 'none' : 'opacity 0.25s',
+                  willChange: 'opacity, transform',
                 }}
               >
                 {/* ...compact view code... */}
                 {!expanded && (
-                  <div className="flex items-center gap-3 px-3 py-2">
-                    <PlayerControls
-                      isPlaying={isPlaying}
-                      onPlay={handlePlay}
-                      onPause={handlePause}
-                      onNext={handleNext}
-                      onPrevious={handlePrevious}
-                      canGoNext={canGoNext}
-                      canGoPrevious={canGoPrevious}
-                      disabled={disabled}
-                      isController={isController}
-                      audioUrl={audioUrl}
-                    />
-                    {/* Track Info & Progress */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="text-xs text-white font-medium truncate">
+                  <>
+                    <div
+                      className={`flex items-center px-2 pb-0 gap-2 w-full min-h-[56px] select-none transition-all duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${compactAnimating ? (compactDirection === 'left' ? 'opacity-0 -translate-x-8' : compactDirection === 'right' ? 'opacity-0 translate-x-8' : 'opacity-100 translate-x-0') : 'opacity-100 translate-x-0'}`}
+                      onTouchStart={e => {
+                        onHandleTouchStart && onHandleTouchStart(e);
+                        if (e.touches && e.touches.length === 1) {
+                          swipeStartX.current = e.touches[0].clientX;
+                          swipeDeltaX.current = 0;
+                        }
+                      }}
+                      onTouchMove={e => {
+                        onHandleTouchMove && onHandleTouchMove(e);
+                        if (swipeStartX.current !== null && e.touches && e.touches.length === 1) {
+                          swipeDeltaX.current = e.touches[0].clientX - swipeStartX.current;
+                        }
+                      }}
+                      onTouchEnd={e => {
+                        onHandleTouchEnd && onHandleTouchEnd(e);
+                        if (swipeStartX.current !== null) {
+                          if (swipeDeltaX.current < -40) {
+                            // Swipe left: next track
+                            handleNext && handleNext();
+                          } else if (swipeDeltaX.current > 40) {
+                            // Swipe right: previous track
+                            handlePrevious && handlePrevious();
+                          }
+                          swipeStartX.current = null;
+                          swipeDeltaX.current = 0;
+                        }
+                      }}
+                      onMouseDown={onHandleMouseDown}
+                      onClick={e => {
+                        // Only expand if not clicking on a control
+                        const tag = e.target.tagName.toLowerCase();
+                        const isButton = tag === 'button' || tag === 'svg' || tag === 'path' || tag === 'input';
+                        // Check for seekbar (input[type=range])
+                        if (isButton) return;
+                        if (e.target.closest('.audio-player-control, .audio-player-seekbar')) return;
+                        setExpanded(true);
+                      }}
+                      style={{ touchAction: 'none', WebkitUserSelect: 'none', userSelect: 'none', marginBottom: '-14.5px' }}
+                    >
+                      {/* Album Art or Icon */}
+                      <div className="flex-shrink-0 w-10 h-10 rounded-lg overflow-hidden bg-neutral-800 flex items-center justify-center">
+                        {currentTrack?.albumArt ? (
+                          <img
+                            src={currentTrack.albumArt}
+                            alt={displayedTitle ? `Album art for ${displayedTitle}` : 'Album Art'}
+                            className="w-11 h-11 object-cover rounded-lg shadow-md"
+                            style={{ minWidth: 44, minHeight: 44, background: '#18181b' }}
+                            loading="lazy"
+                            draggable={false}
+                          />
+                        ) : (
+                          <MusicIcon className="text-neutral-400 w-7 h-7" />
+                        )}
+                      </div>
+                      {/* Title and Artist */}
+                      <div className="flex flex-col min-w-0 flex-1 justify-center">
+                        <div className="text-sm text-white font-semibold truncate leading-tight">
                           {displayedTitle || 'Unknown Track'}
                         </div>
-                        <div className="text-[10px] text-neutral-400 font-mono ml-2 flex-shrink-0">
-                          {formatTime(displayedCurrentTime)} / {formatTime(duration)}
+                        <div className="w-full overflow-hidden relative" style={{ minHeight: 18 }}>
+                          {(() => {
+                            let artists = currentTrack?.artist;
+                            if (Array.isArray(artists)) artists = artists.filter(Boolean).join(', ');
+                            else if (typeof artists === 'string') artists = artists;
+                            else artists = '';
+                            const artistText = artists || '\u00A0';
+                            // Only scroll if text is longer than container
+                            return (
+                              <div
+                                className="text-xs text-neutral-400 leading-tight whitespace-nowrap"
+                                style={{
+                                  display: 'inline-block',
+                                  minWidth: '100%',
+                                  animation: artistText.length > 32 ? 'scroll-artists-x 7s linear infinite' : undefined,
+                                  willChange: artistText.length > 32 ? 'transform' : undefined,
+                                  paddingRight: 48,
+                                }}
+                              >
+                                {artistText}
+                              </div>
+                            );
+                          })()}
+                          <style>
+                            {`
+                              @keyframes scroll-artists-x {
+                                0% { transform: translateX(0); }
+                                10% { transform: translateX(0); }
+                                40% { transform: translateX(calc(-100% + 100vw - 48px)); }
+                                60% { transform: translateX(calc(-100% + 100vw - 48px)); }
+                                100% { transform: translateX(0); }
+                              }
+                            `}
+                          </style>
                         </div>
                       </div>
-                      
-                      {/* Compact Progress Bar */}
+                      {/* Controls */}
+                      <div className="flex-shrink-0 flex items-center ml-2">
+                        <PlayerControls
+                          isPlaying={isPlaying}
+                          onPlay={handlePlay}
+                          onPause={handlePause}
+                          onNext={handleNext}
+                          onPrevious={handlePrevious}
+                          canGoNext={canGoNext}
+                          canGoPrevious={canGoPrevious}
+                          disabled={disabled}
+                          isController={isController}
+                          audioUrl={audioUrl}
+                          compact
+                          className="audio-player-control"
+                        />
+                      </div>
+                    </div>
+                    {/* Thin Progress Bar at Bottom Edge with smooth appearance */}
+                    <div
+                      className={`w-full transition-all duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]`}
+                      style={{
+                        height: '2px',
+                        position: 'absolute',
+                        bottom: '-4.5px',
+                        opacity: !expanded ? 1 - dragProgress : 0,
+                        transform: `translateY(${dragProgress * 12}px)`,
+                        pointerEvents: !expanded ? 'auto' : 'none',
+                        transition: dragging
+                          ? 'none'
+                          : 'opacity 0.32s cubic-bezier(0.22,1,0.36,1), transform 0.32s cubic-bezier(0.22,1,0.36,1)',
+                        willChange: 'opacity, transform',
+                      }}
+                    >
                       <ProgressBar
                         currentTime={displayedCurrentTime}
                         duration={duration}
@@ -1716,52 +1850,101 @@ export default function AudioPlayer({
                         onSeekEnd={onSeekEnd}
                         isDragging={isDragging}
                         tooltipTime={seekTooltipTime}
+                        thin
+                        className="audio-player-seekbar"
                       />
                     </div>
-                  </div>
+                  </>
                 )}
-              </div>
+              </motion.div>
               {/* Expanded content */}
-              <div
-                style={{
+              <motion.div
+                onTouchStart={onHandleTouchStart}
+                onTouchMove={onHandleTouchMove}
+                onTouchEnd={onHandleTouchEnd}
+                onMouseDown={onHandleMouseDown}
+                animate={{
                   opacity: dragProgress,
+                  y: (1 - dragProgress) * 40,
+                  scale: 0.98 + dragProgress * 0.02,
+                }}
+                transition={{
+                  type: 'spring',
+                  stiffness: 340,
+                  damping: 32,
+                  mass: 0.9,
+                }}
+                style={{
                   pointerEvents: dragProgress > 0.5 ? 'auto' : 'none',
                   position: dragProgress < 1 ? 'absolute' : 'relative',
                   width: '100%',
                   top: 0,
                   left: 0,
-                  transition: dragging ? 'none' : 'opacity 0.25s',
+                  willChange: 'opacity, transform',
+                  touchAction: 'none',
+                  WebkitUserSelect: 'none',
+                  userSelect: 'none',
                 }}
               >
                 {/* ...expanded view code... */}
                 {expanded && (
-                  <div className="px-4 py-3 space-y-4 pb-0" style={{ paddingBottom: 0 }}>
-                    {/* Header Section */}
-                    <div className="space-y-3">
-                      {/* Track Title */}
-                      <div className="text-center">
-                        <TrackInfo
-                          title={displayedTitle}
-                          animating={animating}
-                          direction={direction}
-                        />
-                      </div>
-                      {/* Reformatted metadata row */}
-                      <div className="text-[11px] text-neutral-400 truncate flex flex-row flex-wrap gap-x-2 gap-y-0.5 items-center justify-center">
-                        {(() => {
-                          let artists = currentTrack?.artist;
-                          if (Array.isArray(artists)) artists = artists.filter(Boolean);
-                          else if (typeof artists === 'string') artists = artists.split(',').map(a => a.trim()).filter(Boolean);
-                          else artists = [];
-                          const shown = artists.slice(0, 2);
-                          return shown.map((a, i) => (
-                            <span key={i} className="truncate max-w-[40vw]" title={a}>{a}</span>
-                          )).concat(artists.length > 2 ? <span key="more">...</span> : []);
-                        })()}
-                        {currentTrack?.artist && currentTrack?.album && <span>•</span>}
-                        {currentTrack?.album && (
-                          <span className="truncate max-w-[40vw]" title={currentTrack.album}>{currentTrack.album}</span>
+                  <div className="px-4 space-y-4 pb-0" style={{ paddingBottom: 0 }}>
+                    {/* Album Art, Title, and Artist in a row (expanded state) */}
+                    <div className="flex items-center gap-4 w-full min-h-[80px] select-none transition-all duration-300 -ml-1 -mb-3">
+                      {/* Album Art */}
+                      <div className="flex-shrink-0 w-12 h-12 rounded-xl overflow-hidden bg-neutral-800 flex items-center justify-center">
+                        {currentTrack?.albumArt ? (
+                          <img
+                            src={currentTrack.albumArt}
+                            alt={displayedTitle ? `Album art for ${displayedTitle}` : 'Album Art'}
+                            className="w-12 h-12 object-cover rounded-xl shadow-md"
+                            style={{ minWidth: 64, minHeight: 64, background: '#18181b' }}
+                            loading="lazy"
+                            draggable={false}
+                          />
+                        ) : (
+                          <MusicIcon className="text-neutral-400 w-10 h-10" />
                         )}
+                      </div>
+                      {/* Title and Artist */}
+                      <div className="flex flex-col min-w-0 flex-1 justify-center">
+                        <div className="text-lg text-white font-semibold truncate leading-tight">
+                          {displayedTitle || 'Unknown Track'}
+                        </div>
+                        <div className="w-full overflow-hidden relative" style={{ minHeight: 22 }}>
+                          {(() => {
+                            let artists = currentTrack?.artist;
+                            if (Array.isArray(artists)) artists = artists.filter(Boolean).join(', ');
+                            else if (typeof artists === 'string') artists = artists;
+                            else artists = '';
+                            const artistText = artists || '\u00A0';
+                            return (
+                              <div
+                                className="text-sm text-neutral-400 leading-tight whitespace-nowrap"
+                                style={{
+                                  display: 'inline-block',
+                                  minWidth: '100%',
+                                  animation: artistText.length > 32 ? 'scroll-artists-x 7s linear infinite' : undefined,
+                                  willChange: artistText.length > 32 ? 'transform' : undefined,
+                                  paddingRight: 48,
+                                }}
+                              >
+                                {artistText}
+                              </div>
+                            );
+                          })()}
+                          <style>
+                            {`
+                              @keyframes scroll-artists-x {
+                                0% { transform: translateX(0); }
+                                10% { transform: translateX(0); }
+                                40% { transform: translateX(calc(-100% + 100vw - 48px)); }
+                                60% { transform: translateX(calc(-100% + 100vw - 48px)); }
+                                100% { transform: translateX(0); }
+                              }
+                            `}
+                          </style>
+                        </div>
                       </div>
                     </div>
 
@@ -1845,7 +2028,7 @@ export default function AudioPlayer({
                     </div>
                   </div>
                 )}
-              </div>
+              </motion.div>
             </div>
           </div>
         </div>
@@ -1915,19 +2098,38 @@ export default function AudioPlayer({
           )}
           <div className="w-full rounded-xl p-5 shadow-lg flex flex-col items-center gap-6 transition-all duration-500 group/audio-player-main">
             {/* Album Art */}
-            <div className="w-16 h-16 bg-primary/30 rounded-2xl flex items-center justify-center overflow-hidden shadow-md transition-all duration-300">
+            <div
+              className="album-art-container bg-primary/30 rounded-2xl flex items-center justify-center overflow-hidden shadow-md transition-all duration-300"
+              style={{
+                width: 'min(180px, 32vw)',
+                height: 'min(180px, 32vw)',
+                maxWidth: 220,
+                maxHeight: 220,
+                minWidth: 96,
+                minHeight: 96,
+                aspectRatio: '1/1',
+              }}
+            >
               {currentTrack?.albumArt ? (
                 <img
                   src={currentTrack.albumArt}
                   alt={currentTrack.title ? `Album art for ${currentTrack.title}` : "Album Art"}
-                  className="w-32 h-32 object-cover rounded-2xl transition-all duration-300"
-                  style={{ minWidth: 128, minHeight: 128 }}
+                  className="object-cover w-full h-full rounded-2xl transition-all duration-300"
+                  style={{
+                    maxWidth: '100%',
+                    maxHeight: '100%',
+                    minWidth: 0,
+                    minHeight: 0,
+                    aspectRatio: '1/1',
+                    background: '#18181b',
+                  }}
                   loading="lazy"
                   draggable={false}
                 />
               ) : (
                 <div
-                  className="w-28 h-28 rounded-2xl flex items-center justify-center flex-shrink-0 transition-all duration-300 bg-white shadow-md"
+                  className="w-3/4 h-3/4 rounded-2xl flex items-center justify-center flex-shrink-0 transition-all duration-300 bg-white shadow-md"
+                  style={{ minWidth: 64, minHeight: 64 }}
                 >
                   <MusicIcon
                     className="text-black"

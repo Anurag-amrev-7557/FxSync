@@ -66,6 +66,8 @@ export default function SessionForm({ onJoin, currentSessionId }) {
   // Add a ref to store the current AbortController
   const fetchControllerRef = useRef(null);
 
+  const { isMobile, isTablet } = useDeviceType();
+
   // Load recent rooms from localStorage
   useEffect(() => {
     const saved = localStorage.getItem('fxsync_recent_rooms');
@@ -116,7 +118,7 @@ export default function SessionForm({ onJoin, currentSessionId }) {
   const throttledClick = useCallback(
     throttle((e) => {
       if (formState.reducedMotion) return;
-      if (isMobileOrTablet()) return; // Disable particles on mobile/tablet
+      if (isMobile || isTablet) return; // Disable particles on mobile/tablet
       const now = Date.now();
       const particles = Array.from({ length: 8 }, (_, i) => ({
         created: now,
@@ -138,7 +140,7 @@ export default function SessionForm({ onJoin, currentSessionId }) {
       }));
       particlesRef.current.push(...particles);
     }, 32),
-    [formState.reducedMotion]
+    [formState.reducedMotion, isMobile, isTablet]
   );
 
   // Animation effects

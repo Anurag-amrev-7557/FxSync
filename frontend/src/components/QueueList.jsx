@@ -289,12 +289,23 @@ const TrackRow = React.memo(function TrackRow({
         onTouchEnd={handleTouchEnd}
       >
         <div className="flex items-center gap-2 sm:gap-3 relative z-10">
-          <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 transition-all duration-300 ${isSelected ? 'bg-white' : 'bg-neutral-800'}`}
+          <div className={`w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0 transition-all duration-300 ${isSelected ? 'bg-white' : 'bg-neutral-800'}`}
             title={item.title || 'Unknown Track'}
           >
-            <span style={{ marginLeft: '-2px', display: 'inline-flex' }}>
-              <MusicIcon className={isSelected ? 'text-black drop-shadow-lg' : 'text-neutral-400'} />
-            </span>
+            {item.albumArt ? (
+              <img
+                src={item.albumArt}
+                alt={item.title ? `Album art for ${item.title}` : 'Album Art'}
+                className="w-10 h-10 object-cover rounded-lg transition-all duration-300 shadow-md"
+                style={{ minWidth: 32, minHeight: 32, background: isSelected ? '#fff' : '#18181b' }}
+                loading="lazy"
+                draggable={false}
+              />
+            ) : (
+              <span style={{ marginLeft: '-2px', display: 'inline-flex' }}>
+                <MusicIcon className={isSelected ? 'text-black drop-shadow-lg' : 'text-neutral-400'} />
+              </span>
+            )}
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1 sm:gap-2 mb-0.5 sm:mb-1">
