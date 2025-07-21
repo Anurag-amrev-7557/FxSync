@@ -1,6 +1,26 @@
 import React, { useCallback, useMemo, useState, useRef, useEffect } from 'react';
 import { MusicIcon, RemoveIcon } from './Icons';
 import useDeviceType from '../hooks/useDeviceType';
+// Add Vibrant color extraction
+let Vibrant = null;
+async function loadVibrant() {
+  if (Vibrant) return Vibrant;
+  if (window.Vibrant) {
+    Vibrant = window.Vibrant;
+    return Vibrant;
+  }
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/node-vibrant@3.1.6/dist/vibrant.min.js';
+    script.onload = () => {
+      Vibrant = window.Vibrant;
+      resolve(Vibrant);
+    };
+    script.onerror = reject;
+    document.body.appendChild(script);
+  });
+}
+const colorCache = {};
 
 // Helper to format duration (e.g., 90 -> 1:30)
 function formatDuration(duration) {
@@ -245,12 +265,83 @@ const TrackRow = React.memo(function TrackRow({
     handleRemove(trackId);
   };
 
+  // Dominant color burst logic
+  const [dominantColor, setDominantColor] = useState('#18181b');
+  useEffect(() => {
+    let cancelled = false;
+    async function extractColor() {
+      if (item.albumArt) {
+        if (colorCache[item.albumArt]) {
+          setDominantColor(colorCache[item.albumArt]);
+          return;
+        }
+        try {
+          await loadVibrant();
+          const palette = await window.Vibrant.from(item.albumArt).getPalette();
+          let color = palette?.Vibrant?.getHex?.() || palette?.DarkVibrant?.getHex?.() || palette?.Muted?.getHex?.() || '#18181b';
+          colorCache[item.albumArt] = color;
+          if (!cancelled) setDominantColor(color);
+        } catch (e) {
+          if (!cancelled) setDominantColor('#18181b');
+        }
+      } else {
+        setDominantColor('#18181b');
+      }
+    }
+    extractColor();
+    return () => { cancelled = true; };
+  }, [item.albumArt]);
+
+  // Color burst animation on select
+  const [showBurst, setShowBurst] = useState(false);
+  useEffect(() => {
+    if (isSelected) {
+      setShowBurst(true);
+      const timeout = setTimeout(() => setShowBurst(false), 700);
+      return () => clearTimeout(timeout);
+    } else {
+      setShowBurst(false);
+    }
+  }, [isSelected]);
+
   return (
     <div
       ref={collapseRef}
       className={`relative track-row-animate${fadeIn ? ' queue-fade-in' : ''}`}
       style={collapseStyle}
     >
+      {/* Color stream burst effect (only on select, flows left to right) */}
+      {showBurst && (
+        <div
+          className="absolute top-0 left-0 h-full z-0 pointer-events-none"
+          style={{
+            width: '60%',
+            minWidth: 120,
+            maxWidth: 260,
+            background: `linear-gradient(90deg, ${dominantColor} 0%, ${dominantColor}33 60%, transparent 100%)`,
+            filter: 'blur(12px) brightness(1.08) saturate(1.08)',
+            opacity: 0.22,
+            borderRadius: '14px',
+            animation: 'color-stream-burst-minimal 0.9s cubic-bezier(0.4,0,0.2,1) forwards',
+            boxShadow: `0 0 32px 0 ${dominantColor}22`,
+          }}
+        />
+      )}
+      <style>{`
+        @keyframes color-stream-burst-minimal {
+          0% {
+            transform: translateX(-30%) scaleX(0.92);
+            opacity: 0.22;
+          }
+          60% {
+            opacity: 0.22;
+          }
+          100% {
+            transform: translateX(60%) scaleX(1.04);
+            opacity: 0;
+          }
+        }
+      `}</style>
       {/* Red background revealed during swipe */}
       {isMobile && (isRemoving || hasSwiped) && (
         <div

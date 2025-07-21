@@ -1136,10 +1136,22 @@ export function setupSocket(io) {
         if (clientId) {
           removeControllerRequest(sessionId, clientId);
         }
+        // If the disconnecting socket was the controller, assign a new controller if possible
         if (session.controllerId === socket.id) {
-          const newSocketId = getSocketIdByClientId(sessionId, session.controllerClientId);
-          session.controllerId = newSocketId;
-          io.to(sessionId).emit('controller_change', newSocketId);
+          // Find the next available client (if any)
+          const remainingClients = Array.from(session.clients.entries());
+          if (remainingClients.length > 0) {
+            // Pick the first client as the new controller
+            const [newSocketId, newClientInfo] = remainingClients[0];
+            session.controllerId = newSocketId;
+            session.controllerClientId = newClientInfo.clientId;
+            io.to(sessionId).emit('controller_change', newSocketId);
+            io.to(sessionId).emit('controller_client_change', newClientInfo.clientId);
+          } else {
+            // No clients left, clear controller
+            session.controllerId = null;
+            session.controllerClientId = null;
+          }
         }
         // Only delete files if the session is now empty
         if (getClients(sessionId).length === 0) {

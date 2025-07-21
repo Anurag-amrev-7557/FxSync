@@ -270,6 +270,67 @@ function safePlay(audio) {
   });
 }
 
+// Utility to darken a hex color by a given amount (0.0-1.0)
+function darkenHexColor(hex, amount = 0.15) {
+  let col = hex.replace('#', '');
+  if (col.length === 3) col = col.split('').map(x => x + x).join('');
+  let num = parseInt(col, 16);
+  let r = Math.max(0, ((num >> 16) & 0xff) * (1 - amount));
+  let g = Math.max(0, ((num >> 8) & 0xff) * (1 - amount));
+  let b = Math.max(0, (num & 0xff) * (1 - amount));
+  return `#${((1 << 24) + (Math.round(r) << 16) + (Math.round(g) << 8) + Math.round(b)).toString(16).slice(1)}`;
+}
+
+// Utility: Convert hex to HSL
+function hexToHsl(hex) {
+  hex = hex.replace('#', '');
+  if (hex.length === 3) hex = hex.split('').map(x => x + x).join('');
+  let r = parseInt(hex.substring(0,2), 16) / 255;
+  let g = parseInt(hex.substring(2,4), 16) / 255;
+  let b = parseInt(hex.substring(4,6), 16) / 255;
+  let max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h, s, l = (max + min) / 2;
+  if (max === min) {
+    h = s = 0;
+  } else {
+    let d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch(max){
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+      case g: h = (b - r) / d + 2; break;
+      case b: h = (r - g) / d + 4; break;
+    }
+    h /= 6;
+  }
+  return [h * 360, s * 100, l * 100];
+}
+// Utility: Convert HSL to hex
+function hslToHex(h, s, l) {
+  s /= 100;
+  l /= 100;
+  let c = (1 - Math.abs(2 * l - 1)) * s;
+  let x = c * (1 - Math.abs((h / 60) % 2 - 1));
+  let m = l - c/2;
+  let r=0, g=0, b=0;
+  if (0 <= h && h < 60) { r = c; g = x; b = 0; }
+  else if (60 <= h && h < 120) { r = x; g = c; b = 0; }
+  else if (120 <= h && h < 180) { r = 0; g = c; b = x; }
+  else if (180 <= h && h < 240) { r = 0; g = x; b = c; }
+  else if (240 <= h && h < 300) { r = x; g = 0; b = c; }
+  else if (300 <= h && h < 360) { r = c; g = 0; b = x; }
+  r = Math.round((r + m) * 255);
+  g = Math.round((g + m) * 255);
+  b = Math.round((b + m) * 255);
+  return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+}
+// Utility: Increase saturation and darkness
+function saturateAndDarken(hex, satAmount = 1.3, darkAmount = 0.25) {
+  let [h, s, l] = hexToHsl(hex);
+  s = Math.min(100, s * satAmount); // increase saturation
+  l = Math.max(0, l * (1 - darkAmount)); // decrease lightness
+  return hslToHex(h, s, l);
+}
+
 /**
  * AudioPlayer: Ultra-precise, micro-millisecond-level synchronized audio player.
  * Uses EMA smoothing for offset and drift, and micro-correction for imperceptible sync.
@@ -1627,6 +1688,70 @@ export default function AudioPlayer({
     const swipeStartX = useRef(null);
     const swipeDeltaX = useRef(0);
 
+    // Dominant color extraction state
+    const [dominantColor, setDominantColor] = useState('#18181b');
+    // Extract dominant color when track or album art changes
+    useEffect(() => {
+      let cancelled = false;
+      async function extractColor() {
+        if (currentTrack?.albumArt) {
+          try {
+            console.log('[Vibrant] Extracting color for album art:', currentTrack.albumArt);
+            // Dynamically load the UMD bundle if not already loaded
+            if (!window.Vibrant) {
+              console.log('[Vibrant] Loading UMD bundle...');
+              await loadVibrantScript();
+              console.log('[Vibrant] UMD bundle loaded.');
+            }
+            const palette = await window.Vibrant.from(currentTrack.albumArt).getPalette();
+            // Prefer the most populous dark swatch (DarkVibrant or DarkMuted)
+            let bestDarkSwatch = null;
+            let maxDarkPopulation = 0;
+            let darkSwatchName = null;
+            ['DarkVibrant', 'DarkMuted'].forEach(key => {
+              const swatch = palette[key];
+              if (swatch && swatch.getPopulation() > maxDarkPopulation) {
+                maxDarkPopulation = swatch.getPopulation();
+                bestDarkSwatch = swatch;
+                darkSwatchName = key;
+              }
+            });
+            let color, swatchName;
+            if (bestDarkSwatch) {
+              color = bestDarkSwatch.getHex();
+              swatchName = darkSwatchName;
+            } else {
+              // Fallback: most populous swatch overall
+              let bestSwatch = null;
+              let maxPopulation = 0;
+              let fallbackSwatchName = 'default';
+              for (const key of Object.keys(palette)) {
+                const swatch = palette[key];
+                if (swatch && swatch.getPopulation() > maxPopulation) {
+                  maxPopulation = swatch.getPopulation();
+                  bestSwatch = swatch;
+                  fallbackSwatchName = key;
+                }
+              }
+              color = bestSwatch ? bestSwatch.getHex() : '#18181b';
+              swatchName = fallbackSwatchName;
+            }
+            const saturatedDark = saturateAndDarken(color, 1.3, 0.25);
+            console.log('[Vibrant] Chosen swatch:', swatchName, '| Color:', color, '| Saturated+Darkened:', saturatedDark);
+            if (!cancelled) setDominantColor(saturatedDark);
+          } catch (e) {
+            console.error('[Vibrant] Error extracting color:', e);
+            if (!cancelled) setDominantColor('#18181b');
+          }
+        } else {
+          console.log('[Vibrant] No album art, using fallback color.');
+          setDominantColor('#18181b');
+        }
+      }
+      extractColor();
+      return () => { cancelled = true; };
+    }, [currentTrack?.albumArt]);
+
     if (loading) {
       return (
         <div className="fixed bottom-20 left-0 right-0 w-full z-40 pointer-events-auto px-3 sm:px-4">
@@ -1670,7 +1795,7 @@ export default function AudioPlayer({
         <div className={`${shouldAnimate ? 'animate-slide-up-from-bottom' : 'opacity-0 translate-y-full'}`}>
           <div
             className={
-              `bg-neutral-900/95 backdrop-blur-xl rounded-xl shadow-2xl flex flex-col gap-2 border border-neutral-700/50 overflow-hidden` +
+              `bg-neutral-900/95 backdrop-blur-xl rounded-lg shadow-2xl flex flex-col gap-2 border border-neutral-700/50 overflow-hidden` +
               (dragging ? '' : ' transition-all duration-300')
             }
             style={{
@@ -1680,7 +1805,9 @@ export default function AudioPlayer({
               paddingBottom: !expanded ? 0 : 12, // Remove bottom padding in compact state
               width: '100%', // Use 100% to respect outer px-3 gap
               maxWidth: '100%',
-              borderRadius: 18, // Restore subtle border radius
+              borderRadius: 10, // Restore subtle border radius
+              background: dominantColor,
+              transition: 'background 0.5s cubic-bezier(0.4,0,0.2,1)',
             }}
           >
             {/* Interpolated content: fade/slide between compact and expanded */}
@@ -1781,7 +1908,7 @@ export default function AudioPlayer({
                             // Only scroll if text is longer than container
                             return (
                               <div
-                                className="text-xs text-neutral-400 leading-tight whitespace-nowrap"
+                                className="text-xs text-white-400 leading-tight whitespace-nowrap"
                                 style={{
                                   display: 'inline-block',
                                   minWidth: '100%',
@@ -1920,7 +2047,7 @@ export default function AudioPlayer({
                             const artistText = artists || '\u00A0';
                             return (
                               <div
-                                className="text-sm text-neutral-400 leading-tight whitespace-nowrap"
+                                className="text-sm text-white-400 leading-tight whitespace-nowrap"
                                 style={{
                                   display: 'inline-block',
                                   minWidth: '100%',
@@ -1952,8 +2079,8 @@ export default function AudioPlayer({
                     <div className="space-y-2">
                       {/* Time Display */}
                       <div className="flex items-center justify-between text-xs">
-                        <span className="text-neutral-400 font-mono">{formatTime(displayedCurrentTime)}</span>
-                        <span className="text-neutral-400 font-mono">{formatTime(duration)}</span>
+                        <span className="text-white-400">{formatTime(displayedCurrentTime)}</span>
+                        <span className="text-white-400">{formatTime(duration)}</span>
                       </div>
                       
                       {/* Progress Bar */}
@@ -1973,7 +2100,7 @@ export default function AudioPlayer({
                     <div className="flex items-center justify-between gap-3">
                       {/* Track settings: loop toggle */}
                       <button
-                        className={`w-8 h-8 flex items-center justify-center border-none bg-transparent mr-1 p-0 ${loop ? 'text-primary' : 'text-neutral-400 hover:text-primary'}`}
+                        className={`w-8 h-8 flex items-center justify-center border-none bg-transparent mr-1 p-0 ${loop ? 'text-primary' : 'text-white-400 hover:text-primary'}`}
                         onClick={() => setLoop(l => !l)}
                         aria-label={loop ? 'Disable loop' : 'Enable loop'}
                         title={loop ? 'Disable loop' : 'Enable loop'}
@@ -2005,7 +2132,7 @@ export default function AudioPlayer({
                             ? 'text-blue-500' 
                             : smartResyncSuggestion 
                               ? 'text-orange-400' 
-                              : 'text-neutral-400 hover:text-primary'
+                              : 'text-white-400 hover:text-primary'
                         }`}
                         onClick={handleResync}
                         disabled={disabled || !audioUrl || resyncInProgress}
@@ -2167,8 +2294,8 @@ export default function AudioPlayer({
             {/* Progress Bar */}
             <div className="w-full flex flex-col items-center gap-2">
               <div className="w-full flex items-center justify-between text-xs">
-                <span className="text-neutral-400 font-mono">{formatTime(displayedCurrentTime)}</span>
-                <span className="text-neutral-400 font-mono">{formatTime(duration)}</span>
+                <span className="text-white-400">{formatTime(displayedCurrentTime)}</span>
+                <span className="text-white-400">{formatTime(duration)}</span>
               </div>
               <div className="w-full">
                 <div className="relative group/progress-bar h-6 flex items-center">
@@ -2361,9 +2488,9 @@ export default function AudioPlayer({
             </div>
           </div>
           <div className="text-right min-w-[80px]">
-            <div className="text-white font-mono text-base tabular-nums select-none">
+            <div className="text-white text-base tabular-nums select-none">
               <span className="transition-all duration-300">{formatTime(displayedCurrentTime)}</span>
-              <span className="opacity-60"> / </span>
+              <span className="opacity-60">  /  </span>
               <span className="opacity-80">{formatTime(duration)}</span>
             </div>
             <div className="text-neutral-400 text-xs mt-0.5">Duration</div>
@@ -2483,3 +2610,35 @@ export default function AudioPlayer({
     </div>
   );
 } 
+
+// Add a robust loader for Vibrant UMD
+async function loadVibrantScript() {
+  if (document.getElementById('vibrant-umd')) {
+    console.log('[Vibrant] Script already present.');
+    return;
+  }
+  const urls = [
+    'https://cdn.jsdelivr.net/npm/node-vibrant@3.1.6/dist/vibrant.min.js',
+    'https://unpkg.com/node-vibrant@3.1.6/dist/vibrant.min.js'
+  ];
+  for (let url of urls) {
+    try {
+      console.log('[Vibrant] Attempting to load:', url);
+      await new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.id = 'vibrant-umd';
+        script.src = url;
+        script.onload = resolve;
+        script.onerror = reject;
+        document.body.appendChild(script);
+      });
+      if (window.Vibrant) {
+        console.log('[Vibrant] Loaded from:', url);
+        return;
+      }
+    } catch (e) {
+      console.warn('[Vibrant] Failed to load from:', url);
+    }
+  }
+  throw new Error('Failed to load Vibrant UMD from all sources');
+}

@@ -56,7 +56,7 @@ export default function ProgressBar({ currentTime, duration, onSeek, disabled, o
 
   return (
     <div className="relative">
-      <div className={thin ? "h-0.5 bg-neutral-800 rounded-full overflow-hidden" : "h-1 bg-neutral-800 rounded-full overflow-hidden"}>
+      <div className={thin ? "h-0.5 rounded-full overflow-hidden" : "h-1 rounded-full overflow-hidden"} style={{ background: 'rgba(255,255,255,0.18)' }}>
         <div 
           className={thin ? "h-0.5 bg-white rounded-full transition-all duration-300" : "h-full bg-white rounded-full transition-all duration-300"}
           style={{ width: `${percent}%` }}

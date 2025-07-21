@@ -20,6 +20,7 @@
     "framer-motion": "^12.23.6",
     "jsmediatags": "^3.9.7",
     "kalmanjs": "^1.1.0",
+    "node-vibrant": "^4.0.3",
     "prop-types": "^15.8.1",
     "qrcode.react": "^4.2.0",
     "react": "^19.1.0",

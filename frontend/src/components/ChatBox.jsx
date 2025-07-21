@@ -1443,7 +1443,25 @@ const ChatBox = React.memo(function ChatBox({
         </div>
 
         {/* Messages */}
-        {Array.isArray(messages) && messages.length > 30 ? (
+        {Array.isArray(messages) && messages.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full py-16 animate-fade-in">
+            <svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg" className="mb-6 animate-bounce-slow">
+              <ellipse cx="60" cy="100" rx="32" ry="8" fill="#222" opacity="0.15"/>
+              <rect x="30" y="30" width="60" height="40" rx="16" fill="#27272a"/>
+              <rect x="40" y="45" width="40" height="8" rx="4" fill="#444"/>
+              <circle cx="45" cy="50" r="2.5" fill="#666"/>
+              <circle cx="60" cy="50" r="2.5" fill="#666"/>
+              <circle cx="75" cy="50" r="2.5" fill="#666"/>
+              <rect x="50" y="60" width="20" height="4" rx="2" fill="#393939"/>
+            </svg>
+            <div className="text-neutral-400 text-lg font-medium mb-1">No messages yet</div>
+            <div className="text-neutral-500 text-sm">Start the conversation!</div>
+            <style>{`
+              @keyframes bounce-slow { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+              .animate-bounce-slow { animation: bounce-slow 2.2s infinite cubic-bezier(0.4,0,0.2,1); }
+            `}</style>
+          </div>
+        ) : Array.isArray(messages) && messages.length > 30 ? (
           <MessageList
             messages={Array.isArray(messages) ? messages : []}
             clientId={clientId}
@@ -2515,7 +2533,25 @@ const ChatBox = React.memo(function ChatBox({
       </div>
 
       {/* Messages */}
-      {Array.isArray(messages) && messages.length > 30 ? (
+      {Array.isArray(messages) && messages.length === 0 ? (
+        <div className="flex flex-col items-center justify-center h-full py-16 animate-fade-in">
+          <svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg" className="mb-6 animate-bounce-slow">
+            <ellipse cx="60" cy="100" rx="32" ry="8" fill="#222" opacity="0.15"/>
+            <rect x="30" y="30" width="60" height="40" rx="16" fill="#27272a"/>
+            <rect x="40" y="45" width="40" height="8" rx="4" fill="#444"/>
+            <circle cx="45" cy="50" r="2.5" fill="#666"/>
+            <circle cx="60" cy="50" r="2.5" fill="#666"/>
+            <circle cx="75" cy="50" r="2.5" fill="#666"/>
+            <rect x="50" y="60" width="20" height="4" rx="2" fill="#393939"/>
+          </svg>
+          <div className="text-neutral-400 text-lg font-medium mb-1">No messages yet</div>
+          <div className="text-neutral-500 text-sm">Start the conversation!</div>
+          <style>{`
+            @keyframes bounce-slow { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+            .animate-bounce-slow { animation: bounce-slow 2.2s infinite cubic-bezier(0.4,0,0.2,1); }
+          `}</style>
+        </div>
+      ) : Array.isArray(messages) && messages.length > 30 ? (
         <MessageList
           messages={Array.isArray(messages) ? messages : []}
           clientId={clientId}
